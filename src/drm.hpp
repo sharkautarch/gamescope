@@ -341,11 +341,26 @@ enum g_rotate_ctl{
 	UPSIDEDOWN,
 	RIGHT_UP,
 };
+enum g_panel_external_orientation {
+	PANEL_EXTERNAL_ORIENTATION_0,	/* NORMAL */
+	PANEL_EXTERNAL_ORIENTATION_270,	/* RIGHT */
+	PANEL_EXTERNAL_ORIENTATION_90,	/* LEFT */
+	PANEL_EXTERNAL_ORIENTATION_180,	/* UPSIDE DOWN */
+	PANEL_EXTERNAL_ORIENTATION_AUTO,
+};
+
+enum g_panel_type {
+	PANEL_TYPE_INTERNAL,
+	PANEL_TYPE_EXTERNAL,
+	PANEL_TYPE_AUTO,
+};
 
 extern enum drm_mode_generation g_drmModeGeneration;
 extern enum g_panel_orientation g_drmModeOrientation;
 extern enum g_rotate_ctl g_drmRotateCTL;
 extern bool g_rotate_ctl_enable;
+extern enum g_panel_external_orientation g_drmModeExternalOrientation;
+extern enum g_panel_type g_drmPanelType;
 
 extern std::atomic<uint64_t> g_drmEffectiveOrientation[DRM_SCREEN_TYPE_COUNT]; // DRM_MODE_ROTATE_*
 
