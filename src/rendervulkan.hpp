@@ -10,6 +10,7 @@
 #include <array>
 #include <bitset>
 #include <mutex>
+#include <optional>
 
 #include "main.hpp"
 

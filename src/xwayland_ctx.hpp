@@ -210,6 +210,9 @@ struct xwayland_ctx_t
 		Atom gamescopeColorAppHDRMetadataFeedback;
 		Atom gamescopeColorSliderInUse;
 		Atom gamescopeColorChromaticAdaptationMode;
+		Atom gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraScale[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_COUNT];
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;

@@ -469,6 +469,96 @@ bool set_color_mgmt_enabled( bool bEnabled )
 	return true;
 }
 
+static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
+static std::shared_ptr<wlserver_ctm> s_MuraCTMBlob[DRM_SCREEN_TYPE_COUNT];
+static float g_flMuraScale = 1.0f;
+static bool g_bMuraCompensationDisabled = false;
+
+bool is_mura_correction_enabled()
+{
+	return s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )] != nullptr && !g_bMuraCompensationDisabled;
+}
+
+void update_mura_ctm()
+{
+	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	if (s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] == nullptr)
+		return;
+
+	static constexpr float kMuraMapScale = 0.0625f;
+	static constexpr float kMuraOffset = -127.0f / 255.0f;
+
+	// Mura's influence scales non-linearly with brightness, so we have an additional scale
+	// on top of the scale factor for the underlying mura map.
+	const float flScale = g_flMuraScale * kMuraMapScale;
+	glm::mat3x4 mura_scale_offset = glm::mat3x4
+	{
+		flScale, 0,       0,       kMuraOffset * flScale,
+		0,       flScale, 0,       kMuraOffset * flScale,
+		0,       0,       0,       0, // No mura comp for blue channel.
+	};
+	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = drm_create_ctm(&g_DRM, mura_scale_offset);
+}
+
+bool g_bMuraDebugFullColor = false;
+
+bool set_mura_overlay( const char *path )
+{
+	xwm_log.infof("[josh mura correction] Setting mura correction image to: %s", path);
+	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	update_mura_ctm();
+
+	std::string red_path = std::string(path) + "_red.png";
+	std::string green_path = std::string(path) + "_green.png";
+
+	int red_w, red_h, red_comp;
+	unsigned char *red_data = stbi_load(red_path.c_str(), &red_w, &red_h, &red_comp, 1);
+	int green_w, green_h, green_comp;
+	unsigned char *green_data = stbi_load(green_path.c_str(), &green_w, &green_h, &green_comp, 1);
+	if (!red_data || !green_data || red_w != green_w || red_h != green_h || red_comp != green_comp || red_comp != 1 || green_comp != 1)
+	{
+		xwm_log.infof("[josh mura correction] Couldn't load mura correction image, disabling mura correction.");
+		return true;
+	}
+
+	int w = red_w;
+	int h = red_h;
+	unsigned char *data = (unsigned char*)malloc(red_w * red_h * 4);
+
+	for (int y = 0; y < h; y++)
+	{
+		for (int x = 0; x < w; x++)
+		{
+			data[(y * w * 4) + (x * 4) + 0] = g_bMuraDebugFullColor ? 255 : red_data[y * w + x];
+			data[(y * w * 4) + (x * 4) + 1] = g_bMuraDebugFullColor ? 255 : green_data[y * w + x];
+			data[(y * w * 4) + (x * 4) + 2] = 127; // offset of 0.
+			data[(y * w * 4) + (x * 4) + 3] = 0;   // Make alpha = 0 so we act as addtive.
+		}
+	}
+	free(red_data);
+	free(green_data);
+
+	CVulkanTexture::createFlags texCreateFlags;
+	texCreateFlags.bFlippable = !BIsNested();
+	texCreateFlags.bSampled = true;
+	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
+	free(data);
+
+	xwm_log.infof("[josh mura correction] Loaded new mura correction image!");
+
+	update_mura_ctm();
+
+	return true;
+}
+
+bool set_mura_scale(float new_scale)
+{
+	bool diff = g_flMuraScale != new_scale;
+	g_flMuraScale = new_scale;
+	update_mura_ctm();
+	return diff;
+}
+
 bool set_color_3dlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
@@ -2505,6 +2595,30 @@ paint_all(bool async)
 
 	bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
 
+	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount && !pw_buffer;
+	if ( bDoMuraCompensation )
+	{
+		auto& MuraCorrectionImage = s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )];
+		int curLayer = frameInfo.layerCount++;
+
+		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
+
+		layer->applyColorMgmt = false;
+		layer->fbid = MuraCorrectionImage->fbid();
+		layer->offset = vec2_t{ 0, 0 };
+		layer->scale = vec2_t{ 1.0f, 1.0f };
+		layer->blackBorder = true;
+		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU;
+		layer->opacity = 1.0f;
+		layer->zpos = g_zposMuraCorrection;
+		layer->filter = GamescopeUpscaleFilter::NEAREST;
+		layer->tex = MuraCorrectionImage;
+		layer->ctm = s_MuraCTMBlob[drm_get_screen_type( &g_DRM )];
+
+		// Blending needs to be done in Gamma 2.2 space for mura correction to work.
+		frameInfo.applyOutputColorMgmt = false;
+	}
+
 	// Disable partial composition for now until we get
 	// composite priorities working in libliftoff + also
 	// use the proper libliftoff composite plane system.
@@ -2837,6 +2951,8 @@ paint_all(bool async)
 					break;
 				}
 			}
+
+			frameInfo.applyOutputColorMgmt = true;
 
 			bool bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
 			if ( bResult != true )
@@ -5717,6 +5833,30 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorChromaticAdaptationMode, 0);
 		g_ColorMgmt.pending.chromaticAdaptationMode = ( EChromaticAdaptationMethod ) val;
 	}
+	// TODO: Hook up gamescopeColorMuraCorrectionImage for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] );
+		if ( set_mura_overlay( path.c_str() ) )
+			hasRepaint = true;
+	}
+	// TODO: Hook up gamescopeColorMuraScale for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL], 0);
+		float new_scale = bit_cast<float>(val);
+		if ( set_mura_scale( new_scale ) )
+			hasRepaint = true;
+	}
+	// TODO: Hook up gamescopeColorMuraCorrectionDisabled for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL], 0);
+		if ( g_bMuraCompensationDisabled != disabled ) {
+			g_bMuraCompensationDisabled = disabled;
+			hasRepaint = true;
+		}
+	}
 	if (ev->atom == ctx->atoms.gamescopeCreateXWaylandServer)
 	{
 		uint32_t identifier = get_prop(ctx, ctx->root, ctx->atoms.gamescopeCreateXWaylandServer, 0);
@@ -7070,6 +7210,12 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeColorAppHDRMetadataFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_HDR_METADATA_FEEDBACK", false );
 	ctx->atoms.gamescopeColorSliderInUse = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_CHANGING_HINT", false );
 	ctx->atoms.gamescopeColorChromaticAdaptationMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_CHROMATIC_ADAPTATION_MODE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
+	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
@@ -7390,6 +7536,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_reshade_effect = optarg;
 				} else if (strcmp(opt_name, "reshade-technique-idx") == 0) {
 					g_reshade_technique_idx = atoi(optarg);
+				} else if (strcmp(opt_name, "mura-map") == 0) {
+					set_mura_overlay(optarg);
 				}
 				break;
 			case '?':
