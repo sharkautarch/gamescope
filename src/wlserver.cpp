@@ -1976,6 +1976,31 @@ static void apply_touchscreen_orientation(double *x, double *y )
 			ty = 1.0 - *x;
 			break;
 	}
+	// Rotate screen if it's forced with --force-external-orientation
+
+	if ( g_bExternalForced == true)
+	{
+		switch ( g_drmEffectiveOrientation[DRM_SCREEN_TYPE_EXTERNAL] )
+		{
+			default:
+			case DRM_MODE_ROTATE_0:
+				tx = *x;
+				ty = *y;
+				break;
+			case DRM_MODE_ROTATE_90:
+				tx = 1.0 - *y;
+				ty = *x;
+				break;
+			case DRM_MODE_ROTATE_180:
+				tx = 1.0 - *x;
+				ty = 1.0 - *y;
+				break;
+			case DRM_MODE_ROTATE_270:
+				tx = *y;
+				ty = 1.0 - *x;
+				break;
+		}
+	}
 
 	*x = tx;
 	*y = ty;
