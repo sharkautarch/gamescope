@@ -174,6 +174,7 @@ struct connector {
 	char *model;
 	bool is_steam_deck_display;
 	std::span<uint32_t> valid_display_rates{};
+	uint16_t is_galileo_display;
 
 	int target_refresh;
 	bool vrr_capable;
