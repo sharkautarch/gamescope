@@ -5644,6 +5644,37 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		if ( g_upscaleFilter == GamescopeUpscaleFilter::FSR || g_upscaleFilter == GamescopeUpscaleFilter::NIS )
 			hasRepaint = true;
 	}
+	if ( ev->atom == ctx->atoms.gamescopeRotateControl )
+	{
+			std::vector< uint32_t > drm_rot_ctl;
+			bool rotate = get_prop( ctx, ctx->root, ctx->atoms.gamescopeRotateControl, drm_rot_ctl );
+			bool rotated = false;
+			if ( rotate && drm_rot_ctl.size() == 1 )
+			{
+				xwm_log.debugf("drm_rot_ctl %d", drm_rot_ctl[0]);
+				g_rotate_ctl_enable = true;
+				switch ( drm_rot_ctl[0] )
+				{
+					case 0:
+						g_drmRotateCTL = NORMAL;
+						rotated = false;
+						break;
+					case 1:
+						g_drmRotateCTL = LEFT_UP;
+						rotated = true;
+						break;
+					case 2:
+						g_drmRotateCTL = UPSIDEDOWN;
+						rotated = false;
+						break;
+					case 3:
+						g_drmRotateCTL = RIGHT_UP;
+						rotated = true;
+						break;
+				}
+				drm_set_orientation(&g_DRM, rotated);
+			}
+	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
 	{
 		std::vector< uint32_t > xwayland_mode_ctl;
@@ -7248,6 +7279,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeFSRSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_SHARPNESS", false );
 	ctx->atoms.gamescopeSharpness = XInternAtom( ctx->dpy, "GAMESCOPE_SHARPNESS", false );
 
+	ctx->atoms.gamescopeRotateControl = XInternAtom( ctx->dpy, "GAMESCOPE_ROTATE_CONTROL", false );
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
 	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );

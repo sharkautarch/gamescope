@@ -45,6 +45,7 @@ struct drm_t g_DRM = {};
 uint32_t g_nDRMFormat = DRM_FORMAT_INVALID;
 uint32_t g_nDRMFormatOverlay = DRM_FORMAT_INVALID; // for partial composition, we may have more limited formats than base planes + alpha.
 bool g_bRotated = false;
+bool g_rotate_ctl_enable = false;
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
@@ -65,6 +66,7 @@ bool g_bSupportsAsyncFlips = false;
 
 enum drm_mode_generation g_drmModeGeneration = DRM_MODE_GENERATE_CVT;
 enum g_panel_orientation g_drmModeOrientation = PANEL_ORIENTATION_AUTO;
+enum g_rotate_ctl g_drmRotateCTL;
 std::atomic<uint64_t> g_drmEffectiveOrientation[DRM_SCREEN_TYPE_COUNT]{ {DRM_MODE_ROTATE_0}, {DRM_MODE_ROTATE_0} };
 
 bool g_bForceDisableColorMgmt = false;
@@ -2001,6 +2003,27 @@ static void update_drm_effective_orientation(struct drm_t *drm, struct connector
 static void update_drm_effective_orientations(struct drm_t *drm, struct connector *conn, const drmModeModeInfo *mode)
 {
 	drm_screen_type screenType = drm_get_connector_type(conn->connector);
+
+	if (g_rotate_ctl_enable)
+	{
+		switch (g_drmRotateCTL)
+		{
+			default:
+			case NORMAL:
+				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_0;
+				break;
+			case LEFT_UP:
+				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_90;
+				break;
+			case UPSIDEDOWN:
+				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_180;
+				break;
+			case RIGHT_UP:
+				g_drmEffectiveOrientation[screenType] = DRM_MODE_ROTATE_270;
+				break;
+		}
+		return;
+	}
 	if (screenType == DRM_SCREEN_TYPE_INTERNAL)
 	{
 		update_drm_effective_orientation(drm, conn, mode);
@@ -3072,6 +3095,25 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 	mode.type = DRM_MODE_TYPE_USERDEF;
 
 	return drm_set_mode(drm, &mode);
+}
+
+void drm_set_orientation( struct drm_t *drm, bool isRotated)
+{
+	int width = g_nOutputWidth;
+	int height = g_nOutputHeight;
+	g_bRotated = isRotated;
+	if ( g_bRotated ) {
+		int tmp = width;
+		width = height;
+		height = tmp;
+	}
+
+	if (!drm->connector || !drm->connector->connector)
+		return;
+
+	drmModeConnector *connector = drm->connector->connector;
+	const drmModeModeInfo *mode = find_mode(connector, width, height, 0);
+	update_drm_effective_orientations(drm, drm->connector, mode);
 }
 
 bool drm_set_resolution( struct drm_t *drm, int width, int height )

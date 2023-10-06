@@ -146,6 +146,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeFSRSharpness;
 		Atom gamescopeSharpness;
 
+		Atom gamescopeRotateControl;
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
