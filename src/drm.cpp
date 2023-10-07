@@ -50,6 +50,7 @@ bool g_bDisplayTypeInternal = false;
 bool g_bUseLayers = true;
 bool g_bDebugLayers = false;
 const char *g_sOutputName = nullptr;
+char* targetConnector = (char*)"eDP-1";
 
 #ifndef DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP
 #define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
@@ -1242,6 +1243,19 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		if (priority < best_priority) {
 			best = conn;
 			best_priority = priority;
+		}
+	}
+
+	for (auto &kv : drm->connectors) {
+		struct connector *conn = &kv.second;
+		drm_log.debugf("force set adapter");
+		drm_log.debugf("conn->name: %s", conn->name);
+		drm_log.debugf("targetConnector: %s", targetConnector);
+		if (strcmp(conn->name, targetConnector) == 0)
+		{
+			drm_log.debugf("target was found!!!");
+			drm_log.infof("  %s (%s)", conn->name, targetConnector);
+			best = conn;
 		}
 	}
 
@@ -2896,6 +2910,12 @@ static bool drm_set_crtc( struct drm_t *drm, struct crtc *crtc )
 	drm->lo_output = lo_output;
 
 	return true;
+}
+
+void drm_set_prefered_connector( struct drm_t *drm, char* name )
+{
+	drm_log.infof("selecting prefered connector %s", name);
+	targetConnector = name;
 }
 
 bool drm_set_connector( struct drm_t *drm, struct connector *conn )

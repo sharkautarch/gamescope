@@ -149,6 +149,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom gamescopeRotateControl;
 		Atom gamescopeXWaylandModeControl;
 
+		Atom gamescopeConnectorControl;
 		Atom gamescopeFPSLimit;
 		Atom gamescopeDynamicRefresh[DRM_SCREEN_TYPE_COUNT];
 		Atom gamescopeLowLatency;

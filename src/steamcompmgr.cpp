@@ -5719,6 +5719,74 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			}
 		}
 	}
+	if ( ev->atom == ctx->atoms.gamescopeConnectorControl )
+	{
+		std::vector< uint32_t > connector_ctl;
+		bool hasConnectorCtrl = get_prop( ctx, ctx->root, ctx->atoms.gamescopeConnectorControl, connector_ctl );
+		char* adapter_type;
+		if ( hasConnectorCtrl && connector_ctl.size() == 1 )
+		{
+			switch (connector_ctl[0])
+			{
+				case 0:
+					adapter_type = (char*)"eDP-1";
+					break;
+				case 1:
+					adapter_type = (char*)"eDP-2";
+					break;
+				case 2:
+					adapter_type = (char*)"eDP-3";
+					break;
+				case 3:
+					adapter_type = (char*)"DP-1";
+					break;
+				case 4:
+					adapter_type = (char*)"DP-2";
+					break;
+				case 5:
+					adapter_type = (char*)"DP-3";
+					break;
+				case 6:
+					adapter_type = (char*)"HDMI-A-1";
+					break;
+				case 7:
+					adapter_type = (char*)"HDMI-A-2";
+					break;
+				case 8:
+					adapter_type = (char*)"HDMI-A-3";
+					break;
+				case 9:
+					adapter_type = (char*)"HDMI-B-1";
+					break;
+				case 10:
+					adapter_type = (char*)"HDMI-B-2";
+					break;
+				case 11:
+					adapter_type = (char*)"HDMI-B-3";
+					break;
+				case 12:
+					adapter_type = (char*)"HDMI-C-1";
+					break;
+				case 13:
+					adapter_type = (char*)"HDMI-C-2";
+					break;
+				case 14:
+					adapter_type = (char*)"HDMI-C-3";
+					break;
+				case 15:
+					adapter_type = (char*)"DSI-1";
+					break;
+				case 16:
+					adapter_type = (char*)"DSI-2";
+					break;
+				case 17:
+					adapter_type = (char*)"DSI-3";
+					break;
+			}
+			g_DRM.out_of_date = 2;
+			drm_set_prefered_connector(&g_DRM, adapter_type);
+		}
+	}
 	if ( ev->atom == ctx->atoms.gamescopeFPSLimit )
 	{
 		g_nSteamCompMgrTargetFPS = get_prop( ctx, ctx->root, ctx->atoms.gamescopeFPSLimit, 0 );
@@ -7289,6 +7357,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeRotateControl = XInternAtom( ctx->dpy, "GAMESCOPE_ROTATE_CONTROL", false );
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
+	ctx->atoms.gamescopeConnectorControl = XInternAtom(ctx->dpy, "GAMESCOPE_CONNECTOR_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
 	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
 	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
