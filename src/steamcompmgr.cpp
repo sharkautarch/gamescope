@@ -5673,6 +5673,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 						break;
 				}
 				drm_set_orientation(&g_DRM, rotated);
+				g_DRM.out_of_date = 2;
 			}
 	}
 	if ( ev->atom == ctx->atoms.gamescopeXWaylandModeControl )
