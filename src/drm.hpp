@@ -378,7 +378,7 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 void drm_lock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
-void drm_set_prefered_connector( struct drm_t *drm, char* name );
+void drm_set_prefered_connector( struct drm_t *drm, uint32_t connector_type_id );
 bool drm_set_connector( struct drm_t *drm, struct connector *conn );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 bool drm_set_refresh( struct drm_t *drm, int refresh );
