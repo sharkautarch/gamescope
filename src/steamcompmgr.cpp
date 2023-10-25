@@ -138,6 +138,8 @@ std::string primarySelection;
 std::string g_reshade_effect{};
 uint32_t g_reshade_technique_idx = 0;
 
+bool g_bSteamIsActiveWindow = false;
+
 long int timespec_to_nanos(struct timespec& spec)
 {
 	return (long int)spec.tv_sec * 1'000'000'000l + spec.tv_nsec;
@@ -7961,11 +7963,13 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( window_is_steam( global_focus.focusWindow ) )
 		{
+			g_bSteamIsActiveWindow = true;
 			g_upscaleScaler = GamescopeUpscaleScaler::FIT;
 			g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 		}
 		else
 		{
+			g_bSteamIsActiveWindow = false;
 			g_upscaleScaler = g_wantedUpscaleScaler;
 			g_upscaleFilter = g_wantedUpscaleFilter;
 		}
