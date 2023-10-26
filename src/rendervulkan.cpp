@@ -3543,7 +3543,7 @@ extern uint32_t g_reshade_technique_idx;
 std::unique_ptr<std::thread> defer_wait_thread;
 uint64_t defer_sequence = 0;
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer )
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer, std::shared_ptr<CVulkanTexture> pOutputOverride )
 {
 	if ( defer_wait_thread )
 	{
@@ -3585,7 +3585,11 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		g_reshadeManager.clear();
 	}
 
-	auto compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
+	std::shared_ptr<CVulkanTexture> compositeImage;
+	if ( pOutputOverride )
+		compositeImage = pOutputOverride;
+	else
+		compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
 
 	auto cmdBuffer = g_device.commandBuffer();
 
@@ -3723,6 +3727,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 	if ( pPipewireTexture != nullptr )
 	{
+
 		if (compositeImage->format() == pPipewireTexture->format() &&
 			compositeImage->width() == pPipewireTexture->width() &&
 		    compositeImage->height() == pPipewireTexture->height()) {
@@ -3782,7 +3787,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		g_device.wait(sequence);
 	}
 
-	if ( !BIsSDLSession() )
+	if ( !BIsSDLSession() && pOutputOverride == nullptr )
 	{
 		g_output.nOutImage = ( g_output.nOutImage + 1 ) % 3;
 	}

@@ -1006,7 +1006,7 @@ struct wlr_buffer_map_entry {
 static std::mutex wlr_buffer_map_lock;
 static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
 
-static std::atomic< bool > g_bTakeScreenshot{false};
+static std::atomic< int > g_nTakeScreenshot{ 0 };
 static bool g_bPropertyRequestedScreenshot;
 
 static std::atomic<bool> g_bForceRepaint{false};
@@ -2568,7 +2568,7 @@ paint_all(bool async)
 	bool bDoComposite = true;
 
 	// Handoff from whatever thread to this one since we check ours twice
-	bool takeScreenshot = g_bTakeScreenshot.exchange(false);
+	int takeScreenshot = g_nTakeScreenshot.exchange( 0 );
 	bool propertyRequestedScreenshot = g_bPropertyRequestedScreenshot;
 	g_bPropertyRequestedScreenshot = false;
 
@@ -2640,6 +2640,8 @@ paint_all(bool async)
 	bNeedsFullComposite |= g_bColorSliderInUse;
 	bNeedsFullComposite |= fadingOut;
 	bNeedsFullComposite |= !g_reshade_effect.empty();
+
+	constexpr bool bHackForceNV12DumpScreenshot = false;
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 	{
@@ -2928,8 +2930,6 @@ paint_all(bool async)
 
 	if ( takeScreenshot )
 	{
-		constexpr bool bHackForceNV12DumpScreenshot = false;
-
 		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
 			? DRM_FORMAT_NV12
 			: DRM_FORMAT_XRGB8888;
@@ -2938,25 +2938,58 @@ paint_all(bool async)
 
 		if ( pScreenshotTexture )
 		{
-			// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
-			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+			if ( takeScreenshot != TAKE_SCREENSHOT_SCREEN_BUFFER )
 			{
-				frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-				frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
-			}
-			// Remove everything but base planes from the screenshot.
-			for (int i = 0; i < frameInfo.layerCount; i++)
-			{
-				if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
+				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 				{
-					frameInfo.layerCount = i;
-					break;
+					frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+					frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+				}
+
+				if ( takeScreenshot == TAKE_SCREENSHOT_BASEPLANE_ONLY )
+				{
+					// Remove everything but base planes from the screenshot.
+					for (int i = 0; i < frameInfo.layerCount; i++)
+					{
+						if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+						{
+							frameInfo.layerCount = i;
+							break;
+						}
+					}
+
+					// Re-enable output color management (blending) if it was disabled by mura.
+					frameInfo.applyOutputColorMgmt = true;
+				}
+				else
+				{
+					if ( is_mura_correction_enabled() )
+					{
+						// Remove the last layer which is for mura...
+						for (int i = 0; i < frameInfo.layerCount; i++)
+						{
+							if (frameInfo.layers[i].zpos >= (int)g_zposMuraCorrection)
+							{
+								frameInfo.layerCount = i;
+								break;
+							}
+						}
+
+						// Re-enable output color management (blending) if it was disabled by mura.
+						frameInfo.applyOutputColorMgmt = true;
+					}
 				}
 			}
 
 			frameInfo.applyOutputColorMgmt = true;
 
-			bool bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+			bool bResult;
+			if ( takeScreenshot == TAKE_SCREENSHOT_FULL_COMPOSITION || takeScreenshot == TAKE_SCREENSHOT_SCREEN_BUFFER )
+				bResult = vulkan_composite( &frameInfo, nullptr, false, false, pScreenshotTexture );
+			else
+				bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+
 			if ( bResult != true )
 			{
 				xwm_log.errorf("vulkan_screenshot failed");
@@ -3045,15 +3078,16 @@ paint_all(bool async)
 
 			screenshotThread.detach();
 
-			takeScreenshot = false;
+			takeScreenshot = 0;
 		}
 		else
 		{
 			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
 			XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
-			takeScreenshot = false;
+			takeScreenshot = 0;
 		}
 	}
+
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
 	gpuvis_trace_printf( "paint_all %i layers, composite %i", (int)frameInfo.layerCount, bDoComposite );
@@ -5310,7 +5344,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		if ( ev->state == PropertyNewValue )
 		{
-			g_bTakeScreenshot = true;
+			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeScreenShotAtom, None );
 			g_bPropertyRequestedScreenshot = true;
 		}
 	}
@@ -6414,9 +6448,9 @@ void nudge_steamcompmgr( void )
 		xwm_log.errorf_errno( "nudge_steamcompmgr: write failed" );
 }
 
-void take_screenshot( void )
+void take_screenshot( int flags )
 {
-	g_bTakeScreenshot = true;
+	g_nTakeScreenshot = flags;
 	nudge_steamcompmgr();
 }
 
@@ -7989,7 +8023,7 @@ steamcompmgr_main(int argc, char **argv)
 		const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] && g_HeldCommits[HELD_COMMIT_BASE]->async);
 
 		const bool bForceRepaint = g_bForceRepaint.exchange(false);
-		const bool bForceSyncFlip = bForceRepaint || g_bTakeScreenshot || is_fading_out();
+		const bool bForceSyncFlip = bForceRepaint || is_fading_out();
 		// If we are compositing, always force sync flips because we currently wait
 		// for composition to finish before submitting.
 		// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.

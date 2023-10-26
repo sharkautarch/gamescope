@@ -419,7 +419,7 @@ static void handle_signal( int sig )
 {
 	switch ( sig ) {
 	case SIGUSR2:
-		take_screenshot();
+		take_screenshot( TAKE_SCREENSHOT_BASEPLANE_ONLY );
 		break;
 	case SIGHUP:
 	case SIGQUIT:
