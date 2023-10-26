@@ -128,6 +128,7 @@ struct xwayland_ctx_t
 		Atom gamescopeCtrlWindowAtom;
 		Atom gamescopeInputCounterAtom;
 		Atom gamescopeScreenShotAtom;
+		Atom gamescopeDebugScreenShotAtom;
 
 		Atom gamescopeFocusDisplay;
 		Atom gamescopeMouseFocusDisplay;

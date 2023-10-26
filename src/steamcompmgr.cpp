@@ -5348,6 +5348,13 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			g_bPropertyRequestedScreenshot = true;
 		}
 	}
+	if ( ev->atom == ctx->atoms.gamescopeDebugScreenShotAtom )
+	{
+		if ( ev->state == PropertyNewValue )
+		{
+			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugScreenShotAtom, None );
+		}
+	}
 	if (ev->atom == ctx->atoms.gameAtom)
 	{
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
@@ -7166,6 +7173,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.WMChangeStateAtom = XInternAtom(ctx->dpy, "WM_CHANGE_STATE", false);
 	ctx->atoms.gamescopeInputCounterAtom = XInternAtom(ctx->dpy, "GAMESCOPE_INPUT_COUNTER", false);
 	ctx->atoms.gamescopeScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_REQUEST_SCREENSHOT", false );
+	ctx->atoms.gamescopeDebugScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_DEBUG_REQUEST_SCREENSHOT", false );
 
 	ctx->atoms.gamescopeFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUS_DISPLAY", false);
 	ctx->atoms.gamescopeMouseFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_MOUSE_FOCUS_DISPLAY", false);
