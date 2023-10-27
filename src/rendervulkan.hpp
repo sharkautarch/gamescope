@@ -719,11 +719,8 @@ public:
 	inline VkPhysicalDevice physDev() {return m_physDev; }
 	inline VkInstance instance() { return m_instance; }
 	inline VkQueue queue() {return m_queue;}
-	inline VkQueue generalQueue() {return m_generalQueue;}
 	inline VkCommandPool commandPool() {return m_commandPool;}
-	inline VkCommandPool generalCommandPool() {return m_generalCommandPool;}
 	inline uint32_t queueFamily() {return m_queueFamily;}
-	inline uint32_t generalQueueFamily() {return m_generalQueueFamily;}
 	inline VkBuffer uploadBuffer() {return m_uploadBuffer;}
 	inline VkPipelineLayout pipelineLayout() {return m_pipelineLayout;}
 	inline int drmRenderFd() {return m_drmRendererFd;}
@@ -774,17 +771,14 @@ protected:
 	VkPhysicalDevice m_physDev = nullptr;
 	VkInstance m_instance = nullptr;
 	VkQueue m_queue = nullptr;
-	VkQueue m_generalQueue = nullptr;
 	VkSamplerYcbcrConversion m_ycbcrConversion = VK_NULL_HANDLE;
 	VkSampler m_ycbcrSampler = VK_NULL_HANDLE;
 	VkDescriptorSetLayout m_descriptorSetLayout = VK_NULL_HANDLE;
 	VkPipelineLayout m_pipelineLayout = VK_NULL_HANDLE;
 	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 	VkCommandPool m_commandPool = VK_NULL_HANDLE;
-	VkCommandPool m_generalCommandPool = VK_NULL_HANDLE;
 
 	uint32_t m_queueFamily = -1;
-	uint32_t m_generalQueueFamily = -1;
 
 	int m_drmRendererFd = -1;
 	dev_t m_drmPrimaryDevId = 0;

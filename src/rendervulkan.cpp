@@ -333,7 +333,6 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 				}
 
 				m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
-				m_generalQueueFamily = generalIndex;
 				m_physDev = cphysDev;
 			}
 		}
@@ -347,7 +346,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 
 	VkPhysicalDeviceProperties props;
 	vk.GetPhysicalDeviceProperties( m_physDev, &props );
-	vk_log.infof( "selecting physical device '%s': queue family %x (general queue family %x)", props.deviceName, m_queueFamily, m_generalQueueFamily );
+	vk_log.infof( "selecting physical device '%s': queue family %x", props.deviceName, m_queueFamily );
 
 	return true;
 }
@@ -457,22 +456,12 @@ bool CVulkanDevice::createDevice()
 		.globalPriority = VK_QUEUE_GLOBAL_PRIORITY_REALTIME_EXT
 	};
 
-	VkDeviceQueueCreateInfo queueCreateInfos[2] = 
-	{
-		{
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
-			.queueFamilyIndex = m_queueFamily,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriorities
-		},
-		{
-			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
-			.queueFamilyIndex = m_generalQueueFamily,
-			.queueCount = 1,
-			.pQueuePriorities = &queuePriorities
-		},
+	VkDeviceQueueCreateInfo queueCreateInfo = {
+		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+		.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
+		.queueFamilyIndex = m_queueFamily,
+		.queueCount = 1,
+		.pQueuePriorities = &queuePriorities
 	};
 
 	std::vector< const char * > enabledExtensions;
@@ -548,8 +537,8 @@ bool CVulkanDevice::createDevice()
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
 		.pNext = &features2,
-		.queueCreateInfoCount = std::size(queueCreateInfos),
-		.pQueueCreateInfos = queueCreateInfos,
+		.queueCreateInfoCount = 1,
+		.pQueueCreateInfos = &queueCreateInfo,
 		.enabledExtensionCount = (uint32_t)enabledExtensions.size(),
 		.ppEnabledExtensionNames = enabledExtensions.data(),
 	};
@@ -578,17 +567,9 @@ bool CVulkanDevice::createDevice()
 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
 	if ( res == VK_ERROR_NOT_PERMITTED_KHR && g_bNiceCap )
 	{
-		fprintf(stderr, "vkCreateDevice failed with a high-priority queue (general + compute). Falling back to regular priority (general).\n");
-		queueCreateInfos[1].pNext = nullptr;
+		fprintf(stderr, "vkCreateDevice failed with a high-priority queue. Falling back to regular priority.\n");
+		queueCreateInfo.pNext = nullptr;
 		res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
-
-
-		if ( res == VK_ERROR_NOT_PERMITTED_KHR && g_bNiceCap )
-		{
-			fprintf(stderr, "vkCreateDevice failed with a high-priority queue (compute). Falling back to regular priority (all).\n");
-			queueCreateInfos[0].pNext = nullptr;
-			res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
-		}
 	}
 
 	if ( res != VK_SUCCESS )
@@ -602,7 +583,6 @@ bool CVulkanDevice::createDevice()
 	#undef VK_FUNC
 
 	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
-	vk.GetDeviceQueue(device(), m_generalQueueFamily, 0, &m_generalQueue);
 
 	return true;
 }
@@ -777,24 +757,7 @@ bool CVulkanDevice::createPools()
 		return false;
 	}
 
-	VkCommandPoolCreateInfo generalCommandPoolCreateInfo = {
-		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-		.queueFamilyIndex = m_generalQueueFamily,
-	};
-
-	res = vk.CreateCommandPool(device(), &generalCommandPoolCreateInfo, nullptr, &m_generalCommandPool);
-	if ( res != VK_SUCCESS )
-	{
-		vk_errorf( res, "vkCreateCommandPool failed" );
-		return false;
-	}
-
-	VkDescriptorPoolSize poolSizes[3] {
-		{
-			VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-			uint32_t(m_descriptorSets.size()),
-		},
+	VkDescriptorPoolSize poolSizes[2] {
 		{
 			VK_DESCRIPTOR_TYPE_STORAGE_IMAGE,
 			uint32_t(m_descriptorSets.size()) * 2,
