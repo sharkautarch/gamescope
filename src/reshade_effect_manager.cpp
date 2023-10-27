@@ -907,7 +907,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 		VkCommandBufferAllocateInfo commandBufferAllocateInfo =
         {
 			.sType              = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-			.commandPool        = device->generalCommandPool(),
+			.commandPool        = device->commandPool();
 			.level              = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
 			.commandBufferCount = 1
 		};
