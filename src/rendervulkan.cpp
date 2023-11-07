@@ -3420,12 +3420,37 @@ struct RcasPushData_t
 		FsrRcasCon(&tmp.x, sharpness);
 		u_layer0Offset.x = uint32_t(int32_t(frameInfo->layers[0].offset.x));
 		u_layer0Offset.y = uint32_t(int32_t(frameInfo->layers[0].offset.y));
-		u_opacity[0] = frameInfo->layers[0].opacity;
-        u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
 		u_borderMask = frameInfo->borderMask() >> 1u;
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
-		
+
+		for (int i = 0; i < frameInfo->layerCount; i++)
+		{
+			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
+
+            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+                u_shaderFilter[i] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+            else
+                u_shaderFilter[i] = (uint32_t)layer->filter;
+
+			if (layer->ctm)
+			{
+				ctm[i] = layer->ctm->matrix;
+			}
+			else
+			{
+				ctm[i] = glm::mat3x4
+				{
+					1, 0, 0, 0,
+					0, 1, 0, 0,
+					0, 0, 1, 0
+				};
+			}
+
+			u_opacity[i] = frameInfo->layers[i].opacity;
+		}
+		u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+
 		u_linearToNits = g_flInternalDisplayBrightnessNits;
 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
 		u_itmSdrNits = g_flHDRItmSdrNits;
@@ -3435,7 +3460,6 @@ struct RcasPushData_t
 		{
 			u_scale[i - 1] = frameInfo->layers[i].scale;
 			u_offset[i - 1] = frameInfo->layers[i].offsetPixelCenter();
-			u_opacity[i] = frameInfo->layers[i].opacity;
 		}
 	}
 };
