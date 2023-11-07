@@ -111,28 +111,35 @@ static uint32_t get_conn_display_info_flags(struct drm_t *drm, struct connector 
 	return flags;
 }
 
-static void update_connector_display_info_wl(struct drm_t *drm)
+void drm_send_gamescope_control(wl_resource *control, struct drm_t *drm)
 {
+	// assumes wlserver_lock HELD!
+
 	if ( !drm->connector )
 		return;
 
 	auto& conn = drm->connector;
 
+	uint32_t flags = get_conn_display_info_flags( drm, drm->connector );
+
+	struct wl_array display_rates;
+	wl_array_init(&display_rates);
+	if ( conn->valid_display_rates.size() )
+	{
+		size_t size = conn->valid_display_rates.size() * sizeof(uint32_t);
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
+		memcpy( ptr, conn->valid_display_rates.data(), size );
+	}
+	gamescope_control_send_active_display_info( control, drm->connector->name, drm->connector->make, drm->connector->model, flags, &display_rates );
+	wl_array_release(&display_rates);
+}
+
+static void update_connector_display_info_wl(struct drm_t *drm)
+{
 	wlserver_lock();
 	for ( const auto &control : wlserver.gamescope_controls )
 	{
-		uint32_t flags = get_conn_display_info_flags( drm, drm->connector );
-
-		struct wl_array display_rates;
-		wl_array_init(&display_rates);
-		if ( conn->valid_display_rates.size() )
-		{
-			size_t size = conn->valid_display_rates.size() * sizeof(uint32_t);
-			uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
-			memcpy( ptr, conn->valid_display_rates.data(), size );
-		}
-		gamescope_control_send_active_display_info( control, drm->connector->name, drm->connector->make, drm->connector->model, flags, &display_rates );
-		wl_array_release(&display_rates);
+		drm_send_gamescope_control(control, drm);
 	}
 	wlserver_unlock();
 }

@@ -892,6 +892,11 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PIXEL_FILTER, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
+	if ( !BIsNested() )
+	{
+		drm_send_gamescope_control( resource, &g_DRM );
+	}
+
 	wlserver.gamescope_controls.push_back(resource);
 }
 
