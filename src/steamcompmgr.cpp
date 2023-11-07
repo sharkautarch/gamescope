@@ -294,6 +294,7 @@ bool g_bSupportsST2084_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
 bool g_bHDREnabled = false;
 bool g_bHDRItmEnable = false;
+int g_nCurrentRefreshRate_CachedValue = 0;
 
 static void
 update_color_mgmt()
@@ -7066,6 +7067,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeReshadeEffect = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_EFFECT", false );
 	ctx->atoms.gamescopeReshadeTechniqueIdx = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_TECHNIQUE_IDX", false );
 
+	ctx->atoms.gamescopeDisplayRefreshRateFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK", false );
+
 	ctx->atoms.wineHwndStyle = XInternAtom( ctx->dpy, "_WINE_HWND_STYLE", false );
 	ctx->atoms.wineHwndStyleEx = XInternAtom( ctx->dpy, "_WINE_HWND_EXSTYLE", false );
 
@@ -7171,6 +7174,15 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRRInUse, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&in_use_value, 1 );
 		g_bVRRInUse_CachedValue = in_use;
+		if (needs_flush)
+			*needs_flush = true;
+	}
+
+	if ( g_nOutputRefresh != g_nCurrentRefreshRate_CachedValue || force )
+	{
+		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayRefreshRateFeedback, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&g_nOutputRefresh, 1 );
+		g_nCurrentRefreshRate_CachedValue = g_nOutputRefresh;
 		if (needs_flush)
 			*needs_flush = true;
 	}

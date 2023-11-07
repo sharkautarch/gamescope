@@ -218,6 +218,8 @@ struct xwayland_ctx_t
 		Atom gamescopeReshadeEffect;
 		Atom gamescopeReshadeTechniqueIdx;
 
+		Atom gamescopeDisplayRefreshRateFeedback;
+
 		Atom wineHwndStyle;
 		Atom wineHwndStyleEx;
 
