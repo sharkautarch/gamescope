@@ -941,9 +941,35 @@ window_is_steam( steamcompmgr_win_t *w )
 	return w && ( w->isSteamLegacyBigPicture || w->appID == 769 );
 }
 
+bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
+
+static bool
+steamcompmgr_user_has_any_game_open()
+{
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+	{
+		if (!server->ctx)
+			continue;
+
+		if (server->ctx->focus.focusWindow && !window_is_steam(server->ctx->focus.focusWindow))
+			return true;
+	}
+
+	return false;
+}
+
 bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 {
 	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
+}
+
+bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
+{
+	if ( g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive )
+		return steamcompmgr_user_has_any_game_open();
+
+	return steamcompmgr_window_should_limit_fps( w );
 }
 
 
@@ -2581,7 +2607,7 @@ paint_all(bool async)
 
 	int nDynamicRefresh = g_nDynamicRefreshRate[drm_get_screen_type( &g_DRM )];
 
-	int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_limit_fps( global_focus.focusWindow )// && !global_focus.overlayWindow
+	int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_refresh_switch( global_focus.focusWindow )// && !global_focus.overlayWindow
 		? nDynamicRefresh
 		: drm_get_default_refresh( &g_DRM );
 
@@ -5998,6 +6024,10 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeReshadeEffect );
 		g_reshade_effect = path;
 	}
+	if (ev->atom == ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence)
+	{
+		g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence, 0);
+	}
 	if (ev->atom == ctx->atoms.wineHwndStyle)
 	{
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
@@ -7269,6 +7299,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeReshadeTechniqueIdx = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_TECHNIQUE_IDX", false );
 
 	ctx->atoms.gamescopeDisplayRefreshRateFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK", false );
+	ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_DYNAMIC_REFRESH_BASED_ON_GAME_PRESENCE", false );
 
 	ctx->atoms.wineHwndStyle = XInternAtom( ctx->dpy, "_WINE_HWND_STYLE", false );
 	ctx->atoms.wineHwndStyleEx = XInternAtom( ctx->dpy, "_WINE_HWND_EXSTYLE", false );
