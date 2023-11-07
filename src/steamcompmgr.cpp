@@ -2808,114 +2808,121 @@ paint_all(bool async)
 
 		std::shared_ptr<CVulkanTexture> pScreenshotTexture = vulkan_acquire_screenshot_texture(g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat);
 
-		assert( pScreenshotTexture != nullptr );
-
-		// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
-		for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+		if ( pScreenshotTexture )
 		{
-			frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-			frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
-		}
-		// Remove everything but base planes from the screenshot.
-		for (int i = 0; i < frameInfo.layerCount; i++)
-		{
-			if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+			// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
+			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 			{
-				frameInfo.layerCount = i;
-				break;
+				frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+				frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
 			}
-		}
-
-		bool bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
-		if ( bResult != true )
-		{
-			xwm_log.errorf("vulkan_screenshot failed");
-			return;
-		}
-
-		std::thread screenshotThread = std::thread([=] {
-			pthread_setname_np( pthread_self(), "gamescope-scrsh" );
-
-			const uint8_t *mappedData = pScreenshotTexture->mappedData();
-
-			if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
+			// Remove everything but base planes from the screenshot.
+			for (int i = 0; i < frameInfo.layerCount; i++)
 			{
-				// Make our own copy of the image to remove the alpha channel.
-				auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
-				const uint32_t comp = 4;
-				const uint32_t pitch = currentOutputWidth * comp;
-				for (uint32_t y = 0; y < currentOutputHeight; y++)
+				if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
 				{
-					for (uint32_t x = 0; x < currentOutputWidth; x++)
+					frameInfo.layerCount = i;
+					break;
+				}
+			}
+
+			bool bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+			if ( bResult != true )
+			{
+				xwm_log.errorf("vulkan_screenshot failed");
+				return;
+			}
+
+			std::thread screenshotThread = std::thread([=] {
+				pthread_setname_np( pthread_self(), "gamescope-scrsh" );
+
+				const uint8_t *mappedData = pScreenshotTexture->mappedData();
+
+				if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
+				{
+					// Make our own copy of the image to remove the alpha channel.
+					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+					const uint32_t comp = 4;
+					const uint32_t pitch = currentOutputWidth * comp;
+					for (uint32_t y = 0; y < currentOutputHeight; y++)
 					{
-						// BGR...
-						imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
-						imageData[y * pitch + x * comp + 1] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 1];
-						imageData[y * pitch + x * comp + 2] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 0];
-						imageData[y * pitch + x * comp + 3] = 255;
+						for (uint32_t x = 0; x < currentOutputWidth; x++)
+						{
+							// BGR...
+							imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
+							imageData[y * pitch + x * comp + 1] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 1];
+							imageData[y * pitch + x * comp + 2] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 0];
+							imageData[y * pitch + x * comp + 3] = 255;
+						}
 					}
-				}
 
-				char pTimeBuffer[1024] = "/tmp/gamescope.png";
+					char pTimeBuffer[1024] = "/tmp/gamescope.png";
 
-				if ( !propertyRequestedScreenshot )
-				{
-					time_t currentTime = time(0);
-					struct tm *localTime = localtime( &currentTime );
-					strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
-				}
+					if ( !propertyRequestedScreenshot )
+					{
+						time_t currentTime = time(0);
+						struct tm *localTime = localtime( &currentTime );
+						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
+					}
 
-				if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
-				{
-					xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
-				}
-				else
-				{
-					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
-				}
-			}
-			else if (pScreenshotTexture->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
-			{
-				char pTimeBuffer[1024] = "/tmp/gamescope.raw";
-
-				if ( !propertyRequestedScreenshot )
-				{
-					time_t currentTime = time(0);
-					struct tm *localTime = localtime( &currentTime );
-					strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.raw", localTime );
-				}
-
-				FILE *file = fopen(pTimeBuffer, "wb");
-				if (file)
-				{
-					fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
-					fclose(file);
-
-					char cmd[4096];
-					sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), pTimeBuffer, pTimeBuffer);
-
-					int ret = system(cmd);
-
-					/* Above call may fail, ffmpeg returns 0 on success */
-					if (ret) {
-						xwm_log.infof("Ffmpeg call return status %i", ret);
-						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
-					} else {
+					if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
+					{
 						xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 					}
+					else
+					{
+						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					}
 				}
-				else
+				else if (pScreenshotTexture->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				{
-					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					char pTimeBuffer[1024] = "/tmp/gamescope.raw";
+
+					if ( !propertyRequestedScreenshot )
+					{
+						time_t currentTime = time(0);
+						struct tm *localTime = localtime( &currentTime );
+						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.raw", localTime );
+					}
+
+					FILE *file = fopen(pTimeBuffer, "wb");
+					if (file)
+					{
+						fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
+						fclose(file);
+
+						char cmd[4096];
+						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), pTimeBuffer, pTimeBuffer);
+
+						int ret = system(cmd);
+
+						/* Above call may fail, ffmpeg returns 0 on success */
+						if (ret) {
+							xwm_log.infof("Ffmpeg call return status %i", ret);
+							xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+						} else {
+							xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+						}
+					}
+					else
+					{
+						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					}
 				}
-			}
 
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+			});
+
+			screenshotThread.detach();
+
+			takeScreenshot = false;
+		}
+		else
+		{
+			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
 			XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
-		});
-
-		screenshotThread.detach();
-
-		takeScreenshot = false;
+			takeScreenshot = false;
+		}
 	}
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
