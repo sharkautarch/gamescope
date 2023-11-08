@@ -514,9 +514,11 @@ namespace GamescopeWSILayer {
             const char*                  pLayerName,
             uint32_t*                    pPropertyCount,
             VkExtensionProperties*       pProperties) {
-      static constexpr std::array<VkExtensionProperties, 1> s_LayerExposedExts = {{
+      static constexpr std::array<VkExtensionProperties, 2> s_LayerExposedExts = {{
         { VK_EXT_HDR_METADATA_EXTENSION_NAME,
           VK_EXT_HDR_METADATA_SPEC_VERSION },
+        { VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
+          VK_GOOGLE_DISPLAY_TIMING_SPEC_VERSION },
       }};
 
       if (pLayerName) {

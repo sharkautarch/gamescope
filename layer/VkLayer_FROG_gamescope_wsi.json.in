@@ -10,16 +10,6 @@
       "functions": {
          "vkNegotiateLoaderLayerInterfaceVersion": "vkNegotiateLoaderLayerInterfaceVersion"
       },
-      "device_extensions": [
-          {
-              "name" : "VK_GOOGLE_display_timing",
-              "spec_version" : "1",
-              "entrypoints": [
-                "vkGetPastPresentationTimingGOOGLE",
-                "vkGetRefreshCycleDurationGOOGLE"
-              ]
-          }
-      ],
       "enable_environment": {
         "ENABLE_GAMESCOPE_WSI": "1"
       },
