@@ -3341,6 +3341,12 @@ struct BlitPushData_t
 		offset[0] = { 0.5f, 0.5f };
 		opacity[0] = 1.0f;
         u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::LINEAR;
+		ctm[0] = glm::mat3x4
+		{
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0
+		};
 		borderMask = 0;
 		frameId = s_frameId;
 
