@@ -143,6 +143,9 @@ long int timespec_to_nanos(struct timespec& spec)
 	return (long int)spec.tv_sec * 1'000'000'000l + spec.tv_nsec;
 }
 
+static void
+update_runtime_info();
+
 static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
 
@@ -763,7 +766,7 @@ static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
 static int g_nCombinedAppRefreshCycleOverride[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
 
-static void update_app_target_refresh_cycle()
+static void _update_app_target_refresh_cycle()
 {
 	if ( BIsNested() )
 	{
@@ -810,6 +813,14 @@ static void update_app_target_refresh_cycle()
 			return;
 		}
 	}
+}
+
+static void update_app_target_refresh_cycle()
+{
+	int nPrevFPSLimit = g_nSteamCompMgrTargetFPS;
+	_update_app_target_refresh_cycle();
+	if ( !!g_nSteamCompMgrTargetFPS != !!nPrevFPSLimit )
+		update_runtime_info();
 }
 
 void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps )
