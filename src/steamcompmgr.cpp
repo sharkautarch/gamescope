@@ -2783,16 +2783,16 @@ paint_all(bool async)
 		{
 			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 			{
-				frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-				frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+				compositeFrameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+				compositeFrameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
 			}
 			vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer, nullptr, false );
 			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 			{
 				if (g_ColorMgmtLuts[nInputEOTF].HasLuts())
 				{
-					frameInfo.shaperLut[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut1d;
-					frameInfo.lut3D[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut3d;
+					compositeFrameInfo.shaperLut[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut1d;
+					compositeFrameInfo.lut3D[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut3d;
 				}
 			}
 		}
