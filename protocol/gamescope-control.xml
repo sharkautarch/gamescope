@@ -40,6 +40,7 @@
       <entry name="reshade_shaders" value="1"/>
       <entry name="display_info" value="2"/>
       <entry name="pixel_filter" value="3"/>
+      <entry name="refresh_cycle_only_change_refresh_rate" value="4"/>
     </enum>
 
     <event name="feature_support">
@@ -68,6 +69,7 @@
     <enum name="target_refresh_cycle_flag" bitfield="true" since="2">
       <entry name="internal_display" value="0x1" summary="Whether we should change the target refresh cycle under external/internal display"/>
       <entry name="allow_refresh_switching" value="0x2" summary="Whether or not to allow refresh rate switching"/>
+      <entry name="only_change_refresh_rate" value="0x4" summary="Only change refresh rate but don't apply frame limiter fps cap"/>
     </enum>
 
     <request name="set_app_target_refresh_cycle" since="2">
