@@ -2964,7 +2964,7 @@ paint_all(bool async)
 
 		if ( pScreenshotTexture )
 		{
-			if ( takeScreenshot != TAKE_SCREENSHOT_SCREEN_BUFFER )
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 || takeScreenshot != TAKE_SCREENSHOT_SCREEN_BUFFER )
 			{
 				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
@@ -3011,7 +3011,9 @@ paint_all(bool async)
 			frameInfo.applyOutputColorMgmt = true;
 
 			bool bResult;
-			if ( takeScreenshot == TAKE_SCREENSHOT_FULL_COMPOSITION || takeScreenshot == TAKE_SCREENSHOT_SCREEN_BUFFER )
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
+				bResult = vulkan_composite( &frameInfo, pScreenshotTexture, false, false, nullptr );
+			else if ( takeScreenshot == TAKE_SCREENSHOT_FULL_COMPOSITION || takeScreenshot == TAKE_SCREENSHOT_SCREEN_BUFFER )
 				bResult = vulkan_composite( &frameInfo, nullptr, false, false, pScreenshotTexture );
 			else
 				bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );

@@ -17,7 +17,7 @@ layout(
 // UVUVUVUVUVUVUVU...
 
 const uint u_frameId = 0;
-const uint8_t u_shaderFilter[VKR_MAX_LAYERS] = { uint8_t(0), uint8_t(0), uint8_t(0), uint8_t(0), uint8_t(0), uint8_t(0) };
+const uint8_t u_shaderFilter[VKR_MAX_LAYERS] = { uint8_t(filter_linear_emulated), uint8_t(0), uint8_t(0), uint8_t(0), uint8_t(0), uint8_t(0) };
 const float u_linearToNits = 400.0f;
 const float u_nitsToLinear = 1.0f / 100.0f;
 const float u_itmSdrNits = 100.f;
@@ -29,6 +29,7 @@ uniform layers_t {
     vec2 u_offset[1];
     float u_opacity[1];
     mat3x4 u_ctm[1];
+    mat3x4 u_outputCTM;
     uint u_borderMask;
     uvec2 u_halfExtent;
 };
@@ -63,11 +64,11 @@ void main() {
     };
 
     vec3 avg_color = (color[0] + color[1] + color[2] + color[3]) / 4.0f;
-    vec2 uv = applyColorMatrix(avg_color, u_ctm[0]).yz;
+    vec2 uv = applyColorMatrix(avg_color, u_outputCTM).yz;
     imageStore(dst_chroma, chroma_uv, vec4(uv, 0.0f, 1.0f));
 
     for (int i = 0; i < 4; i++) {
-      float y = applyColorMatrix(color[i], u_ctm[0]).x;
+      float y = applyColorMatrix(color[i], u_outputCTM).x;
       imageStore(dst_luma, luma_uv + offset_table[i], vec4(y, 0.0f, 0.0f, 1.0f));
     }
   }

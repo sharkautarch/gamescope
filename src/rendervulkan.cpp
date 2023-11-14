@@ -3368,7 +3368,8 @@ struct CaptureConvertBlitData_t
 	vec2_t scale[1];
 	vec2_t offset[1];
 	float opacity[1];
-	mat3x4 ctm[1];
+	glm::mat3x4 ctm[1];
+	mat3x4 outputCTM;
 	uint32_t borderMask;
 	uint32_t halfExtent[2];
 
@@ -3377,7 +3378,13 @@ struct CaptureConvertBlitData_t
 		offset[0] = { 0.0f, 0.0f };
 		opacity[0] = 1.0f;
 		borderMask = 0;
-		ctm[0] = color_matrix;
+		ctm[0] = glm::mat3x4
+		{
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0
+		};
+		outputCTM = color_matrix;
 	}
 };
 
@@ -3752,7 +3759,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 			for (uint32_t i = 0; i < EOTF_Count; i++)
 				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
 
-			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Gamma22 ));
+			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
 			cmdBuffer->bindTexture(0, compositeImage);
 			cmdBuffer->setTextureSrgb(0, true);
 			cmdBuffer->setSamplerNearest(0, false);
