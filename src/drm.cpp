@@ -502,37 +502,31 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		}
 	}
 
-	if (connector->is_steam_deck_display)
+	const char *coloroverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
+	if (coloroverride && drm_get_connector_type(connector->connector) == DRM_SCREEN_TYPE_INTERNAL)
+	{
+		if (sscanf( coloroverride, "%f %f %f %f %f %f %f %f",
+			&metadata->colorimetry.primaries.r.x, &metadata->colorimetry.primaries.r.y,
+			&metadata->colorimetry.primaries.g.x, &metadata->colorimetry.primaries.g.y,
+			&metadata->colorimetry.primaries.b.x, &metadata->colorimetry.primaries.b.y,
+			&metadata->colorimetry.white.x, &metadata->colorimetry.white.y ) == 8 )
+		{
+			drm_log.infof("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected");
+		}
+		else
+		{
+			drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
+		}
+	}
+	else if (connector->is_steam_deck_display && !connector->is_galileo_display)
 	{
 		drm_log.infof("[colorimetry]: Steam Deck (internal display) detected.");
-		bool bUseDefaultDeckColors = true;
 
-		const char *coloroverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
-		if (coloroverride)
-		{
-			if (sscanf( coloroverride, "%f %f %f %f %f %f %f %f",
-				&metadata->colorimetry.primaries.r.x, &metadata->colorimetry.primaries.r.y,
-				&metadata->colorimetry.primaries.g.x, &metadata->colorimetry.primaries.g.y,
-				&metadata->colorimetry.primaries.b.x, &metadata->colorimetry.primaries.b.y,
-				&metadata->colorimetry.white.x, &metadata->colorimetry.white.y ) == 8 )
-			{
-				drm_log.infof("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected");
-				bUseDefaultDeckColors = false;
-			}
-			else
-			{
-				drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
-			}
-		}
-
-		if (bUseDefaultDeckColors)
-		{
-			// Hardcode Steam Deck display info to support
-			// BIOSes with missing info for this in EDID.
-			drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
-			metadata->colorimetry = displaycolorimetry_steamdeck_measured;
-			metadata->eotf = EOTF_Gamma22;
-		}
+		// Hardcode Steam Deck display info to support
+		// BIOSes with missing info for this in EDID.
+		drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
+		metadata->colorimetry = displaycolorimetry_steamdeck_measured;
+		metadata->eotf = EOTF_Gamma22;
 	}
 	else if (chroma && chroma->red_x != 0.0f)
 	{
