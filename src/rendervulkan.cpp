@@ -2951,7 +2951,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		return false;
 	}
 
-	if ( pOutput->outputFormatOverlay != VK_FORMAT_UNDEFINED )
+	if ( pOutput->outputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
 	{
 		VkFormat partialFormat = pOutput->outputFormatOverlay;
 

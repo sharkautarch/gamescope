@@ -107,6 +107,11 @@ extern bool g_bForceHDRSupportDebug;
 
 extern EStreamColorspace g_ForcedNV12ColorSpace;
 
+// Disable partial composition for now until we get
+// composite priorities working in libliftoff + also
+// use the proper libliftoff composite plane system.
+static constexpr bool kDisablePartialComposition = true;
+
 enum TakeScreenshotMode_t
 {
 	TAKE_SCREENSHOT_BASEPLANE_ONLY = 1, // Just the game/base plane

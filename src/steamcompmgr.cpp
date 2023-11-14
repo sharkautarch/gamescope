@@ -2647,11 +2647,6 @@ paint_all(bool async)
 		frameInfo.applyOutputColorMgmt = false;
 	}
 
-	// Disable partial composition for now until we get
-	// composite priorities working in libliftoff + also
-	// use the proper libliftoff composite plane system.
-	static constexpr bool kDisablePartialComposition = true;
-
 	bool bWantsPartialComposite = frameInfo.layerCount >= 3 && !kDisablePartialComposition;
 
 	bool bNeedsFullComposite = BIsNested();
