@@ -2782,7 +2782,27 @@ paint_all(bool async)
 		if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
 			g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
 
-		bool bResult = vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer );
+		bool bResult;
+		// If using a pipewire stream, apply screenshot color management.
+		if ( pPipewireTexture )
+		{
+			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+			{
+				frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+				frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+			}
+			vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer, nullptr, false );
+			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+			{
+				if (g_ColorMgmtLuts[nInputEOTF].HasLuts())
+				{
+					frameInfo.shaperLut[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut1d;
+					frameInfo.lut3D[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut3d;
+				}
+			}
+		}
+
+		bResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite, bDefer );
 
 		g_bWasCompositing = true;
 

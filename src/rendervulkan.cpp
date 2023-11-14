@@ -3550,7 +3550,7 @@ extern uint32_t g_reshade_technique_idx;
 std::unique_ptr<std::thread> defer_wait_thread;
 uint64_t defer_sequence = 0;
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer, std::shared_ptr<CVulkanTexture> pOutputOverride )
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
 	if ( defer_wait_thread )
 	{
@@ -3794,7 +3794,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		g_device.wait(sequence);
 	}
 
-	if ( !BIsSDLSession() && pOutputOverride == nullptr )
+	if ( !BIsSDLSession() && pOutputOverride == nullptr && increment )
 	{
 		g_output.nOutImage = ( g_output.nOutImage + 1 ) % 3;
 	}
