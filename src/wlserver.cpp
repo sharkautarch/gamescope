@@ -872,7 +872,6 @@ static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *cl
 
 static void gamescope_control_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
-	std::erase_if(wlserver.gamescope_controls, [=](auto control) { return control == resource; });
 	wl_resource_destroy( resource );
 }
 
@@ -884,7 +883,11 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 static void gamescope_control_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_control_interface, version, id );
-	wl_resource_set_implementation( resource, &gamescope_control_impl, NULL, NULL );
+	wl_resource_set_implementation( resource, &gamescope_control_impl, NULL,
+	[](struct wl_resource *resource)
+	{
+		std::erase_if(wlserver.gamescope_controls, [=](struct wl_resource *control) { return control == resource; });
+	});
 
 	// Send feature support
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_RESHADE_SHADERS, 1, 0 );
