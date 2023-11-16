@@ -2517,15 +2517,36 @@ paint_all(bool async)
 		}
 	}
 
-	if (overlay)
+	if (overlay && overlay->opacity)
 	{
-		if (overlay->opacity)
-		{
-			paint_window(overlay, overlay, &frameInfo, global_focus.cursor, PaintWindowFlag::DrawBorders);
+		paint_window(overlay, overlay, &frameInfo, global_focus.cursor, PaintWindowFlag::DrawBorders);
 
-			if ( overlay == global_focus.inputFocusWindow )
-				update_touch_scaling( &frameInfo );
-		}
+		if ( overlay == global_focus.inputFocusWindow )
+			update_touch_scaling( &frameInfo );
+	}
+	else
+	{
+		// HACK! HACK HACK HACK
+		// To avoid stutter when toggling the overlay on 
+		int curLayer = frameInfo.layerCount++;
+
+		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
+
+		layer->scale.x = 1.0f;
+		layer->scale.y = 1.0f;
+		layer->offset.x = 0.0f;
+		layer->offset.y = 0.0f;
+		layer->opacity = 1.0f; // BLAH
+		layer->zpos = g_zposOverlay;
+		layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
+
+		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
+		layer->ctm = nullptr;
+		layer->tex = vulkan_get_hacky_blank_texture();
+		layer->fbid = layer->tex->fbid();
+
+		layer->filter = GamescopeUpscaleFilter::NEAREST;
+		layer->blackBorder = true;
 	}
 
 	if (notification)

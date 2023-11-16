@@ -2726,6 +2726,32 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 	g_device.waitIdle(); // TODO: Sync this better
 }
 
+std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
+{
+	return g_output.temporaryHackyBlankImage;
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+{
+	CVulkanTexture::createFlags flags;
+	flags.bFlippable = !BIsNested();
+	flags.bSampled = true;
+	flags.bTransferDst = true;
+
+	auto texture = std::make_shared<CVulkanTexture>();
+	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+
+	void* dst = g_device.uploadBufferData( g_nOutputWidth * g_nOutputHeight * 4 );
+	memset( dst, 0x0, g_nOutputWidth * g_nOutputHeight * 4 );
+
+	auto cmdBuffer = g_device.commandBuffer();
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
+	g_device.submit(std::move(cmdBuffer));
+	g_device.waitIdle();
+
+	return texture;
+}
+
 #if HAVE_OPENVR
 std::shared_ptr<CVulkanTexture> vulkan_create_debug_white_texture()
 {
@@ -2950,6 +2976,9 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		vk_log.errorf( "failed to allocate buffer for KMS" );
 		return false;
 	}
+
+	// Oh no.
+	pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture();
 
 	if ( pOutput->outputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
 	{

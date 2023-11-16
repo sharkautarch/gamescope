@@ -391,6 +391,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size);
 std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth);
 void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data);
 
+std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
+
 bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 
 struct wlr_renderer *vulkan_renderer_create( void );
@@ -485,6 +487,7 @@ struct VulkanOutput_t
 	uint32_t nOutImage; // swapchain index in nested mode, or ping/pong between two RTs
 	std::vector<std::shared_ptr<CVulkanTexture>> outputImages;
 	std::vector<std::shared_ptr<CVulkanTexture>> outputImagesPartialOverlay;
+	std::shared_ptr<CVulkanTexture> temporaryHackyBlankImage;
 
 	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
 	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
