@@ -717,7 +717,7 @@ public:
 		return ret;
 	}
 
-	static const uint32_t upload_buffer_size = 1024 * 1024 * 4;
+	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
 	inline VkDevice device() { return m_device; }
 	inline VkPhysicalDevice physDev() {return m_physDev; }
@@ -738,7 +738,7 @@ public:
 
 	inline void *uploadBufferData(uint32_t size)
 	{
-		assert(size < upload_buffer_size);
+		assert(size <= upload_buffer_size);
 
 		m_uploadBufferOffset = align(m_uploadBufferOffset, 16);
 		if (m_uploadBufferOffset + size > upload_buffer_size)

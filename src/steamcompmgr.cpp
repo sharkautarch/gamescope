@@ -2532,8 +2532,10 @@ paint_all(bool async)
 
 		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
 
-		layer->scale.x = 1.0f;
-		layer->scale.y = 1.0f;
+		auto tex = vulkan_get_hacky_blank_texture();
+
+		layer->scale.x = g_nOutputWidth == tex->width() ? 1.0f : tex->width() / (float)g_nOutputWidth;
+		layer->scale.y = g_nOutputHeight == tex->height() ? 1.0f : tex->height() / (float)g_nOutputHeight;
 		layer->offset.x = 0.0f;
 		layer->offset.y = 0.0f;
 		layer->opacity = 1.0f; // BLAH
@@ -2542,8 +2544,8 @@ paint_all(bool async)
 
 		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 		layer->ctm = nullptr;
-		layer->tex = vulkan_get_hacky_blank_texture();
-		layer->fbid = layer->tex->fbid();
+		layer->tex = tex;
+		layer->fbid = tex->fbid();
 
 		layer->filter = GamescopeUpscaleFilter::NEAREST;
 		layer->blackBorder = true;

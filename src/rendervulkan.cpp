@@ -2738,11 +2738,15 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 
-	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+	// To match Steam's scaling, which is capped at 1080p
+	int width = std::min<int>( g_nOutputWidth, 1920 );
+	int height = std::min<int>( g_nOutputHeight, 1080 );
 
-	void* dst = g_device.uploadBufferData( g_nOutputWidth * g_nOutputHeight * 4 );
-	memset( dst, 0x0, g_nOutputWidth * g_nOutputHeight * 4 );
+	auto texture = std::make_shared<CVulkanTexture>();
+	assert( texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+
+	void* dst = g_device.uploadBufferData( width * height * 4 );
+	memset( dst, 0x0, width * height * 4 );
 
 	auto cmdBuffer = g_device.commandBuffer();
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
