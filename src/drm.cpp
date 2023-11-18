@@ -1345,6 +1345,14 @@ void load_pnps(void)
 	fclose(f);
 }
 
+static bool env_to_bool(const char *env)
+{
+	if (!env || !*env)
+		return false;
+
+	return !!atoi(env);
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync)
 {
 	load_pnps();
@@ -1398,6 +1406,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	g_bSupportsAsyncFlips = drmGetCap(drm->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap) == 0 && cap != 0;
 	if (!g_bSupportsAsyncFlips)
 		drm_log.errorf("Immediate flips are not supported by the KMS driver");
+
+	static bool async_disabled = env_to_bool(getenv("GAMESCOPE_DISABLE_ASYNC_FLIPS"));
+
+	if ( async_disabled )
+	{
+		g_bSupportsAsyncFlips = false;
+		drm_log.errorf("Immediate flips disabled from environment");
+	}
 
 	if (!get_resources(drm)) {
 		return false;
@@ -2302,14 +2318,6 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 	}
 
 	return entry;
-}
-
-static bool env_to_bool(const char *env)
-{
-	if (!env || !*env)
-		return false;
-
-	return !!atoi(env);
 }
 
 static bool is_liftoff_caching_enabled()
