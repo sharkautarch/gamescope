@@ -1508,16 +1508,27 @@ bool wlserver_init( void ) {
 		wlserver.wlr.xwayland_servers.emplace_back(std::move(server));
 	}
 
+	int failed_attempts = 0;
 	for (size_t i = 0; i < wlserver.wlr.xwayland_servers.size(); i++)
 	{
 		while (!wlserver.wlr.xwayland_servers[i]->is_xwayland_ready()) {
 			wl_display_flush_clients(wlserver.display);
+			// When running under gdb (debugging) there's a loop failure.
+			// Most likely cause is a race condition.
+			// This code gates it and allows gamescope to run.
+			// @FIXME: find out why the dispatch failure happens and remove the failed attempts.
 			if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
-				wl_log.errorf("wl_event_loop_dispatch failed\n");
-				return false;
+				failed_attempts += 1;
+				if (failed_attempts > 5) {
+					wl_log.errorf("wl_event_loop_dispatch failed too many times\n");
+					return false;
+				}
 			}
 		}
 	}
+
+	if (failed_attempts)
+		wl_log.errorf("wl_event_loop_dispatch had %d failures.\n", failed_attempts);
 
 	return true;
 }
