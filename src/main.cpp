@@ -57,6 +57,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "output-height", required_argument, nullptr, 'H' },
 	{ "sharpness", required_argument, nullptr, 0 },
 	{ "fsr-sharpness", required_argument, nullptr, 0 },
+	{ "vblank-never-spin", no_argument, nullptr, 0},
+	{ "vblank-sometimes-spin", no_argument, nullptr, 0},
+	{ "vblank-always-spin", no_argument, nullptr, 0},
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
@@ -157,6 +160,10 @@ const char usage[] =
 	"  --headless                     use headless backend (no window, no DRM output)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
+	"  --vblank-never-spin		  Vblank thread: Never busywait to send the next vblank\n"
+	"  --vblank-sometimes-spin	  Vblank thread: Sleep for most of the waiting time ~(2/3),\n"
+	"					then wakeup and busywait the quarter remaining time to reduce latency. (Default)\n"
+	"  --vblank-always-spin		  Vblank thread: Busywait the period between sending the next vblank as much as possible.\n"
 	"  --rt                           Use realtime scheduling\n"
 	"  -T, --stats-path               write statistics to path\n"
 	"  -C, --hide-cursor-delay        hide cursor image after delay\n"

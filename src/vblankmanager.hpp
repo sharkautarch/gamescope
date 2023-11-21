@@ -8,7 +8,7 @@ struct VBlankTimeInfo_t
         uint64_t pipe_write_time;
 };
 
-int vblank_init( void );
+int vblank_init( const bool never_busy_wait, const bool always_busy_wait );
 
 void vblank_mark_possible_vblank( uint64_t nanos );
 

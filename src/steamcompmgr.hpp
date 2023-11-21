@@ -10,8 +10,18 @@ extern uint32_t currentOutputHeight;
 
 unsigned int get_time_in_milliseconds(void);
 uint64_t get_time_in_nanos();
-void sleep_for_nanos(uint64_t nanos);
-void sleep_until_nanos(uint64_t nanos);
+int sleep_for_nanos(uint64_t nanos);
+int __sleep_for_nanos(uint64_t nanos, int extra_args, ts_pnt* args);
+int sleep_until_nanos(uint64_t nanos);
+int __sleep_until_nanos(uint64_t nanos, int extra_args, ts_pnt* args);
+
+#define sleep_for_nanos_ext(nanos, extra_args, ...) \
+	__sleep_for_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__})
+// -O3 should optimize the 
+//					     new ts_pnt[2]{...} out
+
+#define sleep_until_nanos_ext(nanos, extra_args, ...) \
+	__sleep_until_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__})
 
 void steamcompmgr_main(int argc, char **argv);
 
