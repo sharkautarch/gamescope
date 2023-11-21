@@ -1105,20 +1105,58 @@ uint64_t get_time_in_nanos()
 	return timespec_to_nanos(ts);
 }
 
-void sleep_for_nanos(uint64_t nanos)
+int __attribute__((always_inline)) __sleep_for_nanos(uint64_t nanos,int extra_args, ts_pnt* args)
 {
-	timespec ts;
+    	timespec ts;
 	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
 	ts.tv_nsec = long(nanos % 1'000'000'000ul);
-	nanosleep(&ts, nullptr);
+	
+    	if (extra_args < 4 && extra_args>1)
+    	{	
+    		ts=*args[0];
+    		timespec* rem=args[1];
+    		return nanosleep(&ts, rem);
+    		
+    	}
+    	else if (extra_args < 4 && extra_args)
+    	{
+    		timespec* rem=args[0];
+    		return nanosleep(&ts, rem);
+    	}
+	else
+		return nanosleep(&ts, nullptr);
 }
 
-void sleep_until_nanos(uint64_t nanos)
+int __attribute__((always_inline)) sleep_for_nanos(uint64_t nanos)
+{
+	return sleep_for_nanos_ext(nanos, 0);
+}
+
+
+
+int __attribute__((always_inline)) __sleep_until_nanos(uint64_t nanos, int extra_args, ts_pnt* args)
 {
 	uint64_t now = get_time_in_nanos();
 	if (now >= nanos)
-		return;
-	sleep_for_nanos(nanos - now);
+		return 0;
+    	if ( extra_args < 4 && extra_args>1)
+    	{
+    		timespec* ts=args[0];
+    		timespec* rem=args[1];
+    		return sleep_for_nanos_ext(nanos - now, extra_args, ts, rem);
+    	}
+	else if (extra_args < 4 && extra_args)
+    	{
+    		timespec* rem=args[0];
+		return sleep_for_nanos_ext(nanos - now, extra_args, rem);
+	}
+	else
+		return sleep_for_nanos(nanos - now);
+}
+
+int __attribute__((always_inline)) sleep_until_nanos(uint64_t nanos)
+{
+	return sleep_until_nanos_ext(nanos, 0);
 }
 
 unsigned int
@@ -7293,6 +7331,8 @@ steamcompmgr_main(int argc, char **argv)
 	int o;
 	int opt_index = -1;
 	bool bForceWindowsFullscreen = false;
+	bool never_busy_wait = false;
+	bool always_busy_wait = false;
 	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
 	{
 		const char *opt_name;
@@ -7359,6 +7399,10 @@ steamcompmgr_main(int argc, char **argv)
 					g_flHDRItmTargetNits = atof(optarg);
 				} else if (strcmp(opt_name, "framerate-limit") == 0) {
 					g_nSteamCompMgrTargetFPS = atoi(optarg);
+				} else if (strcmp(opt_name, "vblank-never-spin") == 0) {
+					never_busy_wait = true;
+				} else if (strcmp(opt_name, "vblank-always-spin") == 0) {
+					always_busy_wait = true;
 				} else if (strcmp(opt_name, "reshade-effect") == 0) {
 					g_reshade_effect = optarg;
 				} else if (strcmp(opt_name, "reshade-technique-idx") == 0) {
@@ -7400,7 +7444,7 @@ steamcompmgr_main(int argc, char **argv)
 		vrsession_steam_mode( steamMode );
 #endif
 
-	int vblankFD = vblank_init();
+	int vblankFD = vblank_init(never_busy_wait, always_busy_wait);
 	assert( vblankFD >= 0 );
 
 	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
