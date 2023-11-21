@@ -20,7 +20,15 @@
  * OTHER DEALINGS IN THE SOFTWARE.
  */
 
+#include <string>
+#include <cstring>
+#include <fstream>
+#include <sstream>
+#include <vector>
+#include <unordered_map>
+
 #include "modegen.hpp"
+#include "log.hpp"
 
 /* top/bottom margin size (% of height) - default: 1.8 */
 #define CVT_MARGIN_PERCENTAGE 1.8
@@ -363,3 +371,135 @@ void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int
 	snprintf(mode->name, sizeof(mode->name), "%dx%d@%d.00", mode->hdisplay, mode->vdisplay, vrefresh);
 }
 
+static LogScope xwm_log("modegen");
+
+// Custom modes for non-steam deck consoles
+// Custom mode allows loading a file with modelines that will be used
+// as is for output at different framerates
+std::string custom_directory;
+std::unordered_map<std::string, std::vector<uint32_t>> custom_framerates;
+std::unordered_map<std::string, std::vector<drmModeModeInfo>> custom_modes;
+
+uint32_t convert_modeline(std::string md, drmModeModeInfo *new_mode)
+{
+	// target_fps Modeline "NAME" pxclk  hdisplay hsync_start hsync_end htotal  vdisplay vsync_start vsync_end vtotal +HSync +VSync
+	std::istringstream mds(md);
+	std::string param;
+	getline(mds, param, ' ');
+	auto target_fps = atoi(param.c_str());
+
+	// Skip Modeline
+	getline(mds, param, ' ');
+
+	// Skip name for now
+	getline(mds, param, ' ');
+	// std::string name = param;
+	getline(mds, param, ' ');
+	new_mode->clock = uint32_t(1000 * atof(param.c_str()));
+
+	getline(mds, param, ' ');
+	new_mode->hdisplay = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->hsync_start = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->hsync_end = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->htotal = atoi(param.c_str());
+
+	getline(mds, param, ' ');
+	new_mode->vdisplay = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->vsync_start = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->vsync_end = atoi(param.c_str());
+	getline(mds, param, ' ');
+	new_mode->vtotal = atoi(param.c_str());
+
+	return target_fps;
+}
+
+void initialize_custom_modes(const char *dir) {
+	custom_directory.assign(dir);
+}
+
+int load_custom_modes(const char *pnp, const char *model) {
+	std::string fn(custom_directory);
+	fn.append("/");
+	fn.append(pnp);
+	fn.append("/");
+	fn.append(model);
+	fn.append(".txt");
+	std::ifstream file(fn);
+
+	auto key = std::string(pnp) + std::string(model);
+	if (!file.is_open() || file.bad())
+	{
+		xwm_log.errorf("Did not find or could not open modelines file: %s", fn.c_str());
+		custom_framerates[key] = {};
+		custom_modes[key] = {};
+		return 0;
+	}
+
+	std::vector<uint32_t> frame_rates = {};
+	std::vector<drmModeModeInfo> modes = {};
+
+	std::string line;
+	while (std::getline(file, line, '\n')) {
+		if (line[0] == '#') {
+			continue;
+		}
+
+		drmModeModeInfo drm;
+		auto target_fps = convert_modeline(line, &drm);
+		if (target_fps) {
+			frame_rates.push_back(target_fps);
+			modes.push_back(drm);
+		} else {
+			xwm_log.errorf("Invalid modeline: \"%s\"", line.c_str());
+		}
+	}
+
+	custom_framerates[key] = frame_rates;
+	custom_modes[key] = modes;
+	return frame_rates.size();
+}
+
+std::span<uint32_t> get_custom_framerates(const char *pnp, const char *model) {
+	auto key = std::string(pnp) + std::string(model);
+	if (!custom_framerates.contains(key))
+		load_custom_modes(pnp, model);
+
+	return std::span(custom_framerates[key]);
+}
+
+void generate_custom_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, const char *pnp, const char *model) {
+	*mode = *base;
+
+	auto key = std::string(pnp) + std::string(model);
+	if (!custom_modes.contains(key) && !load_custom_modes(pnp, model))
+		return;
+
+	auto frames = custom_framerates[key];
+	auto modes = custom_modes[key];
+	for (unsigned int i = 0; i < frames.size(); i++){
+		if (frames[i] == (uint32_t) vrefresh) {
+			auto m = modes.at(i);
+
+			mode->clock = m.clock;
+
+			mode->hdisplay = m.hdisplay;
+			mode->hsync_start = m.hsync_start;
+			mode->hsync_end = m.hsync_end;
+			mode->htotal = m.htotal;
+
+			mode->vdisplay = m.vdisplay;
+			mode->vsync_start = m.vsync_start;
+			mode->vsync_end = m.vsync_end;
+			mode->vtotal = m.vtotal;
+
+			break;
+		}
+	}
+
+	snprintf(mode->name, sizeof(mode->name), "%dx%d@%d.00", mode->hdisplay, mode->vdisplay, vrefresh);
+}
