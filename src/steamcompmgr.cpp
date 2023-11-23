@@ -138,9 +138,9 @@ std::string primarySelection;
 std::string g_reshade_effect{};
 uint32_t g_reshade_technique_idx = 0;
 
-uint64_t timespec_to_nanos(struct timespec& spec)
+long int timespec_to_nanos(struct timespec& spec)
 {
-	return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
+	return (long int)spec.tv_sec * 1'000'000'000l + spec.tv_nsec;
 }
 
 static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
@@ -997,7 +997,7 @@ retry:
 	uint64_t frametime;
 	if ( entry.mangoapp_nudge )
 	{
-		uint64_t now = get_time_in_nanos();
+		uint64_t now = (uint64_t)get_time_in_nanos();
 		static uint64_t lastFrameTime = now;
 		frametime = now - lastFrameTime;
 		lastFrameTime = now;
@@ -1097,66 +1097,12 @@ static inline void stats_printf( const char* format, ...)
 	}
 }
 
-uint64_t get_time_in_nanos()
+long int get_time_in_nanos()
 {
 	timespec ts;
 	// Kernel reports page flips with CLOCK_MONOTONIC.
 	clock_gettime(CLOCK_MONOTONIC, &ts);
 	return timespec_to_nanos(ts);
-}
-
-int __attribute__((always_inline)) __sleep_for_nanos(uint64_t nanos,int extra_args, ts_pnt* args)
-{
-    	timespec ts;
-	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
-	ts.tv_nsec = long(nanos % 1'000'000'000ul);
-	
-    	if (extra_args < 4 && extra_args>1)
-    	{	
-    		ts=*args[0];
-    		timespec* rem=args[1];
-    		return nanosleep(&ts, rem);
-    		
-    	}
-    	else if (extra_args < 4 && extra_args)
-    	{
-    		timespec* rem=args[0];
-    		return nanosleep(&ts, rem);
-    	}
-	else
-		return nanosleep(&ts, nullptr);
-}
-
-int __attribute__((always_inline)) sleep_for_nanos(uint64_t nanos)
-{
-	return sleep_for_nanos_ext(nanos, 0);
-}
-
-
-
-int __attribute__((always_inline)) __sleep_until_nanos(uint64_t nanos, int extra_args, ts_pnt* args)
-{
-	uint64_t now = get_time_in_nanos();
-	if (now >= nanos)
-		return 0;
-    	if ( extra_args < 4 && extra_args>1)
-    	{
-    		timespec* ts=args[0];
-    		timespec* rem=args[1];
-    		return sleep_for_nanos_ext(nanos - now, extra_args, ts, rem);
-    	}
-	else if (extra_args < 4 && extra_args)
-    	{
-    		timespec* rem=args[0];
-		return sleep_for_nanos_ext(nanos - now, extra_args, rem);
-	}
-	else
-		return sleep_for_nanos(nanos - now);
-}
-
-int __attribute__((always_inline)) sleep_until_nanos(uint64_t nanos)
-{
-	return sleep_until_nanos_ext(nanos, 0);
 }
 
 unsigned int
@@ -2528,7 +2474,7 @@ paint_all(bool async)
 		? nDynamicRefresh
 		: drm_get_default_refresh( &g_DRM );
 
-	uint64_t now = get_time_in_nanos();
+	uint64_t now = (uint64_t)get_time_in_nanos();
 
 	if ( g_nOutputRefresh == nTargetRefresh )
 		g_uDynamicRefreshEqualityTime = now;
@@ -6153,7 +6099,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 	// commits that were not ready to be presented based on their display timing.
 	std::vector< CommitDoneEntry_t > commits_before_their_time;
 
-	uint64_t now = get_time_in_nanos();
+	uint64_t now = (uint64_t)get_time_in_nanos();
 
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
@@ -6189,7 +6135,7 @@ void handle_done_commits_xdg()
 	// commits that were not ready to be presented based on their display timing.
 	std::vector< CommitDoneEntry_t > commits_before_their_time;
 
-	uint64_t now = get_time_in_nanos();
+	uint64_t now = (uint64_t)get_time_in_nanos();
 
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
@@ -6772,7 +6718,7 @@ dispatch_vblank( int fd )
 
 		g_SteamCompMgrVBlankTime = vblanktime;
 
-		uint64_t diff = get_time_in_nanos() - vblanktime.pipe_write_time;
+		uint64_t diff = (uint64_t)get_time_in_nanos() - vblanktime.pipe_write_time;
 
 		// give it 1 ms of slack from pipe to steamcompmgr... maybe too long
 		if ( diff > 1'000'000ul )
