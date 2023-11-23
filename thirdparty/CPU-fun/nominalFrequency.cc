@@ -134,14 +134,14 @@ static double __attribute__((optimize("-fno-unsafe-math-optimizations", "-fround
 }
 
 
-#if(LOMP_TARGET_ARCH_X86_64)
-[[noreturn]] static void __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) fatalError(char const * Format, ...) {
+#if defined(LOMP_TARGET_ARCH_X86_64)
+/*[[noreturn]] static void __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) fatalError(char const * Format, ...) {
   fflush(stdout);
   va_list VarArgs;
   va_start(VarArgs, Format);
   vfprintf(stderr, Format, VarArgs);
   exit(1);
-}
+}*/
 
 /* cpuid fun. Here since we need to check the sanity of the time-stamp-counter.
  */
@@ -212,7 +212,7 @@ static std::string CPUModelName() {
   char model[256];
   memset(&model[0], 0, sizeof(model));
 
-  for (unsigned int i = 0; i < ids; i++)
+  for (unsigned int i = 0; i < static_cast<unsigned int>(ids); i++)
     x86_cpuid(i + 0x80000002, 0, (cpuid_t *)(model + i * sizeof(cpuid_t)));
   // Remove trailing blanks.
   char * start = &model[0];
@@ -302,7 +302,7 @@ static bool readHWTickTimeFromName(double * time) {
   return true;
 }
 
-static double __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) readHWTickTime() {
+/*static double __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) readHWTickTime() {
   // First check whether TSC can sanely be used at all.
   if (!haveInvariantTSC()) {
     //fatalError("TSC may not be invariant. Use another clock!");
@@ -322,7 +322,7 @@ static double __attribute__((optimize("-fno-unsafe-math-optimizations", "-fround
 
   // OK, we can't find it, so we have to measure.
   return measureTSCtick();
-}
+}*/
 #endif
 
 // Try to see whether the clock actually ticks at the same rate as its value is enumerated in.

@@ -1,5 +1,6 @@
 #include <stdint.h>
-
+#include <sys/time.h>
+#include <time.h>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -11,11 +12,11 @@ extern uint32_t currentOutputHeight;
 typedef timespec* ts_pnt;
 
 unsigned int get_time_in_milliseconds(void);
-uint64_t get_time_in_nanos();
-int sleep_for_nanos(uint64_t nanos);
-int __sleep_for_nanos(uint64_t nanos, int extra_args, ts_pnt* args);
-int sleep_until_nanos(uint64_t nanos);
-int __sleep_until_nanos(uint64_t nanos, int extra_args, ts_pnt* args);
+long int get_time_in_nanos();
+inline int sleep_for_nanos(long int nanos);
+inline int __sleep_for_nanos(long int nanos, int extra_args, ts_pnt* args);
+inline int sleep_until_nanos(long int nanos);
+int __sleep_until_nanos(long int nanos, int extra_args, ts_pnt* args, long int now);
 
 #define sleep_for_nanos_ext(nanos, extra_args, ...) \
 	__sleep_for_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__})
@@ -23,7 +24,58 @@ int __sleep_until_nanos(uint64_t nanos, int extra_args, ts_pnt* args);
 //					     new ts_pnt[2]{...} out
 
 #define sleep_until_nanos_ext(nanos, extra_args, ...) \
-	__sleep_until_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__})
+	__sleep_until_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__}, get_time_in_nanos())
+	
+inline int __attribute__((always_inline)) __sleep_for_nanos(long int nanos, int extra_args, ts_pnt* args)
+{
+    	timespec ts;
+	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
+	ts.tv_nsec = long(nanos % 1'000'000'000ul);
+	
+    	if (extra_args>1)
+    	{	
+    		ts=*args[0];
+    		timespec* rem=args[1];
+    		return nanosleep(&ts, rem);
+    		
+    	}
+    	else if (extra_args)
+    	{
+    		timespec* rem=args[0];
+    		return nanosleep(&ts, rem);
+    	}
+	else
+		return nanosleep(&ts, nullptr);
+}
+
+inline int __attribute__((always_inline)) sleep_for_nanos(long int nanos)
+{
+	return sleep_for_nanos_ext(nanos, 0);
+}
+
+inline int __attribute__((always_inline)) sleep_until_nanos(long int nanos)
+{
+	return sleep_until_nanos_ext(nanos, 0);
+}
+
+inline int __attribute__((always_inline)) __sleep_until_nanos(long int nanos, int extra_args, ts_pnt* args, long int now)
+{
+	if (now >= nanos)
+		return 0;
+    	if (extra_args>1)
+    	{
+    		timespec* ts=args[0];
+    		timespec* rem=args[1];
+    		return sleep_for_nanos_ext(nanos - now, extra_args, ts, rem);
+    	}
+	else if (extra_args)
+    	{
+    		timespec* rem=args[0];
+		return sleep_for_nanos_ext(nanos - now, extra_args, rem);
+	}
+	else
+		return sleep_for_nanos(nanos - now);
+}
 
 void steamcompmgr_main(int argc, char **argv);
 

@@ -190,7 +190,7 @@ inline int __attribute__((const)) median(const uint16_t l, const uint16_t r) //c
 
 #define med(a,l,r) median(l,r)
 
-inline uint64_t __attribute__((nonnull(1))) IQM(uint16_t* a, const int n) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
+inline long int __attribute__((nonnull(1))) IQM(uint16_t* a, const int n) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
 {
     std::sort(a, a + n);
 
@@ -200,16 +200,16 @@ inline uint64_t __attribute__((nonnull(1))) IQM(uint16_t* a, const int n) //cred
 
     int r3 = std::min(med(a, mid_index + 1, n), n);
     
-    uint64_t sum=0;
+    long int sum=0;
     for (int i = r1; i < r3; i++)
     {
-    	sum += ( ((uint64_t) a[i]) * 500 ) << 1;
+    	sum += ( ((long int) a[i]) * 1000 );
     }
     return sum/(r3 - r1);
 }
 #undef med
 
-inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const uint64_t nanos, const uint64_t offset, const int32_t sleep_weight)
+inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long int nanos, const long int offset, const long int sleep_weight)
 {
 	timespec rem;
 	rem.tv_sec = 0l;
@@ -281,16 +281,16 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	uint16_t drawtimes_pending[64];
 	std::fill_n(drawtimes, 64, (uint16_t)(((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) >> 1)/500 )  );
 	int index=0;
-	uint64_t centered_mean = 1'000'000'000ul / std::max( (uint64_t) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh), 120ul);
-	uint64_t max_drawtime=2*centered_mean;
+	long int centered_mean = 1'000'000'000l / std::max( (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh), 120l);
+	long int max_drawtime=2*centered_mean;
 	
 	
-	const uint32_t sleep_weights[2] = {60, 40};
+	const long int sleep_weights[2] = {60, 40};
 	double vblank_begin=0.0;
-	uint64_t time_start = get_time_in_nanos();
+	long int time_start = get_time_in_nanos();
 	uint32_t counter = 0;
-	uint64_t lastDrawTime = g_uVblankDrawTimeNS;
-	uint64_t lastDrawTime_timestamp = get_time_in_nanos();
+	long int lastDrawTime = g_uVblankDrawTimeNS;
+	long int lastDrawTime_timestamp = get_time_in_nanos();
 	
 	double first_cycle_sleep_duration = 0.0;
 	long double drawTimeTime = get_time_in_nanos();
@@ -325,21 +325,21 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			vblank_begin=(double)get_time_in_nanos();
 
 		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-		const uint64_t nsecInterval = 1'000'000'000ul / refresh;
+		const long int nsecInterval = 1'000'000'000l / refresh;
 		const double nsecInterval_dec = (double)nsecInterval;
 		
 		// The redzone is relative to 60Hz, scale it by our
 		// target refresh so we don't miss submitting for vblank in DRM.
 		// (This fixes 4K@30Hz screens)
-		const uint64_t nsecToSec = 1'000'000'000ul;
+		const long int nsecToSec = 1'000'000'000l;
 		const drm_screen_type screen_type = drm_get_screen_type( &g_DRM );
-		const uint64_t redZone = screen_type == DRM_SCREEN_TYPE_INTERNAL
+		const long int redZone = screen_type == DRM_SCREEN_TYPE_INTERNAL
 			? g_uVblankDrawBufferRedZoneNS
 			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
 		
-		uint64_t drawTime;
-		uint64_t offset;
+		long int drawTime;
+		long int offset;
 	 	
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
@@ -422,7 +422,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				
 				rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
 			}
-			rollingMaxDrawTime = std::clamp(centered_mean/2, rollingMaxDrawTime, nsecInterval + nsecInterval/10);
+			rollingMaxDrawTime = (uint64_t)std::clamp(centered_mean/2, (long int) rollingMaxDrawTime, nsecInterval + nsecInterval/10);
 			if (counter % 300 == 0) 
 				std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
 			
@@ -456,7 +456,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 					  	((uint64_t)(std::max(  (uint16_t)((max_drawtime>>1)/500), *std::max_element(std::begin(drawtimes), std::end(drawtimes)))))
 					         * 500)
 					      <<1
-					, 8*nsecInterval/3);
+					, (uint64_t)(8*nsecInterval/3));
 			}
 			
 		}
@@ -500,7 +500,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 
 
 #endif
-		uint64_t targetPoint;
+		long int targetPoint;
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .15) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
@@ -626,8 +626,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	SKIPPING_SECOND_SLEEP:;
 		VBlankTimeInfo_t time_info =
 		{
-			.target_vblank_time = targetPoint + offset,
-			.pipe_write_time    = get_time_in_nanos(),
+			.target_vblank_time = static_cast<uint64_t>(targetPoint + offset),
+			.pipe_write_time    = static_cast<uint64_t>(get_time_in_nanos()),
 		};
 		if (counter % 300 == 0)
 			std::cout << "vblank cycle time before write(): " << ( (long double)(get_time_in_nanos()-vblank_begin) )/1'000'000.0L << "ms\n";
