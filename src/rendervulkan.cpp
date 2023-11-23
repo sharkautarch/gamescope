@@ -3893,36 +3893,6 @@ static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
 	return 0;
 }
 
-static bool renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
-{
-	abort(); // unreachable
-}
-
-static void renderer_end( struct wlr_renderer *renderer )
-{
-	abort(); // unreachable
-}
-
-static void renderer_clear( struct wlr_renderer *renderer, const float color[4] )
-{
-	abort(); // unreachable
-}
-
-static void renderer_scissor( struct wlr_renderer *renderer, struct wlr_box *box )
-{
-	abort(); // unreachable
-}
-
-static bool renderer_render_subtexture_with_matrix( struct wlr_renderer *renderer, struct wlr_texture *texture, const struct wlr_fbox *box, const float matrix[9], float alpha )
-{
-	abort(); // unreachable
-}
-
-static void renderer_render_quad_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
-{
-	abort(); // unreachable
-}
-
 static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
  )
 {
@@ -3950,18 +3920,18 @@ static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wl
 	return &tex->base;
 }
 
+static struct wlr_render_pass *renderer_begin_buffer_pass( struct wlr_renderer *renderer, struct wlr_buffer *buffer, const struct wlr_buffer_pass_options *options )
+{
+	abort(); // unreachable
+}
+
 static const struct wlr_renderer_impl renderer_impl = {
-	.begin = renderer_begin,
-	.end = renderer_end,
-	.clear = renderer_clear,
-	.scissor = renderer_scissor,
-	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
-	.render_quad_with_matrix = renderer_render_quad_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
 	.get_drm_fd = renderer_get_drm_fd,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 	.texture_from_buffer = renderer_texture_from_buffer,
+	.begin_buffer_pass = renderer_begin_buffer_pass,
 };
 
 struct wlr_renderer *vulkan_renderer_create( void )
