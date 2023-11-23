@@ -161,6 +161,120 @@ else
 #endif
 }
 
+#define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
+#define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
+inline void __attribute__((always_inline)) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+{
+	int64_t diff;
+	double res = 0.0;
+	double check_this_first = 0.0;
+	long double check_this = 0.0L;
+	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*4.0));
+	
+	const int64_t compared_to_const = (int64_t)llround(compared_to);
+	
+	int i = 0;
+	uint64_t prev = readCycleCount();
+	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	{
+		for (int j = i;j<2;j++)
+		{
+			uint64_t tsc_time_value = readCycleCount() + compared_int*(2-j)/( ((2+i)*(2+i)) - 1);
+			cpu_pause((uint64_t)tsc_time_value, true);
+		}
+		
+		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
+		//prev=readCycleCount();
+		int j=4-i;
+		
+		while ( res < compared_to && j < 3 )
+		{
+			j++;
+			res = DBL_MAX;
+		
+			cpu_pause(0, true);
+		
+			diff = (int64_t)readCycleCount() - (int64_t)prev;
+			if ( HMMM(diff < 0) )
+			{
+				std::cout << "oh noes\n";
+				continue; // in case tsc counter resets or something
+			}
+		
+			check_this_first = (double)diff * nsPerTick;
+			if ( HMMM(_isinf(check_this_first)) )
+			{
+				check_this = (long double)diff * nsPerTick_long;
+				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
+				{						       //     hopefully might reduce fruitless speculative execution
+					break;
+				}
+				res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
+			}
+			res = check_this_first;
+		}
+		
+		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
+		//prev=readCycleCount();
+		i++;
+	}
+}
+
+inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+{
+	int64_t diff;
+	double res = 0.0;
+	double check_this_first = 0.0;
+	long double check_this = 0.0L;
+	
+	const int64_t compared_to_const = (int64_t)llround(compared_to);
+	
+	int i = 0;
+	uint64_t prev = readCycleCount();
+	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	{
+		for (int j = i;j<2;j++)
+		{
+			cpu_pause(0, false);
+		}
+		
+		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
+		//prev=readCycleCount();
+		int j=4-i;
+		
+		while ( res < compared_to && j < 3 )
+		{
+			j++;
+			res = DBL_MAX;
+		
+			cpu_pause(0, false);
+		
+			diff = (int64_t)readCycleCount() - (int64_t)prev;
+			if ( HMMM(diff < 0) )
+			{
+				std::cout << "oh noes\n";
+				continue; // in case tsc counter resets or something
+			}
+		
+			check_this_first = (double)diff * nsPerTick;
+			if ( HMMM(_isinf(check_this_first)) )
+			{
+				check_this = (long double)diff * nsPerTick_long;
+				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
+				{						       //     hopefully might reduce fruitless speculative execution
+					break;
+				}
+				res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
+			}
+			res = check_this_first;
+		}
+		
+		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
+		//prev=readCycleCount();
+		i++;
+	}
+}
+
 #include <climits>
 inline int __attribute__((const, always_inline)) heaviside(const int v)
 {
@@ -260,9 +374,9 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 
 
 #ifdef __clang__
-void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const long double nsPerTick_long  )
+void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long double nsPerTick_long  )
 #else
-void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const long double nsPerTick_long  )
+void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long double nsPerTick_long  )
 #endif
 {
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
@@ -502,17 +616,14 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 #endif
 		long int targetPoint;
 
-#define HMMM(expr) __builtin_expect_with_probability(expr, 1, .15) //hmmm has slightly higher probability than meh
-#define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
+
 		if ( !neverBusyWait && ( alwaysBusyWait || sleep_cycle > 1 || offset*sleep_weights[sleep_cycle-1] / 100 < 1'000'000ll ) )
 		{
 			
-			int64_t diff;
-			double res = 0.0;
-			double check_this_first = 0.0;
-			long double check_this = 0.0L;
 			
-			uint64_t prev = readCycleCount();
+			if (counter % 300 == 0)
+				std::cout << "vblank cycle time before second wait: " << ( (long double)get_time_in_nanos()-vblank_begin )/1'000'000.0L << "ms\n";
+			
 			
 			double compared_to;
 			double now = (double)get_time_in_nanos();
@@ -523,59 +634,12 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			}
 			else
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now) - now;
+			const int64_t wait_start = get_time_in_nanos();
 			
-			
-			const uint64_t compared_int = (uint64_t)llround(compared_to/(nsPerTick*4.0));
-			if (counter % 300 == 0)
-				std::cout << "vblank cycle time before second wait: " << ( (long double)get_time_in_nanos()-vblank_begin )/1'000'000.0L << "ms\n";
-			
-			const int64_t compared_to_const = (int64_t)llround(compared_to);
-			uint64_t t_before_second_wait = get_time_in_nanos();
-			int i = 0;
-			while ( res < compared_to && (int64_t)get_time_in_nanos() < (int64_t)t_before_second_wait + compared_to_const)
-			{
-				for (int j = i;j<2;j++)
-				{
-					int64_t tsc_time_value = (int64_t)  readCycleCount() + (int64_t)compared_int*(2-j)/( ((2+i)*(2+i)) - 1);
-					if (tsc_time_value > 0)
-						cpu_pause((uint64_t)tsc_time_value, true);
-				}
-				
-				//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-				//prev=readCycleCount();
-				int j=4-i;
-				
-				while ( res < compared_to && j < 3 )
-				{
-					j++;
-					res = DBL_MAX;
-				
-					cpu_pause(0, true);
-				
-					diff = (int64_t)readCycleCount() - (int64_t)prev;
-					if ( diff < 0)
-					{
-						std::cout << "oh noes\n";
-						continue; // in case tsc counter resets or something
-					}
-				
-					check_this_first = (double)diff * nsPerTick;
-					if ( HMMM(_isinf(check_this_first)) )
-					{
-						check_this = (long double)diff * nsPerTick_long;
-						if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-						{						       //     hopefully might reduce fruitless speculative execution
-							break;
-						}
-						res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
-					}
-					res = check_this_first;
-				}
-				
-				//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-				//prev=readCycleCount();
-				i++;
-			}
+			if (cpu_supports_tpause)
+				spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
+			else
+				spin_wait(nsPerTick_long, nsPerTick, compared_to, wait_start);
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
@@ -675,62 +739,14 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		}
 		else if (!skip_post_vblank_idle)
 		{
-			
-			int64_t diff;
-			double res = 0.0;
-			double check_this_first = 0.0;
-			long double check_this = 0.0L;
-			
-			uint64_t prev = readCycleCount();
-			
 			double compared_to = (double) ( offset + adjusted_extra_sleep);
 			compared_to = fmin(compared_to, post_vblank_idle_time);
-			const uint64_t compared_int = (uint64_t)llroundl((long double)compared_to/(nsPerTick_long*4.0L));
-			const int64_t compared_to_const = (int64_t)llround(compared_to);
-			int64_t wait_start = get_time_in_nanos();
-			int i = 0;
+			const int64_t wait_start = get_time_in_nanos();
 			
-			while ( res < compared_to && (int64_t)get_time_in_nanos() < (int64_t)wait_start + compared_to_const)
-			{
-				for (int j = i;j<2;j++)
-				{
-					int64_t tsc_time_value = (int64_t)  readCycleCount() + (int64_t)compared_int*(2-j);
-					if (tsc_time_value > 0)
-						cpu_pause((uint64_t)tsc_time_value, true);
-				}
-				//compared_to = compared_to - (double) (get_time_in_nanos() - wait_start);
-				//prev=readCycleCount();
-				int j=4-i;
-				while ( res < compared_to && j < 3 )
-				{
-					j++;
-				
-					cpu_pause(0, true);
-				
-					diff = (int64_t)readCycleCount() - (int64_t)prev;
-					if ( diff < 0)
-					{
-						std::cout << "oh noes\n";
-						continue; // in case tsc counter resets or something
-					}
-				
-					check_this_first = (double)diff * nsPerTick;
-					if ( HMMM(_isinf(check_this_first)) )
-					{
-						check_this = (long double)diff * nsPerTick_long;
-						if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-						{						       //     hopefully might reduce fruitless speculative execution
-							break;
-						}
-						res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
-					}
-					res = check_this_first;
-				}
-				
-				//compared_to = compared_to - (double) (get_time_in_nanos() - wait_start);
-				//prev=readCycleCount();
-				i++;
-			}
+			if (cpu_supports_tpause)
+				spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
+			else
+				spin_wait(nsPerTick_long, nsPerTick, compared_to, wait_start);
 			
 			if (counter % 300 == 0)
 				std::cout << "post-vblank TPAUSE wait loop duration: " << (double)((int64_t) get_time_in_nanos() - wait_start)/1'000'000.0L << "ms\n";
@@ -801,10 +817,10 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 	}
 #endif
 	
-	
-	#define NEVER_BUSY_WAIT true,false,CANT_USE_CPU_TIMER
-	#define BALANCED_BUSY_WAIT false,false
-	#define ALWAYS_BUSY_WAIT false,true
+	#define supports_tpause __builtin_cpu_is("sapphirerapids") | __builtin_cpu_is("alderlake") | __builtin_cpu_is("tremont")
+	#define NEVER_BUSY_WAIT true,false,supports_tpause,CANT_USE_CPU_TIMER
+	#define BALANCED_BUSY_WAIT false,false,supports_tpause
+	#define ALWAYS_BUSY_WAIT false,true,supports_tpause
 	
 	if ( never_busy_wait ) {
 		std::thread vblankThread( vblankThreadRun, NEVER_BUSY_WAIT );
