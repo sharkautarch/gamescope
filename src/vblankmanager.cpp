@@ -160,16 +160,49 @@ else
 # undef _PAUSE
 #endif
 }
+int __attribute__((const)) median_trial(const int l, const int r) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
+{
+
+    int n = (int)r - (int)l + 1;
+
+    n = (n + 1) / 2 - 1;
+
+    return n + l;
+
+}
+//measures the time it takes to do a single pause instruction -> 512 trials.
+//returns the average of the 25% longest run times
+long int cpu_pause_get_upper_q_avg()
+{
+	const int num_test_runs=512;
+	long int trials[num_test_runs];
+	
+	for (int i = 0; i < num_test_runs; i++)
+	{
+		long int before = get_time_in_nanos();
+		cpu_pause(0, false);
+		trials[i]=get_time_in_nanos()-before;
+	}
+	
+	std::sort(trials, trials+num_test_runs);
+	
+	long int sum = 0;
+	for (int i = 3*num_test_runs/4; i < num_test_runs; i++) {
+		sum += trials[i];
+	}
+	
+	return sum/((long int)num_test_runs/4l);
+}
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
-inline void __attribute__((always_inline)) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-Oz"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 {
 	int64_t diff;
 	double res = 0.0;
 	double check_this_first = 0.0;
 	long double check_this = 0.0L;
-	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*4.0));
+	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*2.0L));
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
@@ -220,7 +253,7 @@ inline void __attribute__((always_inline)) spin_wait_w_tpause(const long double 
 	}
 }
 
-inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-Oz"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 {
 	int64_t diff;
 	double res = 0.0;
@@ -229,14 +262,18 @@ inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
+	const long int cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.0L*(long double)cpu_pause_time_len));
+	
 	int i = 0;
 	uint64_t prev = readCycleCount();
+	
+	for (long int k = 0; k < std::max(cpu_pause_loop_iter-1,0l); k += 2) {
+				cpu_pause(0, false);
+				cpu_pause(0, false);
+	}
+				
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
 	{
-		for (int j = i;j<2;j++)
-		{
-			cpu_pause(0, false);
-		}
 		
 		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
 		//prev=readCycleCount();
@@ -274,6 +311,8 @@ inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick
 		i++;
 	}
 }
+
+
 
 #include <climits>
 inline int __attribute__((const, always_inline)) heaviside(const int v)
@@ -351,7 +390,7 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 #ifdef __clang__
 double __attribute__((const, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now )
 #endif
 {
 
@@ -359,13 +398,14 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
         
         
 	double targetPoint = lastVblank + nsecInterval;
-	
 	double dist_to_target = now - targetPoint;
+	
         
         targetPoint = (dist_to_target>0.0) * (nsecInterval*ceil(dist_to_target/(nsecInterval)))
-	       + targetPoint;
+         		+ targetPoint;
 	
 	double relativePoint = targetPoint - now;
+	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
 	
 	double cappedTargetPoint = fmin(nsecInterval*limitFactor, relativePoint) + now;
 	
@@ -374,9 +414,9 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 
 
 #ifdef __clang__
-void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long double nsPerTick_long  )
+void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #else
-void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long double nsPerTick_long  )
+void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #endif
 {
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
@@ -426,11 +466,13 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
 	
-	const double targetPoint_max_percent_of_refresh_vsync_value = 1.50; //Don't confuse this variable with the one above.
+	const double targetPoint_max_percent_of_refresh_vsync_value = 1.0; //Don't confuse this variable with the one above.
 	// ^ this limits how much we stretch out steamcompmanager's vsync in order to line up with the past vblank time reported by steamcompmanager
 	
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
+	
+	const double targetPoint_ignore_over_percent_of_refresh = 1.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
 	
 	while ( true )
 	{
@@ -629,21 +671,21 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			double now = (double)get_time_in_nanos();
 			if (sleep_cycle > 1)
 			{
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)  - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)  - now;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now) - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now) - now;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			if (cpu_supports_tpause)
 				spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
 			else
-				spin_wait(nsPerTick_long, nsPerTick, compared_to, wait_start);
+				spin_wait(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
 		}
 		else
 		{
@@ -657,7 +699,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (sleep_cycle < 2)
 			{
 				double first_cycle_sleep_start = now;
-				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now )-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
+				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now )-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
 				sleep_until_nanos_retrying( targetPoint, offset, (int32_t) sleep_weights[1]); 
 				
 				now = (double)get_time_in_nanos();
@@ -666,20 +708,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now));
+					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
 			else
 			{
-				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now ));
+				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now ));
 				targetPoint = now + fmax(targetPoint - now - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 				now = (double)get_time_in_nanos();
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
 		}
 		
 		if (sleep_cycle < 2)
@@ -746,7 +788,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (cpu_supports_tpause)
 				spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
 			else
-				spin_wait(nsPerTick_long, nsPerTick, compared_to, wait_start);
+				spin_wait(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 			
 			if (counter % 300 == 0)
 				std::cout << "post-vblank TPAUSE wait loop duration: " << (double)((int64_t) get_time_in_nanos() - wait_start)/1'000'000.0L << "ms\n";
@@ -816,11 +858,12 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 		return g_vblankPipe[ 0 ];
 	}
 #endif
-	
+	long int cpu_pause_time_len = cpu_pause_get_upper_q_avg();
 	#define supports_tpause __builtin_cpu_is("sapphirerapids") | __builtin_cpu_is("alderlake") | __builtin_cpu_is("tremont")
-	#define NEVER_BUSY_WAIT true,false,supports_tpause,CANT_USE_CPU_TIMER
-	#define BALANCED_BUSY_WAIT false,false,supports_tpause
-	#define ALWAYS_BUSY_WAIT false,true,supports_tpause
+
+	#define NEVER_BUSY_WAIT true,false,supports_tpause,cpu_pause_time_len,CANT_USE_CPU_TIMER
+	#define BALANCED_BUSY_WAIT false,false,supports_tpause,cpu_pause_time_len
+	#define ALWAYS_BUSY_WAIT false,true,supports_tpause,cpu_pause_time_len
 	
 	if ( never_busy_wait ) {
 		std::thread vblankThread( vblankThreadRun, NEVER_BUSY_WAIT );
