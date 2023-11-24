@@ -444,7 +444,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long int time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	long int lastDrawTime = g_uVblankDrawTimeNS;
-	long int lastDrawTime_timestamp = get_time_in_nanos();
+	
 	
 	double first_cycle_sleep_duration = 0.0;
 	long double drawTimeTime = get_time_in_nanos();
@@ -541,22 +541,9 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 					local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
 				}
 				
-				double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
-				double sinc = (double) (heaviside((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp)) * sin(radians)/fmax(radians, 0.0000001);
-				
-				double delta_check = pow(fmax((double)( sinc*fabs((int64_t)lastDrawTime - (int64_t)drawTime)), 1.0 )/100000.0, 2);
-				double delta = fmax( delta_check * (double)(heaviside( (int64_t)nsecInterval/1000000 - ((int) round(2.0*delta_check)))) , 1);
-				//						^ branchless way of checking if value delta_check is so large that it'll mess up
-				//						  the rollingMaxDrawTime calculations
-				double ratio = ((double)drawTime) / ( fmax( ((double) heaviside( (int64_t) nsecInterval - (int64_t)lastDrawTime)) * ( (double) lastDrawTime), drawTime ) );
-				rollingMaxDrawTime = (uint64_t)(llroundl( (double) fmax( (double) centered_mean, (double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))
-				      		* ratio /( delta)));
+				rollingMaxDrawTime =   ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
 				if (counter % 300 == 0) {
-		        		std::cout << "delta= " << delta << "\n";
-		        		std::cout << "(double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))* ratio /( delta):\n";
-		        		std::cout << (double) (( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range)) * ratio /( delta) << "\n\n";
-		        		std::cout << "ratio= " << ratio << "\n";
-					std::cout << "rollingMaxDrawTime after using fmin: " << rollingMaxDrawTime << "\n";
+					std::cout << "rollingMaxDrawTime: " << rollingMaxDrawTime << "\n";
 				}
 			}
 			if ((double)real_delta < 0.0)
@@ -755,7 +742,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
 		last_real_delta=real_delta;
 		
-		lastDrawTime_timestamp=get_time_in_nanos();
+		
 		
 		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
 		if ( this_time > 5)
