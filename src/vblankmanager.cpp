@@ -414,10 +414,11 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	static long double relativePoint_prev = relativePoint;
 	
 	
-	
+	fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmax(relativePoint_prev, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
-	
+	fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
+	fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	double temp;
 	if (savePoint)
 	{
@@ -475,7 +476,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 		}
 	}
 	
-	fprintf( stdout, "relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
+	fprintf( stdout, "3 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
