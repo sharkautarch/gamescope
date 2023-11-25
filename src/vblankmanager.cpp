@@ -202,7 +202,7 @@ inline void __attribute__((optimize("-Oz"))) spin_wait_w_tpause(const long doubl
 	double res = 0.0;
 	double check_this_first = 0.0;
 	long double check_this = 0.0L;
-	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*2.0L));
+	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*3.5L));
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
