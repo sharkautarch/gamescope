@@ -413,7 +413,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	
 	
 	fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	relativePoint = fmax(relativePoint_prev, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
+	relativePoint = fmax(offset, relativePoint * (relativePoint < ( (nextafter(nsecInterval * ignoreFactor, 2*nsecInterval * ignoreFactor)) )    ));
 	fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
 	fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
