@@ -419,7 +419,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	}
 	
 	
-	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
+	relativePoint = fmax(*relativePoint_prev, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
 	
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
 	
@@ -541,7 +541,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
-	const double targetPoint_ignore_over_percent_of_refresh = 1.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
+	const double targetPoint_ignore_over_percent_of_refresh = 2.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
 	double relativePoint_prev = offset_dec;
 	while ( true )
 	{
