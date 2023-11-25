@@ -134,6 +134,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "reshade-effect", required_argument, nullptr, 0 },
 	{ "reshade-technique-idx", required_argument, nullptr, 0 },
 
+	// Steam Deck options
+	{ "mura-map", required_argument, nullptr, 0 },
+
 	{} // keep last
 };
 
@@ -227,6 +230,9 @@ const char usage[] =
 	"Reshade shader options:\n"
 	"  --reshade-effect               sets the name of a reshade shader to use in either /usr/share/gamescope/reshade/Shaders or ~/.local/share/gamescope/reshade/Shaders\n"
 	"  --reshade-technique-idx        sets technique idx to use from the reshade effect\n"
+	"\n"
+	"Steam Deck options:\n"
+	"  --mura-map                     Set the mura compensation map to use for the display. Takes in a path to the mura map.\n"
 	"\n"
 	"Keyboard shortcuts:\n"
 	"  Super + F                      toggle fullscreen\n"
@@ -406,7 +412,7 @@ static void handle_signal( int sig )
 {
 	switch ( sig ) {
 	case SIGUSR2:
-		take_screenshot();
+		take_screenshot( TAKE_SCREENSHOT_BASEPLANE_ONLY );
 		break;
 	case SIGHUP:
 	case SIGQUIT:

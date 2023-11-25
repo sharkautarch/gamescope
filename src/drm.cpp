@@ -85,6 +85,16 @@ static uint32_t steam_deck_display_rates[] =
 	60,
 };
 
+static uint32_t galileo_display_rates[] =
+{
+	45,47,48,49,
+	50,51,53,55,56,59,
+	60,62,64,65,66,68,
+	72,73,76,77,78,
+	80,81,82,84,85,86,87,88,
+	90,
+};
+
 static uint32_t get_conn_display_info_flags(struct drm_t *drm, struct connector *connector)
 {
 	if (!connector)
@@ -101,28 +111,35 @@ static uint32_t get_conn_display_info_flags(struct drm_t *drm, struct connector 
 	return flags;
 }
 
-static void update_connector_display_info_wl(struct drm_t *drm)
+void drm_send_gamescope_control(wl_resource *control, struct drm_t *drm)
 {
+	// assumes wlserver_lock HELD!
+
 	if ( !drm->connector )
 		return;
 
 	auto& conn = drm->connector;
 
+	uint32_t flags = get_conn_display_info_flags( drm, drm->connector );
+
+	struct wl_array display_rates;
+	wl_array_init(&display_rates);
+	if ( conn->valid_display_rates.size() )
+	{
+		size_t size = conn->valid_display_rates.size() * sizeof(uint32_t);
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
+		memcpy( ptr, conn->valid_display_rates.data(), size );
+	}
+	gamescope_control_send_active_display_info( control, drm->connector->name, drm->connector->make, drm->connector->model, flags, &display_rates );
+	wl_array_release(&display_rates);
+}
+
+static void update_connector_display_info_wl(struct drm_t *drm)
+{
 	wlserver_lock();
 	for ( const auto &control : wlserver.gamescope_controls )
 	{
-		uint32_t flags = get_conn_display_info_flags( drm, drm->connector );
-
-		struct wl_array display_rates;
-		wl_array_init(&display_rates);
-		if ( conn->valid_display_rates.size() )
-		{
-			size_t size = conn->valid_display_rates.size() * sizeof(uint32_t);
-			uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
-			memcpy( ptr, conn->valid_display_rates.data(), size );
-		}
-		gamescope_control_send_active_display_info( control, drm->connector->name, drm->connector->make, drm->connector->model, flags, &display_rates );
-		wl_array_release(&display_rates);
+		drm_send_gamescope_control(control, drm);
 	}
 	wlserver_unlock();
 }
@@ -216,7 +233,7 @@ static uint32_t pick_plane_format( const struct wlr_drm_format_set *formats, uin
 {
 	uint32_t result = DRM_FORMAT_INVALID;
 	for ( size_t i = 0; i < formats->len; i++ ) {
-		uint32_t fmt = formats->formats[i]->format;
+		uint32_t fmt = formats->formats[i].format;
 		if ( fmt == Xformat ) {
 			// Prefer formats without alpha channel for main plane
 			result = fmt;
@@ -485,37 +502,31 @@ drm_hdr_parse_edid(drm_t *drm, struct connector *connector, const struct di_edid
 		}
 	}
 
-	if (connector->is_steam_deck_display)
+	const char *coloroverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
+	if (coloroverride && drm_get_connector_type(connector->connector) == DRM_SCREEN_TYPE_INTERNAL)
+	{
+		if (sscanf( coloroverride, "%f %f %f %f %f %f %f %f",
+			&metadata->colorimetry.primaries.r.x, &metadata->colorimetry.primaries.r.y,
+			&metadata->colorimetry.primaries.g.x, &metadata->colorimetry.primaries.g.y,
+			&metadata->colorimetry.primaries.b.x, &metadata->colorimetry.primaries.b.y,
+			&metadata->colorimetry.white.x, &metadata->colorimetry.white.y ) == 8 )
+		{
+			drm_log.infof("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected");
+		}
+		else
+		{
+			drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
+		}
+	}
+	else if (connector->is_steam_deck_display && !connector->is_galileo_display)
 	{
 		drm_log.infof("[colorimetry]: Steam Deck (internal display) detected.");
-		bool bUseDefaultDeckColors = true;
 
-		const char *coloroverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
-		if (coloroverride)
-		{
-			if (sscanf( coloroverride, "%f %f %f %f %f %f %f %f",
-				&metadata->colorimetry.primaries.r.x, &metadata->colorimetry.primaries.r.y,
-				&metadata->colorimetry.primaries.g.x, &metadata->colorimetry.primaries.g.y,
-				&metadata->colorimetry.primaries.b.x, &metadata->colorimetry.primaries.b.y,
-				&metadata->colorimetry.white.x, &metadata->colorimetry.white.y ) == 8 )
-			{
-				drm_log.infof("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected");
-				bUseDefaultDeckColors = false;
-			}
-			else
-			{
-				drm_log.errorf("[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"");
-			}
-		}
-
-		if (bUseDefaultDeckColors)
-		{
-			// Hardcode Steam Deck display info to support
-			// BIOSes with missing info for this in EDID.
-			drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
-			metadata->colorimetry = displaycolorimetry_steamdeck_measured;
-			metadata->eotf = EOTF_Gamma22;
-		}
+		// Hardcode Steam Deck display info to support
+		// BIOSes with missing info for this in EDID.
+		drm_log.infof("[colorimetry]: using default steamdeck colorimetry");
+		metadata->colorimetry = displaycolorimetry_steamdeck_measured;
+		metadata->eotf = EOTF_Gamma22;
 	}
 	else if (chroma && chroma->red_x != 0.0f)
 	{
@@ -813,6 +824,9 @@ void drm_update_patched_edid( drm_t *drm )
 	create_patched_edid(drm->connector->edid_data.data(), drm->connector->edid_data.size(), drm, drm->connector);
 }
 
+#define GALILEO_SDC_PID 0x3003
+#define GALILEO_BOE_PID 0x3004
+
 static void parse_edid( drm_t *drm, struct connector *conn)
 {
 	memset(conn->make_pnp, 0, sizeof(conn->make_pnp));
@@ -883,8 +897,14 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
 
-	if ( conn->is_steam_deck_display )
-		conn->valid_display_rates = std::span(steam_deck_display_rates);
+	if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
+		conn->is_galileo_display = vendor_product->product;
+		conn->valid_display_rates = std::span(galileo_display_rates);
+	} else {
+		conn->is_galileo_display = 0;
+		if ( conn->is_steam_deck_display )
+			conn->valid_display_rates = std::span(steam_deck_display_rates);
+	}
 
 	drm_hdr_parse_edid(drm, conn, edid);
 
@@ -1325,6 +1345,14 @@ void load_pnps(void)
 	fclose(f);
 }
 
+static bool env_to_bool(const char *env)
+{
+	if (!env || !*env)
+		return false;
+
+	return !!atoi(env);
+}
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync)
 {
 	load_pnps();
@@ -1378,6 +1406,14 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_
 	g_bSupportsAsyncFlips = drmGetCap(drm->fd, DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP, &cap) == 0 && cap != 0;
 	if (!g_bSupportsAsyncFlips)
 		drm_log.errorf("Immediate flips are not supported by the KMS driver");
+
+	static bool async_disabled = env_to_bool(getenv("GAMESCOPE_DISABLE_ASYNC_FLIPS"));
+
+	if ( async_disabled )
+	{
+		g_bSupportsAsyncFlips = false;
+		drm_log.errorf("Immediate flips disabled from environment");
+	}
 
 	if (!get_resources(drm)) {
 		return false;
@@ -2284,14 +2320,6 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 	return entry;
 }
 
-static bool env_to_bool(const char *env)
-{
-	if (!env || !*env)
-		return false;
-
-	return !!atoi(env);
-}
-
 static bool is_liftoff_caching_enabled()
 {
 	static bool disabled = env_to_bool(getenv("GAMESCOPE_LIFTOFF_CACHE_DISABLE"));
@@ -3026,7 +3054,7 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 		case DRM_MODE_GENERATE_FIXED:
 			{
 				const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
-				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display );
+				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display, drm->connector->is_galileo_display );
 				break;
 			}
 		}

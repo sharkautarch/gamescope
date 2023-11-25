@@ -15,15 +15,16 @@ wayland_protos = dependency('wayland-protocols', version: '>=1.17')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
 cap_dep = dependency('libcap', required: false)
+epoll_dep = dependency('epoll-shim', required: false)
 glm_dep = dependency('glm')
 sdl_dep = dependency('SDL2')
 stb_dep = dependency('stb')
 
 wlroots_dep = dependency(
   'wlroots',
-  version: ['>= 0.16.0', '< 0.17.0'],
+  version: ['>= 0.17.0', '< 0.18.0'],
   fallback: ['wlroots', 'wlroots'],
-  default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]'],
+  default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
 
 displayinfo_dep = dependency(
@@ -132,7 +133,7 @@ endif
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
-      vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, pipewire_dep, librt_dep,
+      vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep,
     ],
     install: true,

@@ -1,39 +1,52 @@
+fs = import('fs')
+
 wayland_scanner_dep = dependency('wayland-scanner', native: true)
 wayland_scanner_path = wayland_scanner_dep.get_variable(pkgconfig: 'wayland_scanner')
 wayland_scanner = find_program(wayland_scanner_path, native: true)
 
+wayland_protos = dependency('wayland-protocols',
+	fallback: 'wayland-protocols',
+	default_options: ['tests=false'],
+)
+wl_protocol_dir = wayland_protos.get_variable('pkgdatadir')
+
 protocols = [
-	'gamescope-xwayland',
-	'gamescope-pipewire',
-	'gamescope-input-method',
-	'gamescope-tearing-control-unstable-v1',
-	'gamescope-control',
-	'gamescope-swapchain',
-	'xdg-shell',
-	'presentation-time',
+	# Upstream protocols
+	wl_protocol_dir / 'stable/xdg-shell/xdg-shell.xml',
+	wl_protocol_dir / 'stable/presentation-time/presentation-time.xml',
+
+	# Gamescope protocols
+	'gamescope-xwayland.xml',
+	'gamescope-pipewire.xml',
+	'gamescope-input-method.xml',
+	'gamescope-tearing-control-unstable-v1.xml',
+	'gamescope-control.xml',
+	'gamescope-swapchain.xml',
 ]
 
 protocols_client_src = []
 protocols_server_src = []
 
-foreach name : protocols
+foreach xml : protocols
+	name = fs.name(xml).replace('.xml', '')
+
 	code = custom_target(
 		name + '-protocol.c',
-		input: name + '.xml',
+		input: xml,
 		output: '@BASENAME@-protocol.c',
 		command: [wayland_scanner, 'private-code', '@INPUT@', '@OUTPUT@'],
 	)
 
 	server_header = custom_target(
 		name + '-protocol.h',
-		input: name + '.xml',
+		input: xml,
 		output: '@BASENAME@-protocol.h',
 		command: [wayland_scanner, 'server-header', '@INPUT@', '@OUTPUT@'],
 	)
 
 	client_header = custom_target(
 		name + '-client-protocol.h',
-		input: name + '.xml',
+		input: xml,
 		output: '@BASENAME@-client-protocol.h',
 		command: [wayland_scanner, 'client-header', '@INPUT@', '@OUTPUT@'],
 	)

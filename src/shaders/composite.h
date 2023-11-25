@@ -82,34 +82,33 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
         colorspace = colorspace_pq;
     }
 
+    // Shaper + 3D LUT path to match DRM.
+    uint plane_eotf = colorspace_to_eotf(colorspace);
+
     if (layer == 0 && checkDebugFlag(compositedebug_Heatmap))
     {
         // Debug HDR heatmap.
         color = hdr_heatmap(color, colorspace);
+        plane_eotf = EOTF_Gamma22;
     }
-    else
+
+
+    // The shaper TF is basically just a regamma to get into something the shaper LUT can handle.
+    //
+    // Despite naming, degamma + shaper TF are NOT necessarily the inverse of each other. ^^^
+    // This gets the color ready to go into the shaper LUT.
+    // ie. scRGB -> PQ
+    //
+    // We also need to do degamma here for non-linear views to blend in linear space.
+    // ie. PQ -> PQ would need us to manually do bilinear here.
+    bool lut3d_enabled = textureQueryLevels(s_shaperLut[plane_eotf]) != 0;
+    if (lut3d_enabled)
     {
-        // Shaper + 3D LUT path to match DRM.
-
-        uint plane_eotf = colorspace_to_eotf(colorspace);
-
-        // The shaper TF is basically just a regamma to get into something the shaper LUT can handle.
-        //
-        // Despite naming, degamma + shaper TF are NOT necessarily the inverse of each other. ^^^
-        // This gets the color ready to go into the shaper LUT.
-        // ie. scRGB -> PQ
-        //
-        // We also need to do degamma here for non-linear views to blend in linear space.
-        // ie. PQ -> PQ would need us to manually do bilinear here.
-        bool lut3d_enabled = textureQueryLevels(s_shaperLut[plane_eotf]) != 0;
-        if (lut3d_enabled)
-        {
-            color = colorspace_plane_shaper_tf(color, colorspace);
-            color = perform_1dlut(color, s_shaperLut[plane_eotf]);
-            color = perform_3dlut(color, s_lut3D[plane_eotf]);
-        }
-        color = colorspace_blend_tf(color, c_output_eotf);
+        color = colorspace_plane_shaper_tf(color, colorspace);
+        color = perform_1dlut(color, s_shaperLut[plane_eotf]);
+        color = perform_3dlut(color, s_lut3D[plane_eotf]);
     }
+    color = colorspace_blend_tf(color, c_output_eotf);
 
     return color;
 }

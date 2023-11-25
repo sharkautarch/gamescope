@@ -495,6 +495,24 @@ namespace GamescopeWSILayer {
       return VK_SUCCESS;
     }
 
+    static void GetPhysicalDeviceFeatures2(
+      const vkroots::VkInstanceDispatch* pDispatch,
+            VkPhysicalDevice             physicalDevice,
+            VkPhysicalDeviceFeatures2*   pFeatures) {
+      pDispatch->GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
+
+      auto pSwapchainMaintenance1Features = vkroots::FindInChainMutable<VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT, VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT>(pFeatures);
+      if (pSwapchainMaintenance1Features)
+        pSwapchainMaintenance1Features->swapchainMaintenance1 = VK_FALSE;
+    }
+
+    static void GetPhysicalDeviceFeatures2KHR(
+      const vkroots::VkInstanceDispatch* pDispatch,
+            VkPhysicalDevice             physicalDevice,
+            VkPhysicalDeviceFeatures2*   pFeatures) {
+      GetPhysicalDeviceFeatures2(pDispatch, physicalDevice, pFeatures);
+    }
+
     static void DestroySurfaceKHR(
       const vkroots::VkInstanceDispatch* pDispatch,
             VkInstance                   instance,
@@ -514,9 +532,11 @@ namespace GamescopeWSILayer {
             const char*                  pLayerName,
             uint32_t*                    pPropertyCount,
             VkExtensionProperties*       pProperties) {
-      static constexpr std::array<VkExtensionProperties, 1> s_LayerExposedExts = {{
+      static constexpr std::array<VkExtensionProperties, 2> s_LayerExposedExts = {{
         { VK_EXT_HDR_METADATA_EXTENSION_NAME,
           VK_EXT_HDR_METADATA_SPEC_VERSION },
+        { VK_GOOGLE_DISPLAY_TIMING_EXTENSION_NAME,
+          VK_GOOGLE_DISPLAY_TIMING_SPEC_VERSION },
       }};
 
       if (pLayerName) {
@@ -527,13 +547,25 @@ namespace GamescopeWSILayer {
         }
       }
 
-      return vkroots::helpers::append(
+      VkResult result = vkroots::helpers::append(
         pDispatch->EnumerateDeviceExtensionProperties,
         s_LayerExposedExts,
         pPropertyCount,
         pProperties,
         physicalDevice,
         pLayerName);
+
+      // Filter out extensions we don't/can't support in the layer.
+      if (pProperties) {
+        for (uint32_t i = 0; i < *pPropertyCount; i++) {
+          if (pProperties[i].extensionName == "VK_EXT_swapchain_maintenance1"sv) {
+            strcpy(pProperties[i].extensionName, "DISABLED_EXT_swapchain_maintenance1");
+            pProperties[i].specVersion = 0;
+          }
+        }
+      }
+
+      return result;
     }
 
   private:

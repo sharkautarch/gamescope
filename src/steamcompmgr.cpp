@@ -72,6 +72,7 @@
 #include <signal.h>
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
+#include "waitable.h"
 
 #include "steamcompmgr_shared.hpp"
 
@@ -103,6 +104,7 @@
 
 
 static LogScope xwm_log("xwm");
+LogScope g_WaitableLog("waitable");
 
 bool g_bWasPartialComposite = false;
 
@@ -138,10 +140,15 @@ std::string primarySelection;
 std::string g_reshade_effect{};
 uint32_t g_reshade_technique_idx = 0;
 
+bool g_bSteamIsActiveWindow = false;
+
 uint64_t timespec_to_nanos(struct timespec& spec)
 {
 	return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
 }
+
+static void
+update_runtime_info();
 
 static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -286,6 +293,16 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 	}
 }
 
+int g_nAsyncFlipsEnabled = 0;
+int g_nSteamMaxHeight = 0;
+bool g_bVRRCapable_CachedValue = false;
+bool g_bVRRInUse_CachedValue = false;
+bool g_bSupportsST2084_CachedValue = false;
+bool g_bForceHDR10OutputDebug = false;
+bool g_bHDREnabled = false;
+bool g_bHDRItmEnable = false;
+int g_nCurrentRefreshRate_CachedValue = 0;
+
 static void
 update_color_mgmt()
 {
@@ -295,6 +312,13 @@ update_color_mgmt()
 		drm_get_native_colorimetry( &g_DRM,
 			&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
 			&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
+	}
+	else if (g_bForceHDR10OutputDebug)
+	{
+		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_2020;
+		g_ColorMgmt.pending.displayEOTF = EOTF_PQ;
+		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_2020;
+		g_ColorMgmt.pending.outputEncodingEOTF = EOTF_PQ;
 	}
 	else
 	{
@@ -449,6 +473,96 @@ bool set_color_mgmt_enabled( bool bEnabled )
 	return true;
 }
 
+static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
+static std::shared_ptr<wlserver_ctm> s_MuraCTMBlob[DRM_SCREEN_TYPE_COUNT];
+static float g_flMuraScale = 1.0f;
+static bool g_bMuraCompensationDisabled = false;
+
+bool is_mura_correction_enabled()
+{
+	return s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )] != nullptr && !g_bMuraCompensationDisabled;
+}
+
+void update_mura_ctm()
+{
+	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	if (s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] == nullptr)
+		return;
+
+	static constexpr float kMuraMapScale = 0.0625f;
+	static constexpr float kMuraOffset = -127.0f / 255.0f;
+
+	// Mura's influence scales non-linearly with brightness, so we have an additional scale
+	// on top of the scale factor for the underlying mura map.
+	const float flScale = g_flMuraScale * kMuraMapScale;
+	glm::mat3x4 mura_scale_offset = glm::mat3x4
+	{
+		flScale, 0,       0,       kMuraOffset * flScale,
+		0,       flScale, 0,       kMuraOffset * flScale,
+		0,       0,       0,       0, // No mura comp for blue channel.
+	};
+	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = drm_create_ctm(&g_DRM, mura_scale_offset);
+}
+
+bool g_bMuraDebugFullColor = false;
+
+bool set_mura_overlay( const char *path )
+{
+	xwm_log.infof("[josh mura correction] Setting mura correction image to: %s", path);
+	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	update_mura_ctm();
+
+	std::string red_path = std::string(path) + "_red.png";
+	std::string green_path = std::string(path) + "_green.png";
+
+	int red_w, red_h, red_comp;
+	unsigned char *red_data = stbi_load(red_path.c_str(), &red_w, &red_h, &red_comp, 1);
+	int green_w, green_h, green_comp;
+	unsigned char *green_data = stbi_load(green_path.c_str(), &green_w, &green_h, &green_comp, 1);
+	if (!red_data || !green_data || red_w != green_w || red_h != green_h || red_comp != green_comp || red_comp != 1 || green_comp != 1)
+	{
+		xwm_log.infof("[josh mura correction] Couldn't load mura correction image, disabling mura correction.");
+		return true;
+	}
+
+	int w = red_w;
+	int h = red_h;
+	unsigned char *data = (unsigned char*)malloc(red_w * red_h * 4);
+
+	for (int y = 0; y < h; y++)
+	{
+		for (int x = 0; x < w; x++)
+		{
+			data[(y * w * 4) + (x * 4) + 0] = g_bMuraDebugFullColor ? 255 : red_data[y * w + x];
+			data[(y * w * 4) + (x * 4) + 1] = g_bMuraDebugFullColor ? 255 : green_data[y * w + x];
+			data[(y * w * 4) + (x * 4) + 2] = 127; // offset of 0.
+			data[(y * w * 4) + (x * 4) + 3] = 0;   // Make alpha = 0 so we act as addtive.
+		}
+	}
+	free(red_data);
+	free(green_data);
+
+	CVulkanTexture::createFlags texCreateFlags;
+	texCreateFlags.bFlippable = !BIsNested();
+	texCreateFlags.bSampled = true;
+	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
+	free(data);
+
+	xwm_log.infof("[josh mura correction] Loaded new mura correction image!");
+
+	update_mura_ctm();
+
+	return true;
+}
+
+bool set_mura_scale(float new_scale)
+{
+	bool diff = g_flMuraScale != new_scale;
+	g_flMuraScale = new_scale;
+	update_mura_ctm();
+	return diff;
+}
+
 bool set_color_3dlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
@@ -594,7 +708,9 @@ struct ignore {
 	unsigned long	sequence;
 };
 
-struct commit_t
+gamescope::CAsyncWaiter g_ImageWaiter{ "gamescope_img" };
+
+struct commit_t : public gamescope::IWaitable
 {
 	commit_t()
 	{
@@ -646,6 +762,46 @@ struct commit_t
 	uint64_t desired_present_time = 0;
 	uint64_t earliest_present_time = 0;
 	uint64_t present_margin = 0;
+
+	// For waitable:
+	int GetFD() final
+	{
+		return m_nCommitFence;
+	}
+
+	void OnPollIn() final
+	{
+		gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
+
+		g_ImageWaiter.RemoveWaitable( this );
+		close( m_nCommitFence );
+		m_nCommitFence = -1;
+
+		uint64_t frametime;
+		if ( m_bMangoNudge )
+		{
+			uint64_t now = get_time_in_nanos();
+			static uint64_t lastFrameTime = now;
+			frametime = now - lastFrameTime;
+			lastFrameTime = now;
+		}
+
+		// TODO: Move this so it's called in the main loop.
+		// Instead of looping over all the windows like before.
+		// When we get the new IWaitable stuff in there.
+		{
+			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
+			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ commitID, desired_present_time } );
+		}
+
+		if ( m_bMangoNudge )
+			mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+
+		nudge_steamcompmgr();
+	}
+	int m_nCommitFence = -1;
+	bool m_bMangoNudge = false;
+	CommitDoneList_t *pDoneCommits = nullptr; // I hate this
 };
 
 static std::vector<pollfd> pollfds;
@@ -677,15 +833,6 @@ static std::vector<pollfd> pollfds;
 #define MWM_INPUT_APPLICATION_MODAL         1
 
 #define MWM_TEAROFF_WINDOW 1
-
-int g_nAsyncFlipsEnabled = 0;
-int g_nSteamMaxHeight = 0;
-bool g_bVRRCapable_CachedValue = false;
-bool g_bVRRInUse_CachedValue = false;
-bool g_bSupportsST2084_CachedValue = false;
-bool g_bForceHDR10OutputDebug = false;
-bool g_bHDREnabled = false;
-bool g_bHDRItmEnable = false;
 
 Window x11_win(steamcompmgr_win_t *w) {
 	if (w == nullptr)
@@ -755,7 +902,7 @@ static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
 static int g_nCombinedAppRefreshCycleOverride[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
 
-static void update_app_target_refresh_cycle()
+static void _update_app_target_refresh_cycle()
 {
 	if ( BIsNested() )
 	{
@@ -804,6 +951,14 @@ static void update_app_target_refresh_cycle()
 	}
 }
 
+static void update_app_target_refresh_cycle()
+{
+	int nPrevFPSLimit = g_nSteamCompMgrTargetFPS;
+	_update_app_target_refresh_cycle();
+	if ( !!g_nSteamCompMgrTargetFPS != !!nPrevFPSLimit )
+		update_runtime_info();
+}
+
 void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps )
 {
 	g_nCombinedAppRefreshCycleOverride[ type ] = override_fps;
@@ -830,9 +985,35 @@ window_is_steam( steamcompmgr_win_t *w )
 	return w && ( w->isSteamLegacyBigPicture || w->appID == 769 );
 }
 
+bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
+
+static bool
+steamcompmgr_user_has_any_game_open()
+{
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+	{
+		if (!server->ctx)
+			continue;
+
+		if (server->ctx->focus.focusWindow && !window_is_steam(server->ctx->focus.focusWindow))
+			return true;
+	}
+
+	return false;
+}
+
 bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 {
 	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
+}
+
+bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
+{
+	if ( g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive )
+		return steamcompmgr_user_has_any_game_open();
+
+	return steamcompmgr_window_should_limit_fps( w );
 }
 
 
@@ -895,7 +1076,7 @@ struct wlr_buffer_map_entry {
 static std::mutex wlr_buffer_map_lock;
 static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
 
-static std::atomic< bool > g_bTakeScreenshot{false};
+static std::atomic< int > g_nTakeScreenshot{ 0 };
 static bool g_bPropertyRequestedScreenshot;
 
 static std::atomic<bool> g_bForceRepaint{false};
@@ -931,89 +1112,19 @@ private:
 	int count = 0;
 };
 
-struct WaitListEntry_t
+static void
+dispatch_nudge( int fd )
 {
-	CommitDoneList_t *doneCommits;
-	int fence;
-	// Josh: Whether or not to nudge mangoapp that we got
-	// a frame as soon as we know this commit is done.
-	// This could technically be out of date if we change windows
-	// but for a max couple frames of inaccuracy when switching windows
-	// compared to being all over the place from handling in the
-	// steamcompmgr thread in handle_done_commits, it is worth it.
-	bool mangoapp_nudge;
-	uint64_t commitID;
-	uint64_t desiredPresentTime;
-};
-
-sem waitListSem;
-std::mutex waitListLock;
-std::vector< WaitListEntry_t > waitList;
-
-bool imageWaitThreadRun = true;
-
-void imageWaitThreadMain( void )
-{
-	pthread_setname_np( pthread_self(), "gamescope-img" );
-
-wait:
-	waitListSem.wait();
-
-	if ( imageWaitThreadRun == false )
+	for (;;)
 	{
-		return;
-	}
-
-	bool bFound = false;
-	WaitListEntry_t entry;
-
-retry:
-	{
-		std::unique_lock< std::mutex > lock( waitListLock );
-
-		if( waitList.empty() )
+		static char buf[1024];
+		if ( read( fd, buf, sizeof(buf) ) < 0 )
 		{
-			goto wait;
+			if ( errno != EAGAIN )
+				xwm_log.errorf_errno(" steamcompmgr: dispatch_nudge: read failed" );
+			break;
 		}
-
-		entry = waitList[ 0 ];
-		bFound = true;
-		waitList.erase( waitList.begin() );
 	}
-
-	assert( bFound == true );
-
-	gpuvis_trace_begin_ctx_printf( entry.commitID, "wait fence" );
-	struct pollfd fd = { entry.fence, POLLIN, 0 };
-	int ret = poll( &fd, 1, 100 );
-	if ( ret < 0 )
-	{
-		xwm_log.errorf_errno( "failed to poll fence FD" );
-	}
-	gpuvis_trace_end_ctx_printf( entry.commitID, "wait fence" );
-
-	close( entry.fence );
-
-	uint64_t frametime;
-	if ( entry.mangoapp_nudge )
-	{
-		uint64_t now = get_time_in_nanos();
-		static uint64_t lastFrameTime = now;
-		frametime = now - lastFrameTime;
-		lastFrameTime = now;
-	}
-
-	{
-		std::unique_lock< std::mutex > lock( entry.doneCommits->listCommitsDoneLock );
-		entry.doneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ entry.commitID, entry.desiredPresentTime } );
-	}
-
-	nudge_steamcompmgr();
-
-	if ( entry.mangoapp_nudge )
-		mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );	
-
-	goto retry;
 }
 
 sem statsThreadSem;
@@ -2396,14 +2507,40 @@ paint_all(bool async)
 		}
 	}
 
-	if (overlay)
+	if (overlay && overlay->opacity)
 	{
-		if (overlay->opacity)
-		{
-			paint_window(overlay, overlay, &frameInfo, global_focus.cursor, PaintWindowFlag::DrawBorders);
+		paint_window(overlay, overlay, &frameInfo, global_focus.cursor, PaintWindowFlag::DrawBorders);
 
-			if ( overlay == global_focus.inputFocusWindow )
-				update_touch_scaling( &frameInfo );
+		if ( overlay == global_focus.inputFocusWindow )
+			update_touch_scaling( &frameInfo );
+	}
+	else
+	{
+		auto tex = vulkan_get_hacky_blank_texture();
+		if ( !BIsNested() && tex != nullptr )
+		{
+			// HACK! HACK HACK HACK
+			// To avoid stutter when toggling the overlay on 
+			int curLayer = frameInfo.layerCount++;
+
+			FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
+
+
+			layer->scale.x = g_nOutputWidth == tex->width() ? 1.0f : tex->width() / (float)g_nOutputWidth;
+			layer->scale.y = g_nOutputHeight == tex->height() ? 1.0f : tex->height() / (float)g_nOutputHeight;
+			layer->offset.x = 0.0f;
+			layer->offset.y = 0.0f;
+			layer->opacity = 1.0f; // BLAH
+			layer->zpos = g_zposOverlay;
+			layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
+
+			layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
+			layer->ctm = nullptr;
+			layer->tex = tex;
+			layer->fbid = tex->fbid();
+
+			layer->filter = GamescopeUpscaleFilter::NEAREST;
+			layer->blackBorder = true;
 		}
 	}
 
@@ -2473,7 +2610,7 @@ paint_all(bool async)
 	bool bDoComposite = true;
 
 	// Handoff from whatever thread to this one since we check ours twice
-	bool takeScreenshot = g_bTakeScreenshot.exchange(false);
+	int takeScreenshot = g_nTakeScreenshot.exchange( 0 );
 	bool propertyRequestedScreenshot = g_bPropertyRequestedScreenshot;
 	g_bPropertyRequestedScreenshot = false;
 
@@ -2486,7 +2623,7 @@ paint_all(bool async)
 
 	int nDynamicRefresh = g_nDynamicRefreshRate[drm_get_screen_type( &g_DRM )];
 
-	int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_limit_fps( global_focus.focusWindow )// && !global_focus.overlayWindow
+	int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_refresh_switch( global_focus.focusWindow )// && !global_focus.overlayWindow
 		? nDynamicRefresh
 		: drm_get_default_refresh( &g_DRM );
 
@@ -2502,10 +2639,29 @@ paint_all(bool async)
 
 	bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
 
-	// Disable partial composition for now until we get
-	// composite priorities working in libliftoff + also
-	// use the proper libliftoff composite plane system.
-	static constexpr bool kDisablePartialComposition = true;
+	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount && !pw_buffer;
+	if ( bDoMuraCompensation )
+	{
+		auto& MuraCorrectionImage = s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )];
+		int curLayer = frameInfo.layerCount++;
+
+		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
+
+		layer->applyColorMgmt = false;
+		layer->fbid = MuraCorrectionImage->fbid();
+		layer->offset = vec2_t{ 0, 0 };
+		layer->scale = vec2_t{ 1.0f, 1.0f };
+		layer->blackBorder = true;
+		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU;
+		layer->opacity = 1.0f;
+		layer->zpos = g_zposMuraCorrection;
+		layer->filter = GamescopeUpscaleFilter::NEAREST;
+		layer->tex = MuraCorrectionImage;
+		layer->ctm = s_MuraCTMBlob[drm_get_screen_type( &g_DRM )];
+
+		// Blending needs to be done in Gamma 2.2 space for mura correction to work.
+		frameInfo.applyOutputColorMgmt = false;
+	}
 
 	bool bWantsPartialComposite = frameInfo.layerCount >= 3 && !kDisablePartialComposition;
 
@@ -2521,6 +2677,8 @@ paint_all(bool async)
 	bNeedsFullComposite |= g_bColorSliderInUse;
 	bNeedsFullComposite |= fadingOut;
 	bNeedsFullComposite |= !g_reshade_effect.empty();
+
+	constexpr bool bHackForceNV12DumpScreenshot = false;
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 	{
@@ -2635,7 +2793,27 @@ paint_all(bool async)
 		if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
 			g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
 
-		bool bResult = vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer );
+		bool bResult;
+		// If using a pipewire stream, apply screenshot color management.
+		if ( pPipewireTexture )
+		{
+			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+			{
+				compositeFrameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+				compositeFrameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+			}
+			vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer, nullptr, false );
+			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+			{
+				if (g_ColorMgmtLuts[nInputEOTF].HasLuts())
+				{
+					compositeFrameInfo.shaperLut[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut1d;
+					compositeFrameInfo.lut3D[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut3d;
+				}
+			}
+		}
+
+		bResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite, bDefer );
 
 		g_bWasCompositing = true;
 
@@ -2809,123 +2987,166 @@ paint_all(bool async)
 
 	if ( takeScreenshot )
 	{
-		constexpr bool bHackForceNV12DumpScreenshot = false;
-
 		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
 			? DRM_FORMAT_NV12
 			: DRM_FORMAT_XRGB8888;
 
 		std::shared_ptr<CVulkanTexture> pScreenshotTexture = vulkan_acquire_screenshot_texture(g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat);
 
-		assert( pScreenshotTexture != nullptr );
-
-		// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
-		for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+		if ( pScreenshotTexture )
 		{
-			frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-			frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
-		}
-		// Remove everything but base planes from the screenshot.
-		for (int i = 0; i < frameInfo.layerCount; i++)
-		{
-			if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 || takeScreenshot != TAKE_SCREENSHOT_SCREEN_BUFFER )
 			{
-				frameInfo.layerCount = i;
-				break;
-			}
-		}
-
-		bool bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
-		if ( bResult != true )
-		{
-			xwm_log.errorf("vulkan_screenshot failed");
-			return;
-		}
-
-		std::thread screenshotThread = std::thread([=] {
-			pthread_setname_np( pthread_self(), "gamescope-scrsh" );
-
-			const uint8_t *mappedData = pScreenshotTexture->mappedData();
-
-			if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
-			{
-				// Make our own copy of the image to remove the alpha channel.
-				auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
-				const uint32_t comp = 4;
-				const uint32_t pitch = currentOutputWidth * comp;
-				for (uint32_t y = 0; y < currentOutputHeight; y++)
+				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
+				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 				{
-					for (uint32_t x = 0; x < currentOutputWidth; x++)
+					frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+					frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+				}
+
+				if ( takeScreenshot == TAKE_SCREENSHOT_BASEPLANE_ONLY )
+				{
+					// Remove everything but base planes from the screenshot.
+					for (int i = 0; i < frameInfo.layerCount; i++)
 					{
-						// BGR...
-						imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
-						imageData[y * pitch + x * comp + 1] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 1];
-						imageData[y * pitch + x * comp + 2] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 0];
-						imageData[y * pitch + x * comp + 3] = 255;
+						if (frameInfo.layers[i].zpos >= (int)g_zposExternalOverlay)
+						{
+							frameInfo.layerCount = i;
+							break;
+						}
 					}
-				}
 
-				char pTimeBuffer[1024] = "/tmp/gamescope.png";
-
-				if ( !propertyRequestedScreenshot )
-				{
-					time_t currentTime = time(0);
-					struct tm *localTime = localtime( &currentTime );
-					strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
-				}
-
-				if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
-				{
-					xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+					// Re-enable output color management (blending) if it was disabled by mura.
+					frameInfo.applyOutputColorMgmt = true;
 				}
 				else
 				{
-					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					if ( is_mura_correction_enabled() )
+					{
+						// Remove the last layer which is for mura...
+						for (int i = 0; i < frameInfo.layerCount; i++)
+						{
+							if (frameInfo.layers[i].zpos >= (int)g_zposMuraCorrection)
+							{
+								frameInfo.layerCount = i;
+								break;
+							}
+						}
+
+						// Re-enable output color management (blending) if it was disabled by mura.
+						frameInfo.applyOutputColorMgmt = true;
+					}
 				}
 			}
-			else if (pScreenshotTexture->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+
+			frameInfo.applyOutputColorMgmt = true;
+
+			bool bResult;
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
+				bResult = vulkan_composite( &frameInfo, pScreenshotTexture, false, false, nullptr );
+			else if ( takeScreenshot == TAKE_SCREENSHOT_FULL_COMPOSITION || takeScreenshot == TAKE_SCREENSHOT_SCREEN_BUFFER )
+				bResult = vulkan_composite( &frameInfo, nullptr, false, false, pScreenshotTexture );
+			else
+				bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+
+			if ( bResult != true )
 			{
-				char pTimeBuffer[1024] = "/tmp/gamescope.raw";
+				xwm_log.errorf("vulkan_screenshot failed");
+				return;
+			}
 
-				if ( !propertyRequestedScreenshot )
+			std::thread screenshotThread = std::thread([=] {
+				pthread_setname_np( pthread_self(), "gamescope-scrsh" );
+
+				const uint8_t *mappedData = pScreenshotTexture->mappedData();
+
+				if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
-					time_t currentTime = time(0);
-					struct tm *localTime = localtime( &currentTime );
-					strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.raw", localTime );
-				}
+					// Make our own copy of the image to remove the alpha channel.
+					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+					const uint32_t comp = 4;
+					const uint32_t pitch = currentOutputWidth * comp;
+					for (uint32_t y = 0; y < currentOutputHeight; y++)
+					{
+						for (uint32_t x = 0; x < currentOutputWidth; x++)
+						{
+							// BGR...
+							imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
+							imageData[y * pitch + x * comp + 1] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 1];
+							imageData[y * pitch + x * comp + 2] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 0];
+							imageData[y * pitch + x * comp + 3] = 255;
+						}
+					}
 
-				FILE *file = fopen(pTimeBuffer, "wb");
-				if (file)
-				{
-					fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
-					fclose(file);
+					char pTimeBuffer[1024] = "/tmp/gamescope.png";
 
-					char cmd[4096];
-					sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), pTimeBuffer, pTimeBuffer);
+					if ( !propertyRequestedScreenshot )
+					{
+						time_t currentTime = time(0);
+						struct tm *localTime = localtime( &currentTime );
+						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
+					}
 
-					int ret = system(cmd);
-
-					/* Above call may fail, ffmpeg returns 0 on success */
-					if (ret) {
-						xwm_log.infof("Ffmpeg call return status %i", ret);
-						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
-					} else {
+					if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
+					{
 						xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
 					}
+					else
+					{
+						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					}
 				}
-				else
+				else if (pScreenshotTexture->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				{
-					xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					char pTimeBuffer[1024] = "/tmp/gamescope.raw";
+
+					if ( !propertyRequestedScreenshot )
+					{
+						time_t currentTime = time(0);
+						struct tm *localTime = localtime( &currentTime );
+						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.raw", localTime );
+					}
+
+					FILE *file = fopen(pTimeBuffer, "wb");
+					if (file)
+					{
+						fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
+						fclose(file);
+
+						char cmd[4096];
+						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), pTimeBuffer, pTimeBuffer);
+
+						int ret = system(cmd);
+
+						/* Above call may fail, ffmpeg returns 0 on success */
+						if (ret) {
+							xwm_log.infof("Ffmpeg call return status %i", ret);
+							xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+						} else {
+							xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+						}
+					}
+					else
+					{
+						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+					}
 				}
-			}
 
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+			});
+
+			screenshotThread.detach();
+
+			takeScreenshot = 0;
+		}
+		else
+		{
+			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
 			XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
-		});
-
-		screenshotThread.detach();
-
-		takeScreenshot = false;
+			takeScreenshot = 0;
+		}
 	}
+
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
 	gpuvis_trace_printf( "paint_all %i layers, composite %i", (int)frameInfo.layerCount, bDoComposite );
@@ -5182,8 +5403,15 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		if ( ev->state == PropertyNewValue )
 		{
-			g_bTakeScreenshot = true;
+			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeScreenShotAtom, None );
 			g_bPropertyRequestedScreenshot = true;
+		}
+	}
+	if ( ev->atom == ctx->atoms.gamescopeDebugScreenShotAtom )
+	{
+		if ( ev->state == PropertyNewValue )
+		{
+			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugScreenShotAtom, None );
 		}
 	}
 	if (ev->atom == ctx->atoms.gameAtom)
@@ -5707,6 +5935,30 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorChromaticAdaptationMode, 0);
 		g_ColorMgmt.pending.chromaticAdaptationMode = ( EChromaticAdaptationMethod ) val;
 	}
+	// TODO: Hook up gamescopeColorMuraCorrectionImage for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] );
+		if ( set_mura_overlay( path.c_str() ) )
+			hasRepaint = true;
+	}
+	// TODO: Hook up gamescopeColorMuraScale for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL], 0);
+		float new_scale = bit_cast<float>(val);
+		if ( set_mura_scale( new_scale ) )
+			hasRepaint = true;
+	}
+	// TODO: Hook up gamescopeColorMuraCorrectionDisabled for external.
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] )
+	{
+		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL], 0);
+		if ( g_bMuraCompensationDisabled != disabled ) {
+			g_bMuraCompensationDisabled = disabled;
+			hasRepaint = true;
+		}
+	}
 	if (ev->atom == ctx->atoms.gamescopeCreateXWaylandServer)
 	{
 		uint32_t identifier = get_prop(ctx, ctx->root, ctx->atoms.gamescopeCreateXWaylandServer, 0);
@@ -5804,6 +6056,10 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeReshadeEffect );
 		g_reshade_effect = path;
+	}
+	if (ev->atom == ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence)
+	{
+		g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence, 0);
 	}
 	if (ev->atom == ctx->atoms.wineHwndStyle)
 	{
@@ -5914,8 +6170,7 @@ steamcompmgr_exit(void)
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
 
-	imageWaitThreadRun = false;
-	waitListSem.signal();
+	g_ImageWaiter.Shutdown();
 
 	if ( statsThreadRun == true )
 	{
@@ -6129,7 +6384,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
 			commits_before_their_time.push_back( entry );
-			break;
+			continue;
 		}
 
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
@@ -6262,9 +6517,9 @@ void nudge_steamcompmgr( void )
 		xwm_log.errorf_errno( "nudge_steamcompmgr: write failed" );
 }
 
-void take_screenshot( void )
+void take_screenshot( int flags )
 {
-	g_bTakeScreenshot = true;
+	g_nTakeScreenshot = flags;
 	nudge_steamcompmgr();
 }
 
@@ -6341,20 +6596,12 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
-			std::unique_lock< std::mutex > lock( waitListLock );
-			WaitListEntry_t entry
-			{
-				.doneCommits = doneCommits,
-				.fence = fence,
-				.mangoapp_nudge = mango_nudge,
-				.commitID = newCommit->commitID,
-				.desiredPresentTime = newCommit->desired_present_time,
-			};
-			waitList.push_back( entry );
-		}
+			newCommit->m_nCommitFence = fence;
+			newCommit->m_bMangoNudge = mango_nudge;
+			newCommit->pDoneCommits = doneCommits;
 
-		// Wake up commit wait thread if chilling
-		waitListSem.signal();
+			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
+		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
 	}
@@ -6750,21 +6997,6 @@ dispatch_vblank( int fd )
 	return vblank;
 }
 
-static void
-dispatch_nudge( int fd )
-{
-	for (;;)
-	{
-		static char buf[1024];
-		if ( read( fd, buf, sizeof(buf) ) < 0 )
-		{
-			if ( errno != EAGAIN )
-				xwm_log.errorf_errno(" steamcompmgr: dispatch_nudge: read failed" );
-			break;
-		}
-	}
-}
-
 struct rgba_t
 {
 	uint8_t r,g,b,a;
@@ -6980,6 +7212,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.WMChangeStateAtom = XInternAtom(ctx->dpy, "WM_CHANGE_STATE", false);
 	ctx->atoms.gamescopeInputCounterAtom = XInternAtom(ctx->dpy, "GAMESCOPE_INPUT_COUNTER", false);
 	ctx->atoms.gamescopeScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_REQUEST_SCREENSHOT", false );
+	ctx->atoms.gamescopeDebugScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_DEBUG_REQUEST_SCREENSHOT", false );
 
 	ctx->atoms.gamescopeFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUS_DISPLAY", false);
 	ctx->atoms.gamescopeMouseFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_MOUSE_FOCUS_DISPLAY", false);
@@ -7060,6 +7293,12 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeColorAppHDRMetadataFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_HDR_METADATA_FEEDBACK", false );
 	ctx->atoms.gamescopeColorSliderInUse = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_CHANGING_HINT", false );
 	ctx->atoms.gamescopeColorChromaticAdaptationMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_CHROMATIC_ADAPTATION_MODE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
+	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
@@ -7067,6 +7306,9 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeReshadeEffect = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_EFFECT", false );
 	ctx->atoms.gamescopeReshadeTechniqueIdx = XInternAtom( ctx->dpy, "GAMESCOPE_RESHADE_TECHNIQUE_IDX", false );
+
+	ctx->atoms.gamescopeDisplayRefreshRateFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_REFRESH_RATE_FEEDBACK", false );
+	ctx->atoms.gamescopeDisplayDynamicRefreshBasedOnGamePresence = XInternAtom( ctx->dpy, "GAMESCOPE_DISPLAY_DYNAMIC_REFRESH_BASED_ON_GAME_PRESENCE", false );
 
 	ctx->atoms.wineHwndStyle = XInternAtom( ctx->dpy, "_WINE_HWND_STYLE", false );
 	ctx->atoms.wineHwndStyleEx = XInternAtom( ctx->dpy, "_WINE_HWND_EXSTYLE", false );
@@ -7173,6 +7415,15 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRRInUse, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&in_use_value, 1 );
 		g_bVRRInUse_CachedValue = in_use;
+		if (needs_flush)
+			*needs_flush = true;
+	}
+
+	if ( g_nOutputRefresh != g_nCurrentRefreshRate_CachedValue || force )
+	{
+		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayRefreshRateFeedback, XA_CARDINAL, 32, PropModeReplace,
+			(unsigned char *)&g_nOutputRefresh, 1 );
+		g_nCurrentRefreshRate_CachedValue = g_nOutputRefresh;
 		if (needs_flush)
 			*needs_flush = true;
 	}
@@ -7363,6 +7614,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_reshade_effect = optarg;
 				} else if (strcmp(opt_name, "reshade-technique-idx") == 0) {
 					g_reshade_technique_idx = atoi(optarg);
+				} else if (strcmp(opt_name, "mura-map") == 0) {
+					set_mura_overlay(optarg);
 				}
 				break;
 			case '?':
@@ -7434,9 +7687,6 @@ steamcompmgr_main(int argc, char **argv)
 	{
 		spawn_client( &argv[ subCommandArg ] );
 	}
-
-	std::thread imageWaitThread( imageWaitThreadMain );
-	imageWaitThread.detach();
 
 	// EVENT_VBLANK
 	pollfds.push_back(pollfd {
@@ -7786,11 +8036,13 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( window_is_steam( global_focus.focusWindow ) )
 		{
+			g_bSteamIsActiveWindow = true;
 			g_upscaleScaler = GamescopeUpscaleScaler::FIT;
 			g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 		}
 		else
 		{
+			g_bSteamIsActiveWindow = false;
 			g_upscaleScaler = g_wantedUpscaleScaler;
 			g_upscaleFilter = g_wantedUpscaleFilter;
 		}
@@ -7810,7 +8062,7 @@ steamcompmgr_main(int argc, char **argv)
 		const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] && g_HeldCommits[HELD_COMMIT_BASE]->async);
 
 		const bool bForceRepaint = g_bForceRepaint.exchange(false);
-		const bool bForceSyncFlip = bForceRepaint || g_bTakeScreenshot || is_fading_out();
+		const bool bForceSyncFlip = bForceRepaint || is_fading_out();
 		// If we are compositing, always force sync flips because we currently wait
 		// for composition to finish before submitting.
 		// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.

@@ -220,10 +220,5 @@ vec3 hdr_heatmap(vec3 inputColor, uint colorspace)
   else
     outputColor = hdr_heatmap_lilium_impl(xyz.y); // Lilium Heatmap
 
-  // Brighten the heatmap up to something reasonable.
-  // If we care enough we could use some setting here someday.
-  if (c_output_eotf == EOTF_PQ)
-    outputColor *= 400.0f / 80.0f; // 400 nit as scRGB TF for blend space. 
-
   return outputColor;
 }

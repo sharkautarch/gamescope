@@ -268,28 +268,98 @@ void generate_cvt_mode(drmModeModeInfo *mode, int hdisplay, int vdisplay,
 	}
 }
 
-void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, bool use_tuned_clocks)
+// galielo SDC rev B ds.10 spec'd rates
+// fps   45   48  51  55  60  65  72  80 90
+// VFP 1321 1157 993 829 665 501 337 173 9
+
+// galielo BOE spec'd rates
+// fps   45   48  51  55  60  65  72  80 90
+// VFP 1320 1156 992 828 664 500 336 172 8
+
+// SDC VFP values for 45 Hz to 90 Hz
+unsigned int galileo_sdc_vfp[] = 
+{
+	1321,1264,1209,1157,1106,1058,993,967,925,883,829,805,768,732,698, 
+	665,632,601,571,542,501,486,459,433,408,383,360,337,314,292,271,250,230,210,191, 
+	173,154,137,119,102,86,70,54,38,23,9
+};
+
+// BOE VFP values for 45 Hz to 90 Hz
+// BOE Vtotal must be a multiple of 4
+unsigned int galileo_boe_vfp[] = 
+{
+	1320,1272,1216,1156,1112,1064,992,972,928,888,828,808,772,736,700,
+	664,636,604,572,544,500,488,460,436,408,384,360,336,316,292,272,252,228,212,192,
+	172,152,136,120,100,84,68,52,36,20,8
+};
+
+#define GALILEO_MIN_REFRESH 45
+#define GALILEO_SDC_PID     0x3003
+#define GALILEO_SDC_VSYNC   1
+#define GALILEO_SDC_VBP     22
+#define GALILEO_BOE_PID     0x3004
+#define GALILEO_BOE_VSYNC   2
+#define GALILEO_BOE_VBP     30
+#define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
+
+unsigned int get_galileo_vfp( int vrefresh, unsigned int * vfp_array, unsigned int num_rates )
+{
+	for ( unsigned int i = 0; i < num_rates; i++ ) {
+		if ( i+GALILEO_MIN_REFRESH == (unsigned int)vrefresh ) {
+			return vfp_array[i];
+		}
+	}
+	return 0;
+}
+
+void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, 
+							bool use_tuned_clocks, unsigned int use_vfp )
 {
 	*mode = *base;
-
 	if (!vrefresh)
 		vrefresh = 60;
+	if ( use_vfp ) {
+		unsigned int vfp, vsync, vbp = 0;
+		if (GALILEO_SDC_PID == use_vfp) {
+			vfp = get_galileo_vfp( vrefresh, galileo_sdc_vfp, ARRAY_SIZE(galileo_sdc_vfp) );
+			// if we did not find a matching rate then we default to 60 Hz
+			if ( !vfp ) {
+				vrefresh = 60;
+				vfp = 665;
+			}
+			vsync = GALILEO_SDC_VSYNC;
+			vbp = GALILEO_SDC_VBP;
+		} else { // BOE Panel
+			vfp = get_galileo_vfp( vrefresh, galileo_boe_vfp, ARRAY_SIZE(galileo_boe_vfp) );
+			// if we did not find a matching rate then we default to 60 Hz
+			if ( !vfp ) {
+				vrefresh = 60;
+				vfp = 664;
+			}
+			vsync = GALILEO_BOE_VSYNC;
+			vbp = GALILEO_BOE_VBP;
+		} 
+		mode->vsync_start = mode->vdisplay + vfp;
+		mode->vsync_end = mode->vsync_start + vsync;
+		mode->vtotal = mode->vsync_end + vbp;
+	} else {
+		if ( use_tuned_clocks )
+		{
+			mode->hdisplay = 800;
+			mode->hsync_start = 840;
+			mode->hsync_end = 844;
+			mode->htotal = 884;
 
-	if ( use_tuned_clocks )
-	{
-		mode->hdisplay = 800;
-		mode->hsync_start = 840;
-		mode->hsync_end = 844;
-		mode->htotal = 884;
+			mode->vdisplay = 1280;
+			mode->vsync_start = 1310;
+			mode->vsync_end = 1314;
+			mode->vtotal = 1322;
+		}
 
-		mode->vdisplay = 1280;
-		mode->vsync_start = 1310;
-		mode->vsync_end = 1314;
-		mode->vtotal = 1322;
+		mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
 	}
-
-	mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
 	mode->vrefresh = (1000 * mode->clock) / (mode->htotal * mode->vtotal);
 
 	snprintf(mode->name, sizeof(mode->name), "%dx%d@%d.00", mode->hdisplay, mode->vdisplay, vrefresh);
 }
+
