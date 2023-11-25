@@ -411,10 +411,20 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	static long double real_delta = 0.0;
 	static long double last_real_delta = 0.0;
 	static long double delta_trend_counter = 3.0f;
+	double temp;
 	if (savePoint)
 	{
-		double temp = *relativePoint_prev;
+		temp = *relativePoint_prev;
 		*relativePoint_prev=relativePoint;
+	}
+	
+	last_real_delta=real_delta;
+	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
+	
+	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
+	
+	if (savePoint)
+	{
 		real_delta = ((long double)relativePoint - (long double)temp)/(drawTimeTime - lastDrawTimeTime);
 		if ( (double)real_delta < 0.0 || (relativePoint < centered_mean && (double)relativePoint-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
 		{
@@ -448,6 +458,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 				delta_trend_counter=1.25f;
 			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
 		}
+	
 	}
 	else
 	{
@@ -484,13 +495,9 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 				delta_trend_counter=1.25f;
 			relativePoint=fminl((long double)relativePoint, *relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
 		}
-		
 	}
-	last_real_delta=real_delta;
-	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
 	
-	double cappedTargetPoint = fmin(nsecInterval*limitFactor, relativePoint) + now;
-	
+	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
 
@@ -526,7 +533,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long int time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	long int lastDrawTime = g_uVblankDrawTimeNS;
-	//long int lastDrawTime_timestamp = get_time_in_nanos();
+	long int lastDrawTime_timestamp = get_time_in_nanos();
 	
 	
 	double first_cycle_sleep_duration = 0.0;
@@ -625,7 +632,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 					local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
 				}
 				
-				/*double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
+				double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
 				double sinc = (double) (heaviside((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp)) * sin(radians)/fmax(radians, 0.0000001);
 				
 				double delta_check = pow(fmax((double)( sinc*fabs((int64_t)lastDrawTime - (int64_t)drawTime)), 1.0 )/100000.0, 2);
@@ -641,7 +648,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		        		std::cout << (double) (( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range)) * ratio /( delta) << "\n\n";
 		        		std::cout << "ratio= " << ratio << "\n";
 					std::cout << "rollingMaxDrawTime after using fmin: " << rollingMaxDrawTime << "\n";
-				}*/
+				} 
 			}
 			if ((double)real_delta < 0.0)
 			{
@@ -838,7 +845,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		lastDrawTimeTime=drawTimeTime;
 		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
 		last_real_delta=real_delta;
-		//lastDrawTime_timestamp=get_time_in_nanos();
+		lastDrawTime_timestamp=get_time_in_nanos();
 		
 		
 		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
