@@ -418,7 +418,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 		*relativePoint_prev=relativePoint;
 	}
 	
-	last_real_delta=real_delta;
+	
 	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
 	
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
@@ -426,21 +426,6 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	if (savePoint)
 	{
 		real_delta = ((long double)relativePoint - (long double)temp)/(drawTimeTime - lastDrawTimeTime);
-		if ( (double)real_delta < 0.0 || (relativePoint < centered_mean && (double)relativePoint-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
-		{
-			if ((double)last_real_delta >= 0.0)
-				delta_trend_counter=1.25f;
-			
-			local_min=(long double)temp+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
-		}
-		
-		if ((double)real_delta >= 0.0 || (relativePoint >= centered_mean && (double)relativePoint+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
-		{
-			if ((double)last_real_delta <= 0.0)
-				delta_trend_counter=1.25f;
-				
-			local_max=fmaxl((long double)relativePoint-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
-		}
 		if ((double)real_delta < 0.0)
 		{
 			if ((double)last_real_delta < 0.0)
@@ -458,7 +443,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 				delta_trend_counter=1.25f;
 			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
 		}
-	
+		last_real_delta=real_delta;
 	}
 	else
 	{
@@ -480,23 +465,16 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 		}
 		if ((double)real_delta < 0.0)
 		{
-			if ((double)last_real_delta < 0.0)
-				delta_trend_counter+=1.25f;
-			else
-				delta_trend_counter=1.25f;
 			relativePoint=fmaxl((long double)relativePoint, *relativePoint_prev-fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
 		}
 		
 		if ((double)real_delta >= 0.0)
 		{
-			if ((double)last_real_delta >= 0.0)
-				delta_trend_counter+=1.25f;
-			else
-				delta_trend_counter=1.25f;
 			relativePoint=fminl((long double)relativePoint, *relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
 		}
 	}
 	
+	fprintf( stdout, "relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
