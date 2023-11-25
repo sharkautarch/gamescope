@@ -476,13 +476,13 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
 	
-	const double targetPoint_max_percent_of_refresh_vsync_value = 1.05; //Don't confuse this variable with the one above.
+	const double targetPoint_max_percent_of_refresh_vsync_value = .99; //Don't confuse this variable with the one above.
 	// ^ this limits how much we stretch out steamcompmanager's vsync in order to line up with the past vblank time reported by steamcompmanager
 	
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
-	const double targetPoint_ignore_over_percent_of_refresh = 2.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
+	const double targetPoint_ignore_over_percent_of_refresh = 1.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
 	
 	while ( true )
 	{
