@@ -12,6 +12,10 @@
 #include <thread>
 #include <vulkan/vulkan_core.h>
 
+#if defined(__linux__)
+#include <sys/sysmacros.h>
+#endif
+
 // Used to remove the config struct alignment specified by the NIS header
 #define NIS_ALIGNED(x)
 // NIS_Config needs to be included before the X11 headers because of conflicting defines introduced by X11
@@ -1066,14 +1070,20 @@ void CVulkanDevice::compileAllPipelines()
 	}
 }
 
+extern bool g_bSteamIsActiveWindow;
+
 VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_t ycbcrMask, uint32_t blur_layers, uint32_t colorspace_mask, uint32_t output_eotf, bool itm_enable)
 {
+	uint32_t effective_debug = g_uCompositeDebug;
+	if ( g_bSteamIsActiveWindow )
+		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
+
 	std::lock_guard<std::mutex> lock(m_pipelineMutex);
-	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, g_uCompositeDebug, colorspace_mask, output_eotf, itm_enable};
+	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
 	{
-		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, g_uCompositeDebug, colorspace_mask, output_eotf, itm_enable);
+		VkPipeline result = compilePipeline(layerCount, ycbcrMask, type, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable);
 		m_pipelineMap[key] = result;
 		return result;
 	}
@@ -2511,7 +2521,7 @@ bool vulkan_init_formats()
 	vk_log.infof( "supported DRM formats for sampling usage:" );
 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
 	{
-		uint32_t fmt = sampledDRMFormats.formats[ i ]->format;
+		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
 		char *name = drmGetFormatName(fmt);
 		vk_log.infof( "  %s (0x%" PRIX32 ")", name, fmt );
 		free(name);
@@ -2681,6 +2691,36 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), lut1d_size, 0, lut3d);
 	g_device.submit(std::move(cmdBuffer));
 	g_device.waitIdle(); // TODO: Sync this better
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
+{
+	return g_output.temporaryHackyBlankImage;
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+{
+	CVulkanTexture::createFlags flags;
+	flags.bFlippable = !BIsNested();
+	flags.bSampled = true;
+	flags.bTransferDst = true;
+
+	// To match Steam's scaling, which is capped at 1080p
+	int width = std::min<int>( g_nOutputWidth, 1920 );
+	int height = std::min<int>( g_nOutputHeight, 1080 );
+
+	auto texture = std::make_shared<CVulkanTexture>();
+	assert( texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+
+	void* dst = g_device.uploadBufferData( width * height * 4 );
+	memset( dst, 0x0, width * height * 4 );
+
+	auto cmdBuffer = g_device.commandBuffer();
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
+	g_device.submit(std::move(cmdBuffer));
+	g_device.waitIdle();
+
+	return texture;
 }
 
 #if HAVE_OPENVR
@@ -2908,7 +2948,10 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		return false;
 	}
 
-	if ( pOutput->outputFormatOverlay != VK_FORMAT_UNDEFINED )
+	// Oh no.
+	pOutput->temporaryHackyBlankImage = vulkan_create_debug_blank_texture();
+
+	if ( pOutput->outputFormatOverlay != VK_FORMAT_UNDEFINED && !kDisablePartialComposition )
 	{
 		VkFormat partialFormat = pOutput->outputFormatOverlay;
 
@@ -3304,6 +3347,12 @@ struct BlitPushData_t
 		offset[0] = { 0.5f, 0.5f };
 		opacity[0] = 1.0f;
         u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::LINEAR;
+		ctm[0] = glm::mat3x4
+		{
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0
+		};
 		borderMask = 0;
 		frameId = s_frameId;
 
@@ -3319,7 +3368,8 @@ struct CaptureConvertBlitData_t
 	vec2_t scale[1];
 	vec2_t offset[1];
 	float opacity[1];
-	mat3x4 ctm[1];
+	glm::mat3x4 ctm[1];
+	mat3x4 outputCTM;
 	uint32_t borderMask;
 	uint32_t halfExtent[2];
 
@@ -3328,7 +3378,13 @@ struct CaptureConvertBlitData_t
 		offset[0] = { 0.0f, 0.0f };
 		opacity[0] = 1.0f;
 		borderMask = 0;
-		ctm[0] = color_matrix;
+		ctm[0] = glm::mat3x4
+		{
+			1, 0, 0, 0,
+			0, 1, 0, 0,
+			0, 0, 1, 0
+		};
+		outputCTM = color_matrix;
 	}
 };
 
@@ -3383,12 +3439,37 @@ struct RcasPushData_t
 		FsrRcasCon(&tmp.x, sharpness);
 		u_layer0Offset.x = uint32_t(int32_t(frameInfo->layers[0].offset.x));
 		u_layer0Offset.y = uint32_t(int32_t(frameInfo->layers[0].offset.y));
-		u_opacity[0] = frameInfo->layers[0].opacity;
-        u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
 		u_borderMask = frameInfo->borderMask() >> 1u;
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
-		
+
+		for (int i = 0; i < frameInfo->layerCount; i++)
+		{
+			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
+
+            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+                u_shaderFilter[i] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+            else
+                u_shaderFilter[i] = (uint32_t)layer->filter;
+
+			if (layer->ctm)
+			{
+				ctm[i] = layer->ctm->matrix;
+			}
+			else
+			{
+				ctm[i] = glm::mat3x4
+				{
+					1, 0, 0, 0,
+					0, 1, 0, 0,
+					0, 0, 1, 0
+				};
+			}
+
+			u_opacity[i] = frameInfo->layers[i].opacity;
+		}
+		u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+
 		u_linearToNits = g_flInternalDisplayBrightnessNits;
 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;
 		u_itmSdrNits = g_flHDRItmSdrNits;
@@ -3398,7 +3479,6 @@ struct RcasPushData_t
 		{
 			u_scale[i - 1] = frameInfo->layers[i].scale;
 			u_offset[i - 1] = frameInfo->layers[i].offsetPixelCenter();
-			u_opacity[i] = frameInfo->layers[i].opacity;
 		}
 	}
 };
@@ -3470,7 +3550,7 @@ extern uint32_t g_reshade_technique_idx;
 std::unique_ptr<std::thread> defer_wait_thread;
 uint64_t defer_sequence = 0;
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer )
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
 	if ( defer_wait_thread )
 	{
@@ -3512,7 +3592,11 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		g_reshadeManager.clear();
 	}
 
-	auto compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
+	std::shared_ptr<CVulkanTexture> compositeImage;
+	if ( pOutputOverride )
+		compositeImage = pOutputOverride;
+	else
+		compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
 
 	auto cmdBuffer = g_device.commandBuffer();
 
@@ -3650,6 +3734,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 	if ( pPipewireTexture != nullptr )
 	{
+
 		if (compositeImage->format() == pPipewireTexture->format() &&
 			compositeImage->width() == pPipewireTexture->width() &&
 		    compositeImage->height() == pPipewireTexture->height()) {
@@ -3674,7 +3759,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 			for (uint32_t i = 0; i < EOTF_Count; i++)
 				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
 
-			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Gamma22 ));
+			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
 			cmdBuffer->bindTexture(0, compositeImage);
 			cmdBuffer->setTextureSrgb(0, true);
 			cmdBuffer->setSamplerNearest(0, false);
@@ -3709,7 +3794,7 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 		g_device.wait(sequence);
 	}
 
-	if ( !BIsSDLSession() )
+	if ( !BIsSDLSession() && pOutputOverride == nullptr && increment )
 	{
 		g_output.nOutImage = ( g_output.nOutImage + 1 ) % 3;
 	}
@@ -3771,36 +3856,6 @@ static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
 	return 0;
 }
 
-static void renderer_begin( struct wlr_renderer *renderer, uint32_t width, uint32_t height )
-{
-	abort(); // unreachable
-}
-
-static void renderer_end( struct wlr_renderer *renderer )
-{
-	abort(); // unreachable
-}
-
-static void renderer_clear( struct wlr_renderer *renderer, const float color[4] )
-{
-	abort(); // unreachable
-}
-
-static void renderer_scissor( struct wlr_renderer *renderer, struct wlr_box *box )
-{
-	abort(); // unreachable
-}
-
-static bool renderer_render_subtexture_with_matrix( struct wlr_renderer *renderer, struct wlr_texture *texture, const struct wlr_fbox *box, const float matrix[9], float alpha )
-{
-	abort(); // unreachable
-}
-
-static void renderer_render_quad_with_matrix( struct wlr_renderer *renderer, const float color[4], const float matrix[9] )
-{
-	abort(); // unreachable
-}
-
 static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
  )
 {
@@ -3821,25 +3876,25 @@ static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
 static struct wlr_texture *renderer_texture_from_buffer( struct wlr_renderer *wlr_renderer, struct wlr_buffer *buf )
 {
 	VulkanWlrTexture_t *tex = new VulkanWlrTexture_t();
-	wlr_texture_init( &tex->base, &texture_impl, buf->width, buf->height );
+	wlr_texture_init( &tex->base, wlr_renderer, &texture_impl, buf->width, buf->height );
 	tex->buf = wlr_buffer_lock( buf );
 	// TODO: check format/modifier
 	// TODO: if DMA-BUF, try importing it into Vulkan
 	return &tex->base;
 }
 
+static struct wlr_render_pass *renderer_begin_buffer_pass( struct wlr_renderer *renderer, struct wlr_buffer *buffer, const struct wlr_buffer_pass_options *options )
+{
+	abort(); // unreachable
+}
+
 static const struct wlr_renderer_impl renderer_impl = {
-	.begin = renderer_begin,
-	.end = renderer_end,
-	.clear = renderer_clear,
-	.scissor = renderer_scissor,
-	.render_subtexture_with_matrix = renderer_render_subtexture_with_matrix,
-	.render_quad_with_matrix = renderer_render_quad_with_matrix,
 	.get_shm_texture_formats = renderer_get_shm_texture_formats,
 	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
 	.get_drm_fd = renderer_get_drm_fd,
 	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 	.texture_from_buffer = renderer_texture_from_buffer,
+	.begin_buffer_pass = renderer_begin_buffer_pass,
 };
 
 struct wlr_renderer *vulkan_renderer_create( void )

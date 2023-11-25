@@ -51,6 +51,11 @@ inline bool ColorspaceIsHDR( GamescopeAppTextureColorspace colorspace )
 		   colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ;
 }
 
+extern "C"
+{
+	struct wl_resource;
+}
+
 extern struct drm_t g_DRM;
 void drm_destroy_blob(struct drm_t *drm, uint32_t blob);
 
@@ -174,6 +179,7 @@ struct connector {
 	char *model;
 	bool is_steam_deck_display;
 	std::span<uint32_t> valid_display_rates{};
+	uint16_t is_galileo_display;
 
 	int target_refresh;
 	bool vrr_capable;
@@ -407,3 +413,5 @@ extern bool g_bSupportsAsyncFlips;
 
 const char* drm_get_patched_edid_path();
 void drm_update_patched_edid(drm_t *drm);
+
+void drm_send_gamescope_control(wl_resource *control, struct drm_t *drm);

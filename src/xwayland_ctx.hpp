@@ -128,6 +128,7 @@ struct xwayland_ctx_t
 		Atom gamescopeCtrlWindowAtom;
 		Atom gamescopeInputCounterAtom;
 		Atom gamescopeScreenShotAtom;
+		Atom gamescopeDebugScreenShotAtom;
 
 		Atom gamescopeFocusDisplay;
 		Atom gamescopeMouseFocusDisplay;
@@ -210,6 +211,9 @@ struct xwayland_ctx_t
 		Atom gamescopeColorAppHDRMetadataFeedback;
 		Atom gamescopeColorSliderInUse;
 		Atom gamescopeColorChromaticAdaptationMode;
+		Atom gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraScale[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_COUNT];
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;
@@ -217,6 +221,9 @@ struct xwayland_ctx_t
 
 		Atom gamescopeReshadeEffect;
 		Atom gamescopeReshadeTechniqueIdx;
+
+		Atom gamescopeDisplayRefreshRateFeedback;
+		Atom gamescopeDisplayDynamicRefreshBasedOnGamePresence;
 
 		Atom wineHwndStyle;
 		Atom wineHwndStyleEx;

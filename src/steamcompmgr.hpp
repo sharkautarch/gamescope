@@ -100,11 +100,25 @@ static const uint32_t g_zposOverride = 1;
 static const uint32_t g_zposExternalOverlay = 2;
 static const uint32_t g_zposOverlay = 3;
 static const uint32_t g_zposCursor = 4;
+static const uint32_t g_zposMuraCorrection = 5;
 
 extern bool g_bHDRItmEnable;
 extern bool g_bForceHDRSupportDebug;
 
 extern EStreamColorspace g_ForcedNV12ColorSpace;
+
+// Disable partial composition for now until we get
+// composite priorities working in libliftoff + also
+// use the proper libliftoff composite plane system.
+static constexpr bool kDisablePartialComposition = true;
+
+enum TakeScreenshotMode_t
+{
+	TAKE_SCREENSHOT_BASEPLANE_ONLY = 1, // Just the game/base plane
+	TAKE_SCREENSHOT_ALL_REAL_LAYERS = 2, // Just the game + steam overlay/perf overlays
+	TAKE_SCREENSHOT_FULL_COMPOSITION = 3, // Everything, but no display color management + no mura
+	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
+};
 
 class MouseCursor
 {
@@ -192,7 +206,7 @@ extern bool g_bFSRActive;
 extern uint32_t inputCounter;
 
 void nudge_steamcompmgr( void );
-void take_screenshot( void );
+void take_screenshot( int flags = TAKE_SCREENSHOT_BASEPLANE_ONLY );
 void force_repaint( void );
 
 extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );

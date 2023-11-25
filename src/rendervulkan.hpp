@@ -10,6 +10,7 @@
 #include <array>
 #include <bitset>
 #include <mutex>
+#include <optional>
 
 #include "main.hpp"
 
@@ -369,7 +370,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, bool deferred );
+bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, bool deferred, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
@@ -389,6 +390,8 @@ bool vulkan_supports_modifiers(void);
 std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size);
 std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth);
 void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data);
+
+std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
 bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 
@@ -484,11 +487,12 @@ struct VulkanOutput_t
 	uint32_t nOutImage; // swapchain index in nested mode, or ping/pong between two RTs
 	std::vector<std::shared_ptr<CVulkanTexture>> outputImages;
 	std::vector<std::shared_ptr<CVulkanTexture>> outputImagesPartialOverlay;
+	std::shared_ptr<CVulkanTexture> temporaryHackyBlankImage;
 
 	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
 	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
 
-	std::array<std::shared_ptr<CVulkanTexture>, 8> pScreenshotImages;
+	std::array<std::shared_ptr<CVulkanTexture>, 9> pScreenshotImages;
 
 	// NIS and FSR
 	std::shared_ptr<CVulkanTexture> tmpOutput;
@@ -713,7 +717,7 @@ public:
 		return ret;
 	}
 
-	static const uint32_t upload_buffer_size = 1024 * 1024 * 4;
+	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
 	inline VkDevice device() { return m_device; }
 	inline VkPhysicalDevice physDev() {return m_physDev; }
@@ -731,7 +735,7 @@ public:
 
 	inline void *uploadBufferData(uint32_t size)
 	{
-		assert(size < upload_buffer_size);
+		assert(size <= upload_buffer_size);
 
 		m_uploadBufferOffset = align(m_uploadBufferOffset, 16);
 		if (m_uploadBufferOffset + size > upload_buffer_size)

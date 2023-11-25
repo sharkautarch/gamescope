@@ -872,7 +872,6 @@ static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *cl
 
 static void gamescope_control_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
-	std::erase_if(wlserver.gamescope_controls, [=](auto control) { return control == resource; });
 	wl_resource_destroy( resource );
 }
 
@@ -884,13 +883,22 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 static void gamescope_control_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_control_interface, version, id );
-	wl_resource_set_implementation( resource, &gamescope_control_impl, NULL, NULL );
+	wl_resource_set_implementation( resource, &gamescope_control_impl, NULL,
+	[](struct wl_resource *resource)
+	{
+		std::erase_if(wlserver.gamescope_controls, [=](struct wl_resource *control) { return control == resource; });
+	});
 
 	// Send feature support
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_RESHADE_SHADERS, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DISPLAY_INFO, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PIXEL_FILTER, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
+
+	if ( !BIsNested() )
+	{
+		drm_send_gamescope_control( resource, &g_DRM );
+	}
 
 	wlserver.gamescope_controls.push_back(resource);
 }
@@ -1373,9 +1381,9 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 	wlserver_surface->xdg_surface = xdg_surface_info;
 
 	xdg_surface_info->map.notify = xdg_toplevel_map;
-	wl_signal_add(&xdg_surface->events.map, &xdg_surface_info->map);
+	wl_signal_add(&xdg_surface->surface->events.map, &xdg_surface_info->map);
 	xdg_surface_info->unmap.notify = xdg_toplevel_unmap;
-	wl_signal_add(&xdg_surface->events.unmap, &xdg_surface_info->unmap);
+	wl_signal_add(&xdg_surface->surface->events.unmap, &xdg_surface_info->unmap);
 	xdg_surface_info->destroy.notify = xdg_toplevel_destroy;
 	wl_signal_add(&xdg_surface->events.destroy, &xdg_surface_info->destroy);
 
@@ -1433,7 +1441,7 @@ bool wlserver_init( void ) {
 
 	wlr_renderer_init_wl_display(wlserver.wlr.renderer, wlserver.display);
 
-	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, wlserver.wlr.renderer);
+	wlserver.wlr.compositor = wlr_compositor_create(wlserver.display, 5, wlserver.wlr.renderer);
 
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
