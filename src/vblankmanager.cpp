@@ -390,7 +390,7 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 #ifdef __clang__
 double __attribute__((const, hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now, const long double real_delta, const bool savePoint, const uint64_t max_delta_apply, const float delta_trend_counter)
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now, const double centered_mean, const bool savePoint, const uint64_t max_delta_apply, double drawTimeTime, double lastDrawTimeTime)
+double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now/*, const double centered_mean, const bool savePoint, const uint64_t max_delta_apply, double drawTimeTime, double lastDrawTimeTime*/)
 #endif
 {
 	
@@ -406,11 +406,11 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
          		+ targetPoint;
 	
 	double relativePoint = targetPoint - now;
-	static long double real_delta = 0.0;
+	/*static long double real_delta = 0.0;
 	static long double last_real_delta = 0.0;
 	static long double delta_trend_counter = 3.0f;
 	static long double relativePoint_prev_vblank = relativePoint;
-	static long double relativePoint_prev = relativePoint;
+	static long double relativePoint_prev = relativePoint;*/
 	
 	
 	fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
@@ -418,7 +418,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
 	fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	double temp;
+	/*double temp;
 	
 	if (savePoint)
 	{
@@ -489,7 +489,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 		relativePoint_prev=relativePoint;
 	}
 	
-	fprintf( stdout, "3 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
+	fprintf( stdout, "3 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);*/
 	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
@@ -755,11 +755,11 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			double now = (double)get_time_in_nanos();
 			if (sleep_cycle > 1)
 			{
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime)  - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)  - now;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime) - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now) - now;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			if (cpu_supports_tpause)
@@ -769,7 +769,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
 		}
 		else
 		{
@@ -783,7 +783,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (sleep_cycle < 2)
 			{
 				double first_cycle_sleep_start = now;
-				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
+				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
 				sleep_until_nanos_retrying( targetPoint, offset, (int32_t) sleep_weights[1]); 
 				
 				now = (double)get_time_in_nanos();
@@ -792,20 +792,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime));
+					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
 			else
 			{
-				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime));
+				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now));
 				targetPoint = now + fmax(targetPoint - now - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 				now = (double)get_time_in_nanos();
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
 		}
 		
 		if (sleep_cycle < 2)
