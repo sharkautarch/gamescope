@@ -514,11 +514,9 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			const long double nsecInterval_dec = (long double) nsecInterval;
 			const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
 			
-			if (sleep_cycle < 2)
-			{
-				drawTime = g_uVblankDrawTimeNS;
-				drawTimeTime = (long double)get_time_in_nanos();
-			}
+			drawTime = g_uVblankDrawTimeNS;
+			drawTimeTime = (long double)get_time_in_nanos();
+			
 			
 			if ( sleep_cycle < 2 && g_bCurrentlyCompositing )
 				drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
