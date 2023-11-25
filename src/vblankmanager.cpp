@@ -387,36 +387,28 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 	}
 }
 
+
 #ifdef __clang__
-double __attribute__((const, hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now)
+double __attribute__((const, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now)
+double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #endif
 {
-	
-	
+
 	double lastVblank = _lastVblank - offset;
-        //fprintf(stdout, "\n offset: %.2fms, _lastVblank - offset= %.2fms \n", offset/1'000'000.0, lastVblank/1'000'000.0);
+        
         
 	double targetPoint = lastVblank + nsecInterval;
-	double dist_to_target = now - targetPoint;
 	
+	double dist_to_target = now - targetPoint;
         
         targetPoint = (dist_to_target>0.0) * (nsecInterval*ceil(dist_to_target/(nsecInterval)))
-         		+ targetPoint;
+	       + targetPoint;
 	
 	double relativePoint = targetPoint - now;
 	
+	double cappedTargetPoint = fmin(nsecInterval*limitFactor, relativePoint) + now;
 	
-	
-	
-	//fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	relativePoint = fmax(fmin(relativePoint,offset), relativePoint * (relativePoint < ( (nextafter(nsecInterval * ignoreFactor, 2*nsecInterval * ignoreFactor)) )    ));
-	//fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
-	//fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	
-	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
 
@@ -476,14 +468,12 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
 	
-	const double targetPoint_max_percent_of_refresh_vsync_value = .99; //Don't confuse this variable with the one above.
+	const double targetPoint_max_percent_of_refresh_vsync_value = 1.50; //Don't confuse this variable with the one above.
 	// ^ this limits how much we stretch out steamcompmanager's vsync in order to line up with the past vblank time reported by steamcompmanager
 	
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
-	
-	const double targetPoint_ignore_over_percent_of_refresh = 1.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
-	
+		
 	while ( true )
 	{
 		sleep_cycle++;
@@ -679,11 +669,11 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			double now = (double)get_time_in_nanos();
 			if (sleep_cycle > 1)
 			{
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)  - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)  - now;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now) - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now) - now;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			if (cpu_supports_tpause)
@@ -693,7 +683,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
 		}
 		else
 		{
@@ -707,7 +697,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (sleep_cycle < 2)
 			{
 				double first_cycle_sleep_start = now;
-				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
+				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
 				sleep_until_nanos_retrying( targetPoint, offset, (int32_t) sleep_weights[1]); 
 				
 				now = (double)get_time_in_nanos();
@@ -716,20 +706,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now));
+					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
 			else
 			{
-				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now));
+				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting,  now));
 				targetPoint = now + fmax(targetPoint - now - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 				now = (double)get_time_in_nanos();
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
 		}
 		
 		if (sleep_cycle < 2)
