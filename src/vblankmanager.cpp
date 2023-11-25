@@ -388,12 +388,13 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 }
 
 #ifdef __clang__
-double __attribute__((const, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+double __attribute__((const, hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now, double * relativePoint_prev, const long double real_delta, const bool savePoint, const uint64_t max_delta_apply, const float delta_trend_counter)
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now )
+double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now, double * relativePoint_prev, const double centered_mean, const bool savePoint, const uint64_t max_delta_apply, double drawTimeTime, double lastDrawTimeTime)
 #endif
 {
-
+	
+	
 	double lastVblank = _lastVblank - offset;
         
         
@@ -405,6 +406,87 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
          		+ targetPoint;
 	
 	double relativePoint = targetPoint - now;
+	static long double local_min = g_uVBlankDrawTimeMinCompositing;
+	static long double local_max = (long double)centered_mean + g_uVBlankDrawTimeMinCompositing;
+	static long double real_delta = 0.0;
+	static long double last_real_delta = 0.0;
+	static long double delta_trend_counter = 3.0f;
+	if (savePoint)
+	{
+		double temp = *relativePoint_prev;
+		*relativePoint_prev=relativePoint;
+		real_delta = ((long double)relativePoint - (long double)temp)/(drawTimeTime - lastDrawTimeTime);
+		if ( (double)real_delta < 0.0 || (relativePoint < centered_mean && (double)relativePoint-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
+		{
+			if ((double)last_real_delta >= 0.0)
+				delta_trend_counter=1.25f;
+			
+			local_min=(long double)temp+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
+		}
+		
+		if ((double)real_delta >= 0.0 || (relativePoint >= centered_mean && (double)relativePoint+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
+		{
+			if ((double)last_real_delta <= 0.0)
+				delta_trend_counter=1.25f;
+				
+			local_max=fmaxl((long double)relativePoint-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
+		}
+		if ((double)real_delta < 0.0)
+		{
+			if ((double)last_real_delta < 0.0)
+				delta_trend_counter+=1.25f;
+			else
+				delta_trend_counter=1.25f;
+			relativePoint=fmaxl((long double)relativePoint, temp-fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+		}
+		
+		if ((double)real_delta >= 0.0)
+		{
+			if ((double)last_real_delta >= 0.0)
+				delta_trend_counter+=1.25f;
+			else
+				delta_trend_counter=1.25f;
+			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+		}
+	}
+	else
+	{
+		real_delta = ((long double)relativePoint - (long double)*relativePoint_prev)/(drawTimeTime - lastDrawTimeTime);
+		if ( (double)real_delta < 0.0 || (relativePoint < centered_mean && (double)relativePoint-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
+		{
+			if ((double)last_real_delta >= 0.0)
+				delta_trend_counter=1.25f;
+			
+			local_min=(long double)*relativePoint_prev+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
+		}
+		
+		if ((double)real_delta >= 0.0 || (relativePoint >= centered_mean && (double)relativePoint+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
+		{
+			if ((double)last_real_delta <= 0.0)
+				delta_trend_counter=1.25f;
+				
+			local_max=fmaxl((long double)relativePoint-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
+		}
+		if ((double)real_delta < 0.0)
+		{
+			if ((double)last_real_delta < 0.0)
+				delta_trend_counter+=1.25f;
+			else
+				delta_trend_counter=1.25f;
+			relativePoint=fmaxl((long double)relativePoint, *relativePoint_prev-fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+		}
+		
+		if ((double)real_delta >= 0.0)
+		{
+			if ((double)last_real_delta >= 0.0)
+				delta_trend_counter+=1.25f;
+			else
+				delta_trend_counter=1.25f;
+			relativePoint=fminl((long double)relativePoint, *relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+		}
+		
+	}
+	last_real_delta=real_delta;
 	relativePoint = fmax(offset, relativePoint * (  (nextafter(relativePoint, 2.0*relativePoint)) < (nsecInterval * ignoreFactor) ));
 	
 	double cappedTargetPoint = fmin(nsecInterval*limitFactor, relativePoint) + now;
@@ -444,6 +526,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long int time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	long int lastDrawTime = g_uVblankDrawTimeNS;
+	//long int lastDrawTime_timestamp = get_time_in_nanos();
 	
 	
 	double first_cycle_sleep_duration = 0.0;
@@ -456,6 +539,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long double local_min = g_uVBlankDrawTimeMinCompositing;
 	long double local_max = (long double)centered_mean + g_uVBlankDrawTimeMinCompositing;
 	long double lastRollingMaxDrawTime = (long double)centered_mean;
+	
 	float delta_trend_counter = 3.0f;
 	double offset_dec = 0.0;
 	
@@ -473,7 +557,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
 	const double targetPoint_ignore_over_percent_of_refresh = 1.0; // if targetPoint would bring us over this percent of the refresh, then just use normal offset 
-	
+	double relativePoint_prev = offset_dec;
 	while ( true )
 	{
 		sleep_cycle++;
@@ -541,10 +625,23 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 					local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
 				}
 				
-				rollingMaxDrawTime =   ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
+				/*double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
+				double sinc = (double) (heaviside((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp)) * sin(radians)/fmax(radians, 0.0000001);
+				
+				double delta_check = pow(fmax((double)( sinc*fabs((int64_t)lastDrawTime - (int64_t)drawTime)), 1.0 )/100000.0, 2);
+				double delta = fmax( delta_check * (double)(heaviside( (int64_t)nsecInterval/1000000 - ((int) round(2.0*delta_check)))) , 1);
+				//						^ branchless way of checking if value delta_check is so large that it'll mess up
+				//						  the rollingMaxDrawTime calculations
+				double ratio = ((double)drawTime) / ( fmax( ((double) heaviside( (int64_t) nsecInterval - (int64_t)lastDrawTime)) * ( (double) lastDrawTime), drawTime ) );
+				rollingMaxDrawTime = (uint64_t)(llroundl( (double) fmax( (double) centered_mean, (double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))
+				      		* ratio /( delta)));
 				if (counter % 300 == 0) {
-					std::cout << "rollingMaxDrawTime: " << rollingMaxDrawTime << "\n";
-				}
+		        		std::cout << "delta= " << delta << "\n";
+		        		std::cout << "(double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))* ratio /( delta):\n";
+		        		std::cout << (double) (( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range)) * ratio /( delta) << "\n\n";
+		        		std::cout << "ratio= " << ratio << "\n";
+					std::cout << "rollingMaxDrawTime after using fmin: " << rollingMaxDrawTime << "\n";
+				}*/
 			}
 			if ((double)real_delta < 0.0)
 			{
@@ -658,11 +755,11 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			double now = (double)get_time_in_nanos();
 			if (sleep_cycle > 1)
 			{
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now)  - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, &relativePoint_prev, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime)  - now;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now) - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, &relativePoint_prev, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime) - now;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			if (cpu_supports_tpause)
@@ -672,7 +769,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now, &relativePoint_prev, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime);
 		}
 		else
 		{
@@ -686,7 +783,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (sleep_cycle < 2)
 			{
 				double first_cycle_sleep_start = now;
-				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now )-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
+				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh, now, &relativePoint_prev, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
 				sleep_until_nanos_retrying( targetPoint, offset, (int32_t) sleep_weights[1]); 
 				
 				now = (double)get_time_in_nanos();
@@ -695,20 +792,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now));
+					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now, &relativePoint_prev, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
 			else
 			{
-				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now ));
+				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, targetPoint_ignore_over_percent_of_refresh,  now, &relativePoint_prev, centered_mean, false, max_delta_apply, drawTimeTime, lastDrawTimeTime));
 				targetPoint = now + fmax(targetPoint - now - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 				now = (double)get_time_in_nanos();
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, targetPoint_ignore_over_percent_of_refresh, now , &relativePoint_prev, centered_mean, true, max_delta_apply, drawTimeTime, lastDrawTimeTime);
 		}
 		
 		if (sleep_cycle < 2)
@@ -741,7 +838,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		lastDrawTimeTime=drawTimeTime;
 		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
 		last_real_delta=real_delta;
-		
+		//lastDrawTime_timestamp=get_time_in_nanos();
 		
 		
 		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
