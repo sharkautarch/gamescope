@@ -388,15 +388,16 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 }
 
 #ifdef __clang__
-double __attribute__((const, hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now, const long double real_delta, const bool savePoint, const uint64_t max_delta_apply, const float delta_trend_counter)
+double __attribute__((const, hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now)
+#endif
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now/*, const double centered_mean, const bool savePoint, const uint64_t max_delta_apply, double drawTimeTime, double lastDrawTimeTime*/)
+double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double ignoreFactor, const double now)
 #endif
 {
 	
 	
 	double lastVblank = _lastVblank - offset;
-        
+        //fprintf(stdout, "\n offset: %.2fms, _lastVblank - offset= %.2fms \n", offset/1'000'000.0, lastVblank/1'000'000.0);
         
 	double targetPoint = lastVblank + nsecInterval;
 	double dist_to_target = now - targetPoint;
@@ -407,90 +408,15 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	
 	double relativePoint = targetPoint - now;
 	
-	/*static long double real_delta = 0.0;
-	static long double last_real_delta = 0.0;
-	static long double delta_trend_counter = 3.0f;
-	static long double relativePoint_prev_vblank = relativePoint;
-	static long double relativePoint_prev = relativePoint;*/
 	
 	
-	fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
+	
+	//fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmax(fmin(relativePoint,offset), relativePoint * (relativePoint < ( (nextafter(nsecInterval * ignoreFactor, 2*nsecInterval * ignoreFactor)) )    ));
-	fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
+	//fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
-	fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	/*double temp;
+	//fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	
-	if (savePoint)
-	{
-		temp = relativePoint_prev_vblank;
-		relativePoint_prev=relativePoint_prev_vblank=relativePoint;
-	}
-
-	if (savePoint)
-	{
-		real_delta = ((long double)relativePoint - (long double)temp)/(drawTimeTime - lastDrawTimeTime);
-		fprintf( stdout, "real_delta= %.2Lfms \n", real_delta/1'000'000.0);
-		fprintf( stdout, "real_delta*nsecInterval= %.2Lfms \n", real_delta*nsecInterval/1'000'000.0);
-		if ((double)real_delta < 0.0)
-		{
-			if ((double)last_real_delta < 0.0)
-				delta_trend_counter+=1.25f;
-			else
-				delta_trend_counter=1.25f;
-			fprintf( stdout, "fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)= %.2Lfms \n", fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)/1'000'000.0);
-			fprintf( stdout, "logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply= %.2Lfms \n", logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply/1'000'000.0);
-			relativePoint=fmaxl((long double)relativePoint, temp-fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply));
-		}
-		
-		if ((double)real_delta >= 0.0)
-		{
-			if ((double)last_real_delta >= 0.0)
-				delta_trend_counter+=1.25f;
-			else
-				delta_trend_counter=1.25f;
-			fprintf( stdout, "fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)= %.2Lfms \n", fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)/1'000'000.0);
-			fprintf( stdout, "logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply= %.2Lfms \n", logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply/1'000'000.0);
-			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply));
-		}
-		last_real_delta=real_delta;
-	}
-	else
-	{
-		real_delta = ((long double)relativePoint - (long double)relativePoint_prev_vblank)/(drawTimeTime - lastDrawTimeTime);
-		fprintf( stdout, "real_delta= %.2Lfms \n", real_delta/1'000'000.0);
-		fprintf( stdout, "real_delta*nsecInterval= %.2Lfms \n", real_delta*nsecInterval/1'000'000.0);
-		if ( (double)real_delta < 0.0 )
-		{
-			if ((double)last_real_delta >= 0.0)
-				delta_trend_counter=1.25f;
-			
-		}
-		
-		if ((double)real_delta >= 0.0 )
-		{
-			if ((double)last_real_delta <= 0.0)
-				delta_trend_counter=1.25f;
-				
-		}
-		if ((double)real_delta < 0.0)
-		{
-			fprintf( stdout, "fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)= %.2Lfms \n", fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)/1'000'000.0);
-			fprintf( stdout, "logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply= %.2Lfms \n", logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply/1'000'000.0);
-			relativePoint=fmaxl((long double)relativePoint, relativePoint_prev-fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply));
-		}
-		
-		if ((double)real_delta >= 0.0)
-		{
-			
-			fprintf( stdout, "fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)= %.2Lfms \n", fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply)/1'000'000.0);
-			fprintf( stdout, "logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply= %.2Lfms \n", logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply/1'000'000.0);
-			relativePoint=fminl((long double)relativePoint, relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*10.0*(long double)max_delta_apply));
-		}
-		relativePoint_prev=relativePoint;
-	}
-	
-	fprintf( stdout, "3 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);*/
 	double cappedTargetPoint = relativePoint + now;
 	return cappedTargetPoint;
 }
