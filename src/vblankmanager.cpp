@@ -406,8 +406,6 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
          		+ targetPoint;
 	
 	double relativePoint = targetPoint - now;
-	static long double local_min = g_uVBlankDrawTimeMinCompositing;
-	static long double local_max = (long double)centered_mean + g_uVBlankDrawTimeMinCompositing;
 	static long double real_delta = 0.0;
 	static long double last_real_delta = 0.0;
 	static long double delta_trend_counter = 3.0f;
@@ -450,20 +448,18 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	else
 	{
 		real_delta = ((long double)relativePoint - (long double)relativePoint_prev)/(drawTimeTime - lastDrawTimeTime);
-		if ( (double)real_delta < 0.0 || (relativePoint < centered_mean && (double)relativePoint-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
+		if ( (double)real_delta < 0.0 )
 		{
 			if ((double)last_real_delta >= 0.0)
 				delta_trend_counter=1.25f;
 			
-			local_min=(long double)relativePoint_prev+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
 		}
 		
-		if ((double)real_delta >= 0.0 || (relativePoint >= centered_mean && (double)relativePoint+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
+		if ((double)real_delta >= 0.0 )
 		{
 			if ((double)last_real_delta <= 0.0)
 				delta_trend_counter=1.25f;
 				
-			local_max=fmaxl((long double)relativePoint-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
 		}
 		if ((double)real_delta < 0.0)
 		{
