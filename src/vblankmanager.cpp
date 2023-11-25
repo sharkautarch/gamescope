@@ -406,6 +406,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
          		+ targetPoint;
 	
 	double relativePoint = targetPoint - now;
+	
 	/*static long double real_delta = 0.0;
 	static long double last_real_delta = 0.0;
 	static long double delta_trend_counter = 3.0f;
@@ -414,7 +415,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 	
 	
 	fprintf( stdout, "0 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
-	relativePoint = fmax(offset, relativePoint * (relativePoint < ( (nextafter(nsecInterval * ignoreFactor, 2*nsecInterval * ignoreFactor)) )    ));
+	relativePoint = fmax(fmin(relativePoint,offset), relativePoint * (relativePoint < ( (nextafter(nsecInterval * ignoreFactor, 2*nsecInterval * ignoreFactor)) )    ));
 	fprintf( stdout, "1 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
 	relativePoint = fmin(nsecInterval*limitFactor, relativePoint);
 	fprintf( stdout, "2 relativePoint: %.2fms \n", relativePoint / 1'000'000.0);
