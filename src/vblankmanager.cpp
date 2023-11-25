@@ -432,7 +432,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 				delta_trend_counter+=1.25f;
 			else
 				delta_trend_counter=1.25f;
-			relativePoint=fmaxl((long double)relativePoint, temp-fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+			relativePoint=fmaxl((long double)relativePoint, temp-fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*(long double)max_delta_apply));
 		}
 		
 		if ((double)real_delta >= 0.0)
@@ -441,7 +441,7 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 				delta_trend_counter+=1.25f;
 			else
 				delta_trend_counter=1.25f;
-			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+			relativePoint=fminl((long double)relativePoint, temp+fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*(long double)max_delta_apply));
 		}
 		last_real_delta=real_delta;
 	}
@@ -463,12 +463,12 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 		}
 		if ((double)real_delta < 0.0)
 		{
-			relativePoint=fmaxl((long double)relativePoint, relativePoint_prev-fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+			relativePoint=fmaxl((long double)relativePoint, relativePoint_prev-fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*(long double)max_delta_apply));
 		}
 		
 		if ((double)real_delta >= 0.0)
 		{
-			relativePoint=fminl((long double)relativePoint, relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, fmax(logf(delta_trend_counter), 4.0)*(long double)max_delta_apply));
+			relativePoint=fminl((long double)relativePoint, relativePoint_prev+fminl(fabsl(real_delta)*nsecInterval, logf(delta_trend_counter*100.0)*(long double)max_delta_apply));
 		}
 	}
 	
