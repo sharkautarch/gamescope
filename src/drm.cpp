@@ -903,7 +903,7 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		if (fr.size()) {
 			conn->valid_display_rates = fr;
 		}
-	} if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
+	} else if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
 		conn->is_galileo_display = vendor_product->product;
 		conn->valid_display_rates = std::span(galileo_display_rates);
 	} else {

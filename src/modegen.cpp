@@ -415,6 +415,7 @@ uint32_t convert_modeline(std::string md, drmModeModeInfo *new_mode)
 	getline(mds, param, ' ');
 	new_mode->vtotal = atoi(param.c_str());
 
+	new_mode->vrefresh = (1000 * new_mode->clock) / (new_mode->htotal * new_mode->vtotal);
 	return target_fps;
 }
 
@@ -443,6 +444,7 @@ int load_custom_modes(const char *pnp, const char *model) {
 	std::vector<uint32_t> frame_rates = {};
 	std::vector<drmModeModeInfo> modes = {};
 
+	xwm_log.errorf("Loaded file: %s", fn.c_str());
 	std::string line;
 	while (std::getline(file, line, '\n')) {
 		if (line[0] == '#') {
@@ -483,6 +485,7 @@ void generate_custom_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, in
 	auto modes = custom_modes[key];
 	for (unsigned int i = 0; i < frames.size(); i++){
 		if (frames[i] == (uint32_t) vrefresh) {
+			xwm_log.errorf("Loaded refresh rate: %d", vrefresh);
 			auto m = modes.at(i);
 
 			mode->clock = m.clock;
@@ -497,6 +500,7 @@ void generate_custom_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, in
 			mode->vsync_end = m.vsync_end;
 			mode->vtotal = m.vtotal;
 
+			mode->vrefresh = vrefresh;
 			break;
 		}
 	}
