@@ -77,7 +77,7 @@ inline bool __attribute__((always_inline)) _isinf(double val)
 }
 
 #include <waitpkgintrin.h>
-inline void __attribute__((always_inline)) cpu_pause(const uint64_t counter, const bool do_timed_pause)
+inline void __attribute__((always_inline,target("waitpkg"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
 {
 #if __has_builtin(__builtin_ia32_tpause)
 # define _TPAUSE _tpause(0, counter)
@@ -160,6 +160,52 @@ else
 # undef _PAUSE
 #endif
 }
+
+inline void __attribute__((always_inline)) cpu_pause()
+{
+
+
+#if defined(__clang__)
+# define _PAUSE _mm_pause()
+#else
+# define _PAUSE __builtin_ia32_pause()
+#endif
+
+
+
+#if !defined(__clang__)			
+# if defined(__x86_64__) || defined(__i386__)
+	_PAUSE;
+# else
+#  if defined(__aarch64__) || defined(__arm__) //GCC doesn't have an intrinsic for aarch64 yield instruction
+	asm volatile("yield"); //https://stackoverflow.com/a/70076751
+#  elif __has_builtin(__sync_synchronize)
+	__sync_synchronize(); //close enough to a pause intrinsic
+	__sync_synchronize();
+	__sync_synchronize();
+#
+#else
+# if defined(__x86_64__) || defined(__i386__)
+	_PAUSE;
+# else
+#  if defined(__aarch64__) || defined(__arm__)
+	asm volatile("yield"); //https://stackoverflow.com/a/70076751
+#  elif __has_builtin(__sync_synchronize)
+	__sync_synchronize(); //close enough to a pause intrinsic
+	__sync_synchronize();
+	__sync_synchronize();
+#  endif
+# endif
+#  endif
+# endif	
+#endif
+
+
+
+#ifdef _PAUSE
+# undef _PAUSE
+#endif
+}
 int __attribute__((const)) median_trial(const int l, const int r) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
 {
 
@@ -180,23 +226,23 @@ long int cpu_pause_get_upper_q_avg()
 	for (int i = 0; i < num_test_runs; i++)
 	{
 		long int before = get_time_in_nanos();
-		cpu_pause(0, false);
+		cpu_pause();
 		trials[i]=get_time_in_nanos()-before;
 	}
 	
 	std::sort(trials, trials+num_test_runs);
 	
-	long int sum = 0;
+	uint64_t sum = 0;
 	for (int i = 3*num_test_runs/4; i < num_test_runs; i++) {
-		sum += trials[i];
+		sum += (uint64_t)trials[i];
 	}
 	
-	return sum/((long int)num_test_runs/4l);
+	return static_cast<long int>(sum/((uint64_t)num_test_runs/4l));
 }
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
-inline void __attribute__((optimize("-Oz"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+void __attribute__((optimize("-Oz"),target("waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 {
 	int64_t diff;
 	double res = 0.0;
@@ -213,7 +259,7 @@ inline void __attribute__((optimize("-Oz"))) spin_wait_w_tpause(const long doubl
 		for (int j = i;j<2;j++)
 		{
 			uint64_t tsc_time_value = readCycleCount() + compared_int*(2-j)/( ((2+i)*(2+i)) - 1);
-			cpu_pause((uint64_t)tsc_time_value, true);
+			cpu_tpause((uint64_t)tsc_time_value, true);
 		}
 		
 		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
@@ -225,7 +271,7 @@ inline void __attribute__((optimize("-Oz"))) spin_wait_w_tpause(const long doubl
 			j++;
 			res = DBL_MAX;
 		
-			cpu_pause(0, true);
+			cpu_tpause(0, true);
 		
 			diff = (int64_t)readCycleCount() - (int64_t)prev;
 			if ( HMMM(diff < 0) )
@@ -262,14 +308,14 @@ inline void __attribute__((optimize("-Oz"))) spin_wait(const long double nsPerTi
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
-	const long int cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.0L*(long double)cpu_pause_time_len));
+	const long int cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
 	
 	int i = 0;
 	uint64_t prev = readCycleCount();
 	
 	for (long int k = 0; k < std::max(cpu_pause_loop_iter-1,0l); k += 2) {
-				cpu_pause(0, false);
-				cpu_pause(0, false);
+				cpu_pause();
+				cpu_pause();
 	}
 				
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
@@ -284,7 +330,7 @@ inline void __attribute__((optimize("-Oz"))) spin_wait(const long double nsPerTi
 			j++;
 			res = DBL_MAX;
 		
-			cpu_pause(0, false);
+			cpu_pause();
 		
 			diff = (int64_t)readCycleCount() - (int64_t)prev;
 			if ( HMMM(diff < 0) )
@@ -349,16 +395,16 @@ inline long int __attribute__((nonnull(1))) IQM(uint16_t* a, const int n) //cred
 
     int mid_index = med(a, 0, n);
 
-    int r1 = med(a, 0, mid_index);
+    uint64_t r1 = (uint64_t)med(a, 0, mid_index);
 
-    int r3 = std::min(med(a, mid_index + 1, n), n);
+    uint64_t r3 = (uint64_t)std::min(med(a, mid_index + 1, n), n);
     
-    long int sum=0;
-    for (int i = r1; i < r3; i++)
+    uint64_t sum=0;
+    for (uint64_t i = r1; i < r3; i++)
     {
-    	sum += ( ((long int) a[i]) * 1000 );
+    	sum += ( ((uint64_t) a[i]) * 1000 );
     }
-    return sum/(r3 - r1);
+    return static_cast<long int>(sum/(r3 - r1));
 }
 #undef med
 
@@ -435,7 +481,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	uint16_t drawtimes_pending[64];
 	std::fill_n(drawtimes, 64, (uint16_t)(((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) >> 1)/500 )  );
 	int index=0;
-	long int centered_mean = 1'000'000'000l / std::max( (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh), 120l);
+	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
 	long int max_drawtime=2*centered_mean;
 	
 	
@@ -455,8 +501,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long double real_delta = 0.0L;
 	long double last_real_delta = 0.0L; 
 	long double local_min = g_uVBlankDrawTimeMinCompositing;
-	long double local_max = (long double)centered_mean + g_uVBlankDrawTimeMinCompositing;
-	long double lastRollingMaxDrawTime = (long double)centered_mean;
+	long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
+	long double lastRollingMaxDrawTime = (long double)centered_mean/2;
 	
 	float delta_trend_counter = 3.0f;
 	double offset_dec = 0.0;
@@ -584,11 +630,11 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			offset = rollingMaxDrawTime + redZone;
 			if (sleep_cycle > 1)
 			{
-				offset = std::clamp(std::min(nsecInterval, centered_mean)-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
+				offset = std::clamp(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
 			}
 			else
 			{
-				offset = std::clamp(std::min( nsecInterval, centered_mean)-nsecInterval/20, offset , nsecInterval+nsecInterval/5);
+				offset = std::clamp(std::min( nsecInterval, centered_mean)/2-nsecInterval/20, offset , nsecInterval+nsecInterval/5);
 			}	
 			if (counter % 300 == 0) 
 				std::cout << "offset: " << offset << " sleep_cycle: "<< sleep_cycle << "\n";	
@@ -603,7 +649,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				memcpy(drawtimes, drawtimes_pending, 64 * sizeof(drawtimes_pending[0]));
 				index=0;
 				const uint16_t n = 64; 
-				centered_mean = (centered_mean + clamp(2*nsecInterval/3, IQM(drawtimes, n), 5*nsecInterval/3))/2;
+				centered_mean = (centered_mean + clamp(nsecInterval/2, IQM(drawtimes, n), 5*nsecInterval/3))/2;
 				
 				max_drawtime = std::min( 
 					      (	
