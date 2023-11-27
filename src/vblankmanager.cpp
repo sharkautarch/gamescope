@@ -461,7 +461,7 @@ inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-uns
 	
 	return cappedTargetPoint;
 }
-
+ 
 
 #ifdef __clang__
 void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
@@ -476,8 +476,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
 
 	// Start off our average with our starting draw time.
-	uint64_t rollingMaxDrawTime = g_uStartingDrawTime;
-
+	uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
+	uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
 	const uint64_t range = g_uVBlankRateOfDecayMax;
 	uint8_t sleep_cycle = 0;
 	
@@ -550,6 +550,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		
 		long int drawTime;
 		long int offset;
+		double offset_dec_real;
 	 	
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
@@ -567,7 +568,15 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			if (sleep_cycle < 2)
 				drawtimes_pending[index] = (uint16_t)( (drawTime >> 1)/500 );
 			
-			
+			if (sleep_cycle < 2)
+			{
+				if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
+					rollingMaxDrawTime_real = drawTime;
+				else
+					rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
+				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime, static_cast<uint64_t>(nsecInterval - redZone) );
+
+			}
 			if (sleep_cycle > 1)
 			{	
 				rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
@@ -636,6 +645,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			
 			offset = rollingMaxDrawTime + redZone;
+			offset_dec_real = rollingMaxDrawTime_real + redZone;
 			if (sleep_cycle > 1)
 			{
 				offset = std::clamp(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
@@ -737,7 +747,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			if (sleep_cycle < 2)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		else
 		{
@@ -760,7 +770,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now));
+					targetPoint = llround(vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
@@ -773,7 +783,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, now);
+			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		
 		if (sleep_cycle < 2)
@@ -784,7 +794,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	SKIPPING_SECOND_SLEEP:;
 		VBlankTimeInfo_t time_info =
 		{
-			.target_vblank_time = static_cast<uint64_t>(targetPoint + offset),
+			.target_vblank_time = static_cast<uint64_t>(targetPoint + lround(offset_dec_real)),
 			.pipe_write_time    = static_cast<uint64_t>(get_time_in_nanos()),
 		};
 		if (counter % 300 == 0)
