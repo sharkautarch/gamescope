@@ -77,7 +77,7 @@ inline bool __attribute__((always_inline)) _isinf(double val)
 }
 
 #include <waitpkgintrin.h>
-inline void __attribute__((always_inline,target("waitpkg"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
+inline void __attribute__((always_inline,target("waitpkg", "sse"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
 {
 #if __has_builtin(__builtin_ia32_tpause)
 # define _TPAUSE _tpause(0, counter)
@@ -161,7 +161,7 @@ else
 #endif
 }
 
-inline void __attribute__((always_inline)) cpu_pause()
+inline void __attribute__((always_inline,target("sse"))) cpu_pause()
 {
 
 
@@ -242,13 +242,13 @@ long int cpu_pause_get_upper_q_avg()
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
-void __attribute__((optimize("-Oz"),target("waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"),target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 {
 	int64_t diff;
 	double res = 0.0;
 	double check_this_first = 0.0;
 	long double check_this = 0.0L;
-	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*3.5L));
+	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*3.0L));
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
@@ -299,7 +299,11 @@ void __attribute__((optimize("-Oz"),target("waitpkg"))) spin_wait_w_tpause(const
 	}
 }
 
-inline void __attribute__((optimize("-Oz"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#if defined(__x86_64__)
+void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), target_clones("default,arch=core2,arch=znver1,arch=westmere"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#else
+void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#endif
 {
 	int64_t diff;
 	double res = 0.0;
@@ -435,9 +439,9 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 
 
 #ifdef __clang__
-double __attribute__((const, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+inline double __attribute__((const, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #else
-double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #endif
 {
 
@@ -462,7 +466,11 @@ double __attribute__((const,optimize("-fno-trapping-math", "-fsplit-paths","-fsp
 #ifdef __clang__
 void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #else
-void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	#if defined(__x86_64__)
+void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	#else
+	void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	#endif
 #endif
 {
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
@@ -514,7 +522,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
 	
-	const double targetPoint_max_percent_of_refresh_vsync_value = 1.50; //Don't confuse this variable with the one above.
+	const double targetPoint_max_percent_of_refresh_vsync_value = 1.4; //Don't confuse this variable with the one above.
 	// ^ this limits how much we stretch out steamcompmanager's vsync in order to line up with the past vblank time reported by steamcompmanager
 	
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
@@ -850,6 +858,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		
 	}
 }
+
 
 #if HAVE_OPENVR
 void vblankThreadVR()
