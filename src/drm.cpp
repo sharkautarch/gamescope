@@ -272,6 +272,7 @@ static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
 
 std::atomic<uint64_t> g_nCompletedPageFlipCount = { 0u };
 
+extern void mangoapp_output_update( uint64_t vblanktime );
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
 	uint64_t flipcount = (uint64_t)data;
@@ -333,6 +334,8 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	g_DRM.fbids_queued.clear();
 
 	g_DRM.flip_lock.unlock();
+
+	mangoapp_output_update( vblanktime );
 }
 
 void flip_handler_thread_run(void)

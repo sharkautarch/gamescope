@@ -765,6 +765,7 @@ struct commit_t : public gamescope::IWaitable
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
+	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
 	uint64_t win_seq = 0;
@@ -818,9 +819,14 @@ struct commit_t : public gamescope::IWaitable
 		}
 
 		if ( m_bMangoNudge )
-			mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+			mangoapp_update( IsPerfOverlayFIFO() ? uint64_t(~0ull) : frametime, frametime, uint64_t(~0ull) );
 
 		nudge_steamcompmgr();
+	}
+
+	bool IsPerfOverlayFIFO()
+	{
+		return fifo || is_steam;
 	}
 
 	void CloseFenceInternal()
@@ -948,6 +954,9 @@ bool			synchronize;
 std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 VBlankTimeInfo_t g_SteamCompMgrVBlankTime = {};
+
+uint64_t g_uCurrentBasePlaneCommitID = 0;
+bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
 static uint64_t g_uDynamicRefreshEqualityTime = 0;
@@ -1413,6 +1422,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->buf = buf;
 	commit->async = async;
 	commit->fifo = fifo;
+	commit->is_steam = window_is_steam( w );
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -2376,6 +2386,9 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
 		if ( !(flags & PaintWindowFlag::FadeTarget) )
 			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
+
+		g_uCurrentBasePlaneCommitID = lastCommit->commitID;
+		g_bCurrentBasePlaneIsFifo = lastCommit->IsPerfOverlayFIFO();
 	}
 }
 
