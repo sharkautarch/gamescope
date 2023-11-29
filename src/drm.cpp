@@ -987,7 +987,10 @@ static bool refresh_state( drm_t *drm )
 		parse_edid(drm, conn);
 
 		if ( conn->name != nullptr )
-			continue;
+		{
+			free(conn->name);
+			conn->name = nullptr;
+		}
 
 		const char *type_str = drmModeGetConnectorTypeName(conn->connector->connector_type);
 		if (!type_str)
