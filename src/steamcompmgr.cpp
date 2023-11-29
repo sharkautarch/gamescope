@@ -6365,12 +6365,16 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank )
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.target_vblank_time;
 
 	// commits that were not ready to be presented based on their display timing.
-	std::vector< CommitDoneEntry_t > commits_before_their_time;
+	static std::vector< CommitDoneEntry_t > commits_before_their_time;
+	commits_before_their_time.clear();
+	commits_before_their_time.reserve( 32 );
 
 	uint64_t now = (uint64_t)get_time_in_nanos();
 
 	// windows in FIFO mode we got a new frame to present for this vblank
-	std::unordered_set< uint64_t > fifo_win_seqs;
+	static std::unordered_set< uint64_t > fifo_win_seqs;
+	fifo_win_seqs.clear();
+	fifo_win_seqs.reserve( 32 );
 
 
 	// very fast loop yes
@@ -6407,7 +6411,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank )
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone = std::move( commits_before_their_time );
+	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
 }
 
 void handle_done_commits_xdg()
