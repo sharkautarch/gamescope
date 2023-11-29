@@ -711,6 +711,8 @@ struct ignore {
 	unsigned long	sequence;
 };
 
+struct commit_t;
+
 gamescope::CAsyncWaiter g_ImageWaiter{ "gamescope_img" };
 
 struct commit_t : public gamescope::IWaitable
@@ -722,6 +724,8 @@ struct commit_t : public gamescope::IWaitable
 	}
     ~commit_t()
     {
+		CloseFence();
+
         if ( fb_id != 0 )
 		{
 			drm_unlock_fbid( &g_DRM, fb_id );
@@ -778,9 +782,7 @@ struct commit_t : public gamescope::IWaitable
 	{
 		gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
 
-		g_ImageWaiter.RemoveWaitable( this );
-		close( m_nCommitFence );
-		m_nCommitFence = -1;
+		CloseFence();
 
 		uint64_t frametime;
 		if ( m_bMangoNudge )
@@ -809,6 +811,17 @@ struct commit_t : public gamescope::IWaitable
 
 		nudge_steamcompmgr();
 	}
+
+	void CloseFence()
+	{
+		if ( m_nCommitFence < 0 )
+			return;
+
+		g_ImageWaiter.RemoveWaitable( this );
+		close( m_nCommitFence );
+		m_nCommitFence = -1;
+	}
+
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
 	CommitDoneList_t *pDoneCommits = nullptr; // I hate this
