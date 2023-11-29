@@ -5314,14 +5314,13 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 	}
 }
 
-static void
-steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
+static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx )
 {
 	bool bSendCallback = true;
 
 	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 	int nTargetFPS = g_nSteamCompMgrTargetFPS;
-	if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
+	if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefresh > nTargetFPS )
 	{
 		int nVblankDivisor = nRefresh / nTargetFPS;
 
@@ -5329,7 +5328,18 @@ steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
 			bSendCallback = false;
 	}
 
-	if ( bSendCallback )
+	return bSendCallback;
+}
+
+static bool steamcompmgr_should_vblank_window( steamcompmgr_win_t *w, uint64_t vblank_idx )
+{
+	return steamcompmgr_should_vblank_window( steamcompmgr_window_should_limit_fps( w ), vblank_idx );
+}
+
+static void
+steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
+{
+	if ( steamcompmgr_should_vblank_window( w, vblank_idx ) )
 	{
 		w->unlockedForFrameCallback = true;
 	}
@@ -6409,7 +6419,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 }
 
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank )
+void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
@@ -6427,6 +6437,8 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank )
 	fifo_win_seqs.clear();
 	fifo_win_seqs.reserve( 32 );
 
+
+	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
 
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
@@ -7965,9 +7977,9 @@ steamcompmgr_main(int argc, char **argv)
 		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
 		// application can commit a new frame that completes before we ever displayed
 		// the current pending commit.
+		static uint64_t vblank_idx = 0;
 		if ( vblank == true )
 		{
-			static int vblank_idx = 0;
 			{
 				gamescope_xwayland_server_t *server = NULL;
 				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -7983,14 +7995,13 @@ steamcompmgr_main(int argc, char **argv)
 					steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
 				}
 			}
-			vblank_idx++;
 		}
 
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			{
-				handle_done_commits_xwayland(server->ctx.get(), vblank);
+				handle_done_commits_xwayland(server->ctx.get(), vblank, vblank_idx);
 
 				// When we have observed both a complete commit and a VBlank, we should request a new frame.
 				if (vblank)
@@ -8005,6 +8016,8 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( vblank )
 		{
+			vblank_idx++;
+
 			int nRealRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefresh;
 			nTargetFPS = std::min<int>( nTargetFPS, nRealRefresh );
