@@ -1151,6 +1151,9 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 {
 	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
 
+	if ( !wl_surface_info )
+		return;
+
 	uint32_t flags = 0;
 
 	// Don't know when we want to send this.
@@ -1194,6 +1197,9 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 {
 	wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info(surface);
 
+	if ( !wl_surface_info )
+		return;
+
 	wl_surface_info->sequence++;
 
 	for (auto& feedback : presentation_feedbacks)
@@ -1209,6 +1215,9 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin )
 {
 	wlserver_wl_surface_info *wl_info = get_wl_surface_info( surface );
+	if ( !wl_info )
+		return;
+
 	gamescope_swapchain_send_past_present_timing(
 		wl_info->gamescope_swapchain,
 		present_id,
@@ -1225,6 +1234,9 @@ void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle )
 {
 	wlserver_wl_surface_info *wl_info = get_wl_surface_info( surface );
+	if ( !wl_info )
+		return;
+
 	gamescope_swapchain_send_refresh_cycle(
 		wl_info->gamescope_swapchain,
 		refresh_cycle >> 32,
@@ -1917,11 +1929,15 @@ bool wlserver_surface_is_async( struct wlr_surface *surf )
 	return wl_surf->presentation_hint != 0;
 }
 
+static std::shared_ptr<wlserver_vk_swapchain_feedback> s_NullFeedback;
+
 const std::shared_ptr<wlserver_vk_swapchain_feedback>& wlserver_surface_swapchain_feedback( struct wlr_surface *surf )
 {
 	assert( wlserver_is_lock_held() );
 
 	auto wl_surf = get_wl_surface_info( surf );
+	if ( !wl_surf )
+		return s_NullFeedback;
 
 	return wl_surf->swapchain_feedback;
 }
