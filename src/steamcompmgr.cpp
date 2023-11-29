@@ -48,6 +48,7 @@
 #include <string>
 #include <queue>
 #include <variant>
+#include <unordered_set>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -129,6 +130,8 @@ bool g_bForceHDRSupportDebug = false;
 extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
+
+uint64_t g_lastWinSeq = 0;
 
 extern std::atomic<uint64_t> g_lastVblank;
 
@@ -708,7 +711,9 @@ struct ignore {
 	unsigned long	sequence;
 };
 
-gamescope::CAsyncWaiter g_ImageWaiter{ "gamescope_img" };
+struct commit_t;
+
+gamescope::CAsyncWaiter<std::shared_ptr<commit_t>> g_ImageWaiter{ "gamescope_img" };
 
 struct commit_t : public gamescope::IWaitable
 {
@@ -719,6 +724,12 @@ struct commit_t : public gamescope::IWaitable
 	}
     ~commit_t()
     {
+		{
+			std::unique_lock lock( m_WaitableCommitStateMutex );
+			g_ImageWaiter.RemoveWaitable( this );
+			CloseFenceInternal();
+		}
+
         if ( fb_id != 0 )
 		{
 			drm_unlock_fbid( &g_DRM, fb_id );
@@ -753,8 +764,10 @@ struct commit_t : public gamescope::IWaitable
 	uint64_t commitID = 0;
 	bool done = false;
 	bool async = false;
+	bool fifo = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
+	uint64_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 
@@ -773,9 +786,14 @@ struct commit_t : public gamescope::IWaitable
 	{
 		gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
 
-		g_ImageWaiter.RemoveWaitable( this );
-		close( m_nCommitFence );
-		m_nCommitFence = -1;
+		{
+			std::unique_lock lock( m_WaitableCommitStateMutex );
+			if ( m_nCommitFence < 0 )
+				return;
+
+			g_ImageWaiter.RemoveWaitable( this );
+			CloseFenceInternal();
+		}
 
 		uint64_t frametime;
 		if ( m_bMangoNudge )
@@ -790,8 +808,13 @@ struct commit_t : public gamescope::IWaitable
 		// Instead of looping over all the windows like before.
 		// When we get the new IWaitable stuff in there.
 		{
-			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
-			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{ commitID, desired_present_time } );
+			std::unique_lock< std::mutex > lock( m_pDoneCommits->listCommitsDoneLock );
+			m_pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
+				.winSeq = win_seq,
+				.commitID = commitID,
+				.desiredPresentTime = desired_present_time,
+				.fifo = fifo,
+			} );
 		}
 
 		if ( m_bMangoNudge )
@@ -799,10 +822,42 @@ struct commit_t : public gamescope::IWaitable
 
 		nudge_steamcompmgr();
 	}
+
+	void CloseFenceInternal()
+	{
+		if ( m_nCommitFence < 0 )
+			return;
+
+		close( m_nCommitFence );
+		m_nCommitFence = -1;
+	}
+
+	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
+	{
+		std::unique_lock lock( m_WaitableCommitStateMutex );
+		CloseFenceInternal();
+
+		m_nCommitFence = nFence;
+		m_bMangoNudge = bMangoNudge;
+		m_pDoneCommits = pDoneCommits;
+	}
+
+	std::mutex m_WaitableCommitStateMutex;
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
-	CommitDoneList_t *pDoneCommits = nullptr; // I hate this
+	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
 };
+
+static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &commit )
+{
+	std::unique_lock lock( commit->m_WaitableCommitStateMutex );
+
+	if ( commit->m_nCommitFence >= 0 )
+	{
+		g_ImageWaiter.GCWaitable( commit, commit.get() );
+		commit->CloseFenceInternal();
+	}
+}
 
 static std::vector<pollfd> pollfds;
 
@@ -1364,14 +1419,16 @@ destroy_buffer( struct wl_listener *listener, void * )
 }
 
 static std::shared_ptr<commit_t>
-import_commit ( struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo )
 {
 	std::shared_ptr<commit_t> commit = std::make_shared<commit_t>();
 	std::unique_lock<std::mutex> lock( wlr_buffer_map_lock );
 
+	commit->win_seq = w->seq;
 	commit->surf = surf;
 	commit->buf = buf;
 	commit->async = async;
+	commit->fifo = fifo;
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -4580,6 +4637,7 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 	if (!new_win)
 		return;
 
+	new_win->seq = ++g_lastWinSeq;
 	new_win->type = steamcompmgr_win_type_t::XWAYLAND;
 	new_win->_window_types.emplace<steamcompmgr_xwayland_win_t>();
 
@@ -4817,6 +4875,9 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 
 			if (gone)
 			{
+				// Manually GC this here to avoid bubbles on RemoveWaitable
+				for ( auto& commit : w->commit_queue )
+					GarbageCollectWaitableCommit( commit );
 				// release all commits now we are closed.
                 w->commit_queue.clear();
 			}
@@ -5269,14 +5330,13 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 	}
 }
 
-static void
-steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
+static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx )
 {
 	bool bSendCallback = true;
 
 	int nRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 	int nTargetFPS = g_nSteamCompMgrTargetFPS;
-	if ( g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w ) && nRefresh > nTargetFPS )
+	if ( g_nSteamCompMgrTargetFPS && bShouldLimitFPS && nRefresh > nTargetFPS )
 	{
 		int nVblankDivisor = nRefresh / nTargetFPS;
 
@@ -5284,7 +5344,18 @@ steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
 			bSendCallback = false;
 	}
 
-	if ( bSendCallback )
+	return bSendCallback;
+}
+
+static bool steamcompmgr_should_vblank_window( steamcompmgr_win_t *w, uint64_t vblank_idx )
+{
+	return steamcompmgr_should_vblank_window( steamcompmgr_window_should_limit_fps( w ), vblank_idx );
+}
+
+static void
+steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
+{
+	if ( steamcompmgr_should_vblank_window( w, vblank_idx ) )
 	{
 		w->unlockedForFrameCallback = true;
 	}
@@ -6157,6 +6228,8 @@ error(Display *dpy, XErrorEvent *ev)
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
+	g_ImageWaiter.Shutdown();
+
 	// Clean up any commits.
 	{
 		gamescope_xwayland_server_t *server = NULL;
@@ -6169,8 +6242,6 @@ steamcompmgr_exit(void)
 	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
-
-	g_ImageWaiter.Shutdown();
 
 	if ( statsThreadRun == true )
 	{
@@ -6351,6 +6422,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		if ( j > 0 )
 		{
 			// we can release all commits prior to done ones
+			// GC to be safe
+			for ( auto it = w->commit_queue.begin(); it != w->commit_queue.begin() + j; it++ )
+				GarbageCollectWaitableCommit( *it );
 			w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
 		}
 		w->receivedDoneCommit = true;
@@ -6361,20 +6435,35 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 }
 
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
+void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.target_vblank_time;
 
 	// commits that were not ready to be presented based on their display timing.
-	std::vector< CommitDoneEntry_t > commits_before_their_time;
+	static std::vector< CommitDoneEntry_t > commits_before_their_time;
+	commits_before_their_time.clear();
+	commits_before_their_time.reserve( 32 );
+
+	// windows in FIFO mode we got a new frame to present for this vblank
+	static std::unordered_set< uint64_t > fifo_win_seqs;
+	fifo_win_seqs.clear();
+	fifo_win_seqs.reserve( 32 );
 
 	uint64_t now = get_time_in_nanos();
+
+	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
 
 	// very fast loop yes
 	for ( auto& entry : ctx->doneCommits.listCommitsDone )
 	{
+		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		{
+			commits_before_their_time.push_back( entry );
+			continue;
+		}
+
 		if (!entry.earliestPresentTime)
 		{
 			entry.earliestPresentTime = next_refresh_time;
@@ -6389,12 +6478,18 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx )
 
 		for ( steamcompmgr_win_t *w = ctx->list; w; w = w->xwayland().next )
 		{
+			if (w->seq != entry.winSeq)
+				continue;
 			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			{
+				if (entry.fifo)
+					fifo_win_seqs.insert(entry.winSeq);
 				break;
+			}
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone = std::move( commits_before_their_time );
+	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
 }
 
 void handle_done_commits_xdg()
@@ -6575,7 +6670,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	std::shared_ptr<commit_t> newCommit = import_commit( reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time );
+	std::shared_ptr<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo );
 
 	int fence = -1;
 	if ( newCommit )
@@ -6596,10 +6691,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
-			newCommit->m_nCommitFence = fence;
-			newCommit->m_bMangoNudge = mango_nudge;
-			newCommit->pDoneCommits = doneCommits;
-
+			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
 		}
 
@@ -7893,9 +7985,9 @@ steamcompmgr_main(int argc, char **argv)
 		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
 		// application can commit a new frame that completes before we ever displayed
 		// the current pending commit.
+		static uint64_t vblank_idx = 0;
 		if ( vblank == true )
 		{
-			static int vblank_idx = 0;
 			{
 				gamescope_xwayland_server_t *server = NULL;
 				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -7911,14 +8003,13 @@ steamcompmgr_main(int argc, char **argv)
 					steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
 				}
 			}
-			vblank_idx++;
 		}
 
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			{
-				handle_done_commits_xwayland(server->ctx.get());
+				handle_done_commits_xwayland(server->ctx.get(), vblank, vblank_idx);
 
 				// When we have observed both a complete commit and a VBlank, we should request a new frame.
 				if (vblank)
@@ -7933,6 +8024,8 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( vblank )
 		{
+			vblank_idx++;
+
 			int nRealRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefresh;
 			nTargetFPS = std::min<int>( nTargetFPS, nRealRefresh );

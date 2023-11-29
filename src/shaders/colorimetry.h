@@ -29,6 +29,28 @@ vec4 linearToSrgb(vec4 color) {
 }
 
 /////////////////////////////
+// Extra Helpers
+/////////////////////////////
+
+vec3 g24ToLinear(vec3 color) {
+    return pow(color, vec3(2.4f));
+}
+
+vec4 g24ToLinear(vec4 color) {
+    return vec4(g24ToLinear(color.rgb), color.a);
+}
+
+
+vec3 g22ToLinear(vec3 color) {
+    return pow(color, vec3(2.2f));
+}
+
+vec4 g22ToLinear(vec4 color) {
+    return vec4(g22ToLinear(color.rgb), color.a);
+}
+
+
+/////////////////////////////
 // PQ Encoding Helpers
 /////////////////////////////
 
