@@ -67,14 +67,6 @@ static std::atomic<uint64_t> g_uRollingMaxDrawTime = { g_uStartingDrawTime };
 
 std::atomic<bool> g_bCurrentlyCompositing = { false };
 
-inline bool __attribute__((always_inline)) _isinf(double val)
-{
-#ifndef __clang__
-	return __builtin_isinf(val);
-#else
-	return __builtin_isfpclass(val, __FPCLASS_POSINF+_FPCLASS_NEGINF);
-#endif
-}
 
 #include <waitpkgintrin.h>
 inline void __attribute__((always_inline,target("waitpkg", "sse"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
@@ -242,7 +234,11 @@ long int cpu_pause_get_upper_q_avg()
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
+#if defined(__clang__)
+void __attribute__((target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+#else
 void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"),target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+#endif
 {
 	int64_t diff;
 	double res = 0.0;
@@ -256,12 +252,23 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 	uint64_t prev = readCycleCount();
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
 	{
+		#if defined(__clang__)
+		#pragma clang optimize off
+		#endif
 		for (int j = i;j<2;j++)
 		{
+			#if defined(__clang__)
+			#pragma clang optimize on
+			#endif
 			uint64_t tsc_time_value = readCycleCount() + compared_int*(2-j)/( ((2+i)*(2+i)) - 1);
 			cpu_tpause((uint64_t)tsc_time_value, true);
+			#if defined(__clang__)
+			#pragma clang optimize off
+			#endif
 		}
-		
+		#if defined(__clang__)
+		#pragma clang optimize on
+		#endif
 		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
 		//prev=readCycleCount();
 		int j=4-i;
@@ -281,7 +288,7 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			}
 		
 			check_this_first = (double)diff * nsPerTick;
-			if ( HMMM(_isinf(check_this_first)) )
+			if ( HMMM(isinf(check_this_first)) )
 			{
 				check_this = (long double)diff * nsPerTick_long;
 				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
@@ -300,9 +307,17 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 }
 
 #if defined(__x86_64__)
+#	if defined(__clang__)
+void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=westmere"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#	else
 void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), target_clones("default,arch=core2,arch=znver1,arch=westmere"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#	endif
 #else
-void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#	if defined(__clang__)
+void spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#	else
+void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+#	endif
 #endif
 {
 	int64_t diff;
@@ -317,10 +332,17 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 	int i = 0;
 	uint64_t prev = readCycleCount();
 	
+	#if defined(__clang__)
+	#pragma clang optimize off
+	#endif
 	for (long int k = 0; k < std::max(cpu_pause_loop_iter-1,0l); k += 2) {
 				cpu_pause();
 				cpu_pause();
 	}
+	
+	#if defined(__clang__)
+	#pragma clang optimize on
+	#endif
 				
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
 	{
@@ -344,7 +366,7 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			}
 		
 			check_this_first = (double)diff * nsPerTick;
-			if ( HMMM(_isinf(check_this_first)) )
+			if ( HMMM(isinf(check_this_first)) )
 			{
 				check_this = (long double)diff * nsPerTick_long;
 				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
@@ -445,6 +467,12 @@ inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-uns
 #endif
 {
 
+	#if defined(__clang__)
+	#pragma clang fp reassociate(off)
+	#pragma clang fp contract(on)
+	#pragma clang fp reciprocal(off)
+	#endif
+	
 	double lastVblank = _lastVblank - offset;
         
         
@@ -464,15 +492,25 @@ inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-uns
  
 
 #ifdef __clang__
-void __attribute__((optimize("-fno-unsafe-math-optimizations"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+#	if defined(__x86_64__)
+	void __attribute__((hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+#	else
+void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+#	endif
 #else
-	#if defined(__x86_64__)
+#	if defined(__x86_64__)
 void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
-	#else
+#	else
 	void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
-	#endif
+#	endif
 #endif
 {
+	#if defined(__clang__)
+	#pragma clang fp reassociate(off)
+	#pragma clang fp contract(on)
+	#pragma clang fp reciprocal(off)
+	#endif
+	
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
 
 	// Start off our average with our starting draw time.

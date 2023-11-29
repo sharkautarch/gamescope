@@ -26,6 +26,12 @@
 #include <iomanip>
 #include <sstream>
 
+#if defined(__clang__)
+#pragma clang fp reassociate(off)
+#pragma clang fp contract(on)
+#pragma clang fp reciprocal(off)
+#endif
+
 // Code here is replicated from ../src/target.h just to make this
 // easier to distribute as a single file.
 #if (__x86_64__)
@@ -41,7 +47,11 @@
 
 // Return a formatted string after normalising the value into
 // engineering style and using a suitable unit prefix (e.g. ms, us, ns).
+#if defined(__clang__)
+std::string formatSI(double interval, int width, char unit) {
+#else
 std::string __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) formatSI(double interval, int width, char unit) {
+#endif
   std::stringstream os;
 
   // Preserve accuracy for small numbers, since we only multiply and the
@@ -106,7 +116,11 @@ inline auto __attribute__((always_inline)) readCycleCount() {
 }
 #endif
 
+#if defined(__clang__)
+static double measureTSCtick() {
+#else
 static double __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) measureTSCtick() {
+#endif
   // Use C++ "steady_clock" since cppreference.com recommends against
   // using hrtime.  Busy wait for 5ms based on the std::chrono clock
   // and time that with our high reolution low overhead clock.
@@ -328,7 +342,11 @@ static bool readHWTickTimeFromName(double * time) {
 // Try to see whether the clock actually ticks at the same rate as its value is enumerated in.
 // Consider a clock whose value is enumerated in seconds, but which only changes once an hour...
 // Just because a clock has a fine interval, that doesn't mean it can measure to that level.
+#if defined(__clang__)
+static uint64_t measureClockGranularity() {
+#else
 static uint64_t __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) measureClockGranularity() {
+#endif
   // If the clock is very slow, this might not work...
   uint64_t delta = std::numeric_limits<uint64_t>::max();
 
@@ -378,7 +396,11 @@ static uint64_t __attribute__((optimize("-fno-unsafe-math-optimizations", "-frou
 
 
 #define CANT_USE_CPU_TIMER -1.0L
+#if defined(__clang__)
+long double getNsPerTick(void) {
+#else
 long double __attribute__((optimize("-fno-unsafe-math-optimizations", "-frounding-math") )) getNsPerTick(void) {
+#endif
 #if (LOMP_TARGET_ARCH_AARCH64)
   double res = readHWTickTime();
   
