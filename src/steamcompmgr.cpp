@@ -713,7 +713,7 @@ struct ignore {
 
 struct commit_t;
 
-gamescope::CAsyncWaiter g_ImageWaiter{ "gamescope_img" };
+gamescope::CAsyncWaiter<std::shared_ptr<commit_t>> g_ImageWaiter{ "gamescope_img" };
 
 struct commit_t : public gamescope::IWaitable
 {
@@ -724,7 +724,11 @@ struct commit_t : public gamescope::IWaitable
 	}
     ~commit_t()
     {
-		CloseFence();
+		{
+			std::unique_lock lock( m_WaitableCommitStateMutex );
+			g_ImageWaiter.RemoveWaitable( this );
+			CloseFenceInternal();
+		}
 
         if ( fb_id != 0 )
 		{
@@ -782,7 +786,14 @@ struct commit_t : public gamescope::IWaitable
 	{
 		gpuvis_trace_end_ctx_printf( commitID, "wait fence" );
 
-		CloseFence();
+		{
+			std::unique_lock lock( m_WaitableCommitStateMutex );
+			if ( m_nCommitFence < 0 )
+				return;
+
+			g_ImageWaiter.RemoveWaitable( this );
+			CloseFenceInternal();
+		}
 
 		uint64_t frametime;
 		if ( m_bMangoNudge )
@@ -797,8 +808,8 @@ struct commit_t : public gamescope::IWaitable
 		// Instead of looping over all the windows like before.
 		// When we get the new IWaitable stuff in there.
 		{
-			std::unique_lock< std::mutex > lock( pDoneCommits->listCommitsDoneLock );
-			pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
+			std::unique_lock< std::mutex > lock( m_pDoneCommits->listCommitsDoneLock );
+			m_pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
 				.winSeq = win_seq,
 				.commitID = commitID,
 				.desiredPresentTime = desired_present_time,
@@ -812,20 +823,41 @@ struct commit_t : public gamescope::IWaitable
 		nudge_steamcompmgr();
 	}
 
-	void CloseFence()
+	void CloseFenceInternal()
 	{
 		if ( m_nCommitFence < 0 )
 			return;
 
-		g_ImageWaiter.RemoveWaitable( this );
 		close( m_nCommitFence );
 		m_nCommitFence = -1;
 	}
 
+	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
+	{
+		std::unique_lock lock( m_WaitableCommitStateMutex );
+		CloseFenceInternal();
+
+		m_nCommitFence = nFence;
+		m_bMangoNudge = bMangoNudge;
+		m_pDoneCommits = pDoneCommits;
+	}
+
+	std::mutex m_WaitableCommitStateMutex;
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
-	CommitDoneList_t *pDoneCommits = nullptr; // I hate this
+	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
 };
+
+static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &commit )
+{
+	std::unique_lock lock( commit->m_WaitableCommitStateMutex );
+
+	if ( commit->m_nCommitFence >= 0 )
+	{
+		g_ImageWaiter.GCWaitable( commit, commit.get() );
+		commit->CloseFenceInternal();
+	}
+}
 
 static std::vector<pollfd> pollfds;
 
@@ -4827,6 +4859,9 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 
 			if (gone)
 			{
+				// Manually GC this here to avoid bubbles on RemoveWaitable
+				for ( auto& commit : w->commit_queue )
+					GarbageCollectWaitableCommit( commit );
 				// release all commits now we are closed.
                 w->commit_queue.clear();
 			}
@@ -6167,6 +6202,8 @@ error(Display *dpy, XErrorEvent *ev)
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
+	g_ImageWaiter.Shutdown();
+
 	// Clean up any commits.
 	{
 		gamescope_xwayland_server_t *server = NULL;
@@ -6179,8 +6216,6 @@ steamcompmgr_exit(void)
 	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
-
-	g_ImageWaiter.Shutdown();
 
 	if ( statsThreadRun == true )
 	{
@@ -6361,6 +6396,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		if ( j > 0 )
 		{
 			// we can release all commits prior to done ones
+			// GC to be safe
+			for ( auto it = w->commit_queue.begin(); it != w->commit_queue.begin() + j; it++ )
+				GarbageCollectWaitableCommit( *it );
 			w->commit_queue.erase( w->commit_queue.begin(), w->commit_queue.begin() + j );
 		}
 		w->receivedDoneCommit = true;
@@ -6626,10 +6664,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
-			newCommit->m_nCommitFence = fence;
-			newCommit->m_bMangoNudge = mango_nudge;
-			newCommit->pDoneCommits = doneCommits;
-
+			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
 		}
 

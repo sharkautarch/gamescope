@@ -178,13 +178,14 @@ namespace gamescope
         int m_nEpollFD = -1;
     };
 
-    template <size_t MaxEvents = 1024>
+    template <typename GCWaitableType = IWaitable*, size_t MaxEvents = 1024>
     class CAsyncWaiter : public CWaiter<MaxEvents>
     {
     public:
         CAsyncWaiter( const char *pszThreadName )
             : m_Thread{ [cWaiter = this, cName = pszThreadName](){ cWaiter->WaiterThreadFunc(cName); } }
         {
+            m_WaitableGarbageCollector.reserve( 32 );
         }
 
         ~CAsyncWaiter()
@@ -198,6 +199,19 @@ namespace gamescope
 
             if ( m_Thread.joinable() )
                 m_Thread.join();
+
+            std::unique_lock lock( m_WaitableGCMutex );
+            m_WaitableGarbageCollector.clear();
+        }
+
+        void GCWaitable( GCWaitableType GCWaitable, IWaitable *pWaitable )
+        {
+            std::unique_lock lock( m_WaitableGCMutex );
+
+            m_WaitableGarbageCollector.emplace_back( std::move( GCWaitable ) );
+
+            this->RemoveWaitable( pWaitable );
+            this->Nudge();
         }
 
         void WaiterThreadFunc( const char *pszThreadName )
@@ -205,10 +219,22 @@ namespace gamescope
             pthread_setname_np( pthread_self(), pszThreadName );
 
             while ( this->IsRunning() )
+            {
                 CWaiter<MaxEvents>::PollEvents();
+
+                std::unique_lock lock( m_WaitableGCMutex );
+                m_WaitableGarbageCollector.clear();
+            }
         }
     private:
         std::thread m_Thread;
+
+        // Avoids bubble in the waiter thread func where lifetimes
+        // of objects (eg. shared_ptr) could be too short.
+        // Eg. RemoveWaitable but still processing events, or about
+        // to start processing events.
+        std::mutex m_WaitableGCMutex;
+        std::vector<GCWaitableType> m_WaitableGarbageCollector;
     };
 
 
