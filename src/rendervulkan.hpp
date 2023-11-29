@@ -113,7 +113,7 @@ inline GamescopeAppTextureColorspace VkColorSpaceToGamescopeAppTextureColorSpace
 		default:
 		case VK_COLOR_SPACE_SRGB_NONLINEAR_KHR:
 			// We will use image view conversions for these 8888 formats.
-			if (ToSrgbVulkanFormat(format) != ToLinearVulkanFormat(format))
+			if (ToSrgbVulkanFormat(format) != ToLinearVulkanFormat(format) || format == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				return GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 			return GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
