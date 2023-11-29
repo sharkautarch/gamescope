@@ -2382,27 +2382,38 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_W", entry.layerState[i].crtcW);
 			liftoff_layer_set_property( drm->lo_layers[ i ], "CRTC_H", entry.layerState[i].crtcH);
 
-			if ( entry.layerState[i].ycbcr )
+			if ( frameInfo->layers[i].applyColorMgmt )
 			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
-				if ( drm_supports_color_mgmt( drm ) )
+				if ( entry.layerState[i].ycbcr )
 				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_BT709 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_ENCODING", entry.layerState[i].colorEncoding );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "COLOR_RANGE",    entry.layerState[i].colorRange );
 				}
-			}
-			else if ( frameInfo->layers[i].applyColorMgmt )
-			{
-				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
-				liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+				else
+				{
+					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
+					liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
+				}
+
 				if ( drm_supports_color_mgmt( drm ) )
 				{
 					drm_valve1_transfer_function degamma_tf = colorspace_to_plane_degamma_tf( entry.layerState[i].colorspace );
 					drm_valve1_transfer_function shaper_tf = colorspace_to_plane_shaper_tf( entry.layerState[i].colorspace );
+
+					if ( entry.layerState[i].ycbcr )
+					{
+						// JoshA: Based on the Steam In-Home Streaming Shader,
+						// it looks like Y is actually sRGB, not HDTV G2.4
+						//
+						// Matching BT709 for degamma -> regamma on shaper TF here
+						// is identity and works on YUV NV12 planes to preserve this.
+						//
+						// Doing LINEAR/DEFAULT here introduces banding so... this is the best way.
+						// (sRGB DEGAMMA does NOT work on YUV planes!)
+						degamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_BT709;
+						shaper_tf = DRM_VALVE1_TRANSFER_FUNCTION_BT709;
+					}
+
 					if (!g_bDisableDegamma)
 						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", degamma_tf );
 					else
