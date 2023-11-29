@@ -87,7 +87,7 @@ namespace gamescope
     {
     public:
         CWaiter()
-            : m_nEpollFD{ epoll_create1( 0 ) }
+            : m_nEpollFD{ epoll_create1( EPOLL_CLOEXEC ) }
         {
             AddWaitable( &m_NudgeWaitable, EPOLLIN );   
         }
