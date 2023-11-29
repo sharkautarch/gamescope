@@ -69,7 +69,11 @@ std::atomic<bool> g_bCurrentlyCompositing = { false };
 
 
 #include <waitpkgintrin.h>
+#if defined(__clang__)
+inline void __attribute__((always_inline,target("waitpkg"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
+#else
 inline void __attribute__((always_inline,target("waitpkg", "sse"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
+#endif
 {
 #if __has_builtin(__builtin_ia32_tpause)
 # define _TPAUSE _tpause(0, counter)
@@ -235,7 +239,7 @@ long int cpu_pause_get_upper_q_avg()
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
 #if defined(__clang__)
-void __attribute__((target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+void __attribute__((target("waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 #else
 void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"),target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 #endif
@@ -470,7 +474,6 @@ inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-uns
 	#if defined(__clang__)
 	#pragma clang fp reassociate(off)
 	#pragma clang fp contract(on)
-	#pragma clang fp reciprocal(off)
 	#endif
 	
 	double lastVblank = _lastVblank - offset;
@@ -493,7 +496,7 @@ inline double __attribute__((const,optimize("-fallow-store-data-races","-fno-uns
 
 #ifdef __clang__
 #	if defined(__x86_64__)
-	void __attribute__((hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
 void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
@@ -508,7 +511,6 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	#if defined(__clang__)
 	#pragma clang fp reassociate(off)
 	#pragma clang fp contract(on)
-	#pragma clang fp reciprocal(off)
 	#endif
 	
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );

@@ -29,7 +29,6 @@
 #if defined(__clang__)
 #pragma clang fp reassociate(off)
 #pragma clang fp contract(on)
-#pragma clang fp reciprocal(off)
 #endif
 
 // Code here is replicated from ../src/target.h just to make this
