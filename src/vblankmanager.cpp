@@ -202,16 +202,7 @@ inline void __attribute__((always_inline,target("sse"))) cpu_pause()
 # undef _PAUSE
 #endif
 }
-int __attribute__((const)) median_trial(const int l, const int r) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
-{
 
-    int n = (int)r - (int)l + 1;
-
-    n = (n + 1) / 2 - 1;
-
-    return n + l;
-
-}
 //measures the time it takes to do a single pause instruction -> 512 trials.
 //returns the average of the 25% longest run times
 long int cpu_pause_get_upper_q_avg()
@@ -273,8 +264,7 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 		#if defined(__clang__)
 		#pragma clang optimize on
 		#endif
-		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-		//prev=readCycleCount();
+		
 		int j=4-i;
 		
 		while ( res < compared_to && j < 3 )
@@ -304,8 +294,6 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			res = check_this_first;
 		}
 		
-		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-		//prev=readCycleCount();
 		i++;
 	}
 }
@@ -350,9 +338,6 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 				
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
 	{
-		
-		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-		//prev=readCycleCount();
 		int j=4-i;
 		
 		while ( res < compared_to && j < 3 )
@@ -382,8 +367,6 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			res = check_this_first;
 		}
 		
-		//compared_to = compared_to - (double) (get_time_in_nanos() - t_before_second_wait);
-		//prev=readCycleCount();
 		i++;
 	}
 }
@@ -519,24 +502,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
 	uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
 	const uint64_t range = g_uVBlankRateOfDecayMax;
-	uint8_t sleep_cycle = 0;
+	
 	
 	
 	const double nsPerTick = (double) nsPerTick_long;
 	std::cout << "nsPerTick: " << nsPerTick << "\n";
 	
-	uint16_t drawtimes[64] = {1};
-	uint16_t drawtimes_pending[64];
-	std::fill_n(drawtimes, 64, (uint16_t)(((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) >> 1)/500 )  );
-	int index=0;
-	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
-	long int max_drawtime=2*centered_mean;
 	
-	
-	const long int sleep_weights[2] = {60, 40};
 	double vblank_begin=0.0;
+	
+	
 	long int time_start = get_time_in_nanos();
 	uint32_t counter = 0;
+	
+	
 	long int lastDrawTime = g_uVblankDrawTimeNS;
 	long int lastDrawTime_timestamp = get_time_in_nanos();
 	
@@ -545,12 +524,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	long double drawTimeTime = get_time_in_nanos();
 	long double lastDrawTimeTime = get_time_in_nanos(); 
 	
-	double lastOffset = (double)centered_mean;
-	long double real_delta = 0.0L;
-	long double last_real_delta = 0.0L; 
-	long double local_min = g_uVBlankDrawTimeMinCompositing;
-	long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
-	long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	
 	
 	float delta_trend_counter = 3.0f;
 	double offset_dec = 0.0;
@@ -567,11 +541,30 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
-		
+	
+	
+	int index=0;
+	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
+	uint16_t drawtimes[64] = {1};
+	uint16_t drawtimes_pending[64];
+	std::fill_n(drawtimes, 64, (uint16_t)((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) /1000 )  );
+	
+	
+	
+	double lastOffset = (double)centered_mean;
+	long double real_delta = 0.0L;
+	long double last_real_delta = 0.0L; 
+	long double local_min = g_uVBlankDrawTimeMinCompositing;
+	long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
+	long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	
+	
+	const long int sleep_weights[2] = {60, 40};
+	uint8_t sleep_cycle = 0;	
 	while ( true )
 	{
 		sleep_cycle++;
-		if (sleep_cycle < 2)
+		if (sleep_cycle == 1)
 			vblank_begin=(double)get_time_in_nanos();
 
 		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
@@ -603,12 +596,12 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			drawTimeTime = (long double)get_time_in_nanos();
 			
 			
-			if ( sleep_cycle < 2 && g_bCurrentlyCompositing )
+			if ( sleep_cycle == 1 && g_bCurrentlyCompositing )
 				drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
-			if (sleep_cycle < 2)
-				drawtimes_pending[index] = (uint16_t)( (drawTime >> 1)/500 );
+			if (sleep_cycle == 1)
+				drawtimes_pending[index] = (uint16_t)( drawTime /1000 );
 			
-			if (sleep_cycle < 2)
+			if (sleep_cycle == 1)
 			{
 				if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
 					rollingMaxDrawTime_real = drawTime;
@@ -617,7 +610,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime, static_cast<uint64_t>(nsecInterval - redZone) );
 
 			}
-			if (sleep_cycle > 1)
+			
+			if (sleep_cycle == 2)
 			{	
 				rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
 				g_uRollingMaxDrawTime.store(rollingMaxDrawTime, std::memory_order_relaxed);
@@ -686,35 +680,27 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			offset = rollingMaxDrawTime + redZone;
 			offset_dec_real = rollingMaxDrawTime_real + redZone;
-			if (sleep_cycle > 1)
+			if (sleep_cycle == 2)
 			{
 				offset = std::clamp(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
 			}
 			else
 			{
 				offset = std::clamp(std::min( nsecInterval, centered_mean)/2-nsecInterval/20, offset , nsecInterval+nsecInterval/5);
-			}	
+			}
+				
 			if (counter % 300 == 0) 
 				std::cout << "offset: " << offset << " sleep_cycle: "<< sleep_cycle << "\n";	
 			
-
-			if (sleep_cycle < 2)
-				index++;
 			
-			if ( sleep_cycle < 2 && index >= 64 )
+			if ( sleep_cycle == 1 && index >= 64 )
 			{
-				
-				memcpy(drawtimes, drawtimes_pending, 64 * sizeof(drawtimes_pending[0]));
-				index=0;
+				index++;
 				const uint16_t n = 64; 
-				centered_mean = (centered_mean + clamp(nsecInterval/2, IQM(drawtimes, n), 5*nsecInterval/3))/2;
+				memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
+				index=0;
 				
-				max_drawtime = std::min( 
-					      (	
-					  	((uint64_t)(std::max(  (uint16_t)((max_drawtime>>1)/500), *std::max_element(std::begin(drawtimes), std::end(drawtimes)))))
-					         * 500)
-					      <<1
-					, (uint64_t)(8*nsecInterval/3));
+				centered_mean = (centered_mean + clamp(nsecInterval/2, IQM(drawtimes, n), 5*nsecInterval/3))/2;
 			}
 			
 		}
@@ -741,7 +727,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		
 		//static uint64_t lastOffset = g_uVblankDrawTimeNS + redZone;
 
-		if ( sleep_cycle > 1 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) )
+		if ( sleep_cycle == 2 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) )
 		{
 			if ( drawTime > (int)lastOffset )
 				fprintf( stderr, " !! missed vblank " );
@@ -761,7 +747,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		long int targetPoint;
 
 
-		if ( !neverBusyWait && ( alwaysBusyWait || sleep_cycle > 1 || offset*sleep_weights[sleep_cycle-1] / 100 < 1'000'000ll ) )
+		if ( !neverBusyWait && ( alwaysBusyWait || sleep_cycle == 2 || offset*sleep_weights[sleep_cycle-1] / 100 < 1'000'000ll ) )
 		{
 			
 			
@@ -771,7 +757,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			double compared_to;
 			double now = (double)get_time_in_nanos();
-			if (sleep_cycle > 1)
+			if (sleep_cycle == 2)
 			{
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)  - now;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
@@ -785,20 +771,20 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			else
 				spin_wait(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 			
-			if (sleep_cycle < 2)
+			if (sleep_cycle == 1)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
 			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		else
 		{
 			if (counter % 300 == 0) {
-				if (sleep_cycle < 2)
+				if (sleep_cycle == 1)
 					std::cout << "vblank cycle time before first sleep: " << ( (long double)get_time_in_nanos()-vblank_begin )/1'000'000.0L << "ms\n";
 				else
 					std::cout << "vblank cycle time before second sleep: " << ( (long double)get_time_in_nanos()-vblank_begin )/1'000'000.0L << "ms\n";
 			}
 			double now = (double)get_time_in_nanos();
-			if (sleep_cycle < 2)
+			if (sleep_cycle == 1)
 			{
 				double first_cycle_sleep_start = now;
 				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
@@ -826,7 +812,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		
-		if (sleep_cycle < 2)
+		if (sleep_cycle == 1)
 		{
 			continue;
 		}
