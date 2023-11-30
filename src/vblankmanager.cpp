@@ -542,6 +542,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
+	long int drawTime;
+	double lastVblank;
 	
 	int index=0;
 	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
@@ -565,8 +567,10 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 	{
 		sleep_cycle++;
 		if (sleep_cycle == 1)
+		{
 			vblank_begin=(double)get_time_in_nanos();
-
+			lastVblank = (double)g_lastVblank.load();
+		}
 		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 		const long int nsecInterval = 1'000'000'000l / refresh;
 		const double nsecInterval_dec = (double)nsecInterval;
@@ -581,7 +585,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
 		
-		long int drawTime;
+		
 		long int offset;
 		double offset_dec_real;
 	 	
@@ -592,8 +596,11 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			const long double nsecInterval_dec = (long double) nsecInterval;
 			const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
 			
-			drawTime = g_uVblankDrawTimeNS;
-			drawTimeTime = (long double)get_time_in_nanos();
+			if (sleep_cycle == 1)
+			{
+				drawTime = g_uVblankDrawTimeNS.load();	
+				drawTimeTime = (long double)get_time_in_nanos();
+			}
 			
 			
 			if ( sleep_cycle == 1 && g_bCurrentlyCompositing )
@@ -719,7 +726,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 		}
 		offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
-		const double lastVblank = (double)g_lastVblank.load();
+		
 
 #ifdef VBLANK_DEBUG
 		// Debug stuff for logging missed vblanks
@@ -756,14 +763,14 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			
 			
 			double compared_to;
-			double now = (double)get_time_in_nanos();
+			
 			if (sleep_cycle == 2)
 			{
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)  - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin)  - vblank_begin;
 				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now) - now;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin) - vblank_begin;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			if (cpu_supports_tpause)
@@ -786,8 +793,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			double now = (double)get_time_in_nanos();
 			if (sleep_cycle == 1)
 			{
-				double first_cycle_sleep_start = now;
-				targetPoint = (uint64_t)llround(fmax( first_cycle_sleep_start + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, first_cycle_sleep_start +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, now)-first_cycle_sleep_start) * sleep_weights[sleep_cycle-1] / 100 ));
+				targetPoint = (uint64_t)llround(fmax( now + offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, now +  (vblank_next_target(lastVblank,  offset_dec_capped*sleep_weights[sleep_cycle-1] / (100ll), nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin)-vblank_begin) * sleep_weights[sleep_cycle-1] / 100 ));
 				sleep_until_nanos_retrying( targetPoint, offset, (int32_t) sleep_weights[1]); 
 				
 				now = (double)get_time_in_nanos();
@@ -802,8 +808,8 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 			}
 			else
 			{
-				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting,  now));
-				targetPoint = now + fmax(targetPoint - now - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
+				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting,  vblank_begin));
+				targetPoint = now + fmax(targetPoint - vblank_begin - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 				now = (double)get_time_in_nanos();
 			}
