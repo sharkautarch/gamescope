@@ -1,6 +1,7 @@
 #include <stdint.h>
 #include <sys/time.h>
 #include <time.h>
+#include <array>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -14,19 +15,17 @@ typedef timespec* ts_pnt;
 unsigned int get_time_in_milliseconds(void);
 long int get_time_in_nanos();
 inline int sleep_for_nanos(long int nanos);
-inline int __sleep_for_nanos(long int nanos, int extra_args, ts_pnt* args);
+inline int __sleep_for_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args);
 inline int sleep_until_nanos(long int nanos);
-int __sleep_until_nanos(long int nanos, int extra_args, ts_pnt* args, long int now);
+int __sleep_until_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args, long int now);
 
 #define sleep_for_nanos_ext(nanos, extra_args, ...) \
-	__sleep_for_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__})
-// -O3 should optimize the 
-//					     new ts_pnt[2]{...} out
+	__sleep_for_nanos(nanos, extra_args, std::array<ts_pnt,2> {{__VA_ARGS__}})
 
 #define sleep_until_nanos_ext(nanos, extra_args, ...) \
-	__sleep_until_nanos(nanos, extra_args, new ts_pnt[2]{__VA_ARGS__}, get_time_in_nanos())
+	__sleep_until_nanos(nanos, extra_args, std::array<ts_pnt,2> {{__VA_ARGS__}}, get_time_in_nanos())
 	
-inline int __attribute__((always_inline)) __sleep_for_nanos(long int nanos, int extra_args, ts_pnt* args)
+inline int __attribute__((always_inline)) __sleep_for_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args)
 {
     	timespec ts;
 	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
@@ -58,7 +57,7 @@ inline int __attribute__((always_inline)) sleep_until_nanos(long int nanos)
 	return sleep_until_nanos_ext(nanos, 0);
 }
 
-inline int __attribute__((always_inline)) __sleep_until_nanos(long int nanos, int extra_args, ts_pnt* args, long int now)
+inline int __attribute__((always_inline)) __sleep_until_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args, long int now)
 {
 	if (now >= nanos)
 		return 0;
