@@ -286,11 +286,9 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			{
 				check_this = (long double)diff * nsPerTick_long;
 				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-				{						       //     hopefully might reduce fruitless speculative execution
-					break;
-				}
-				res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
+					break;					       //     hopefully might reduce fruitless speculative execution
 			}
+			
 			res = check_this_first;
 		}
 		
@@ -359,11 +357,9 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 			{
 				check_this = (long double)diff * nsPerTick_long;
 				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-				{						       //     hopefully might reduce fruitless speculative execution
-					break;
-				}
-				res = ( ( std::fpclassify(check_this) == FP_NORMAL && check_this <= DBL_MAX) ? check_this :  DBL_MAX);
+					break;					       //     hopefully might reduce fruitless speculative execution
 			}
+			
 			res = check_this_first;
 		}
 		
@@ -614,7 +610,7 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 					rollingMaxDrawTime_real = drawTime;
 				else
 					rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
-				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime, static_cast<uint64_t>(nsecInterval - redZone) );
+				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
 
 			}
 			
@@ -811,7 +807,6 @@ void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-mat
 				targetPoint = lround(vblank_next_target(lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting,  vblank_begin));
 				targetPoint = now + fmax(targetPoint - vblank_begin - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
-				now = (double)get_time_in_nanos();
 			}
 				
 			
