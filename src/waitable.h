@@ -21,8 +21,6 @@ namespace gamescope
         virtual void OnPollOut() {}
         virtual void OnPollHangUp() {}
 
-        virtual bool ShouldCloseOnHangUp() const { return true; }
-
         void HandleEvents( uint32_t nEvents )
         {
             if ( nEvents & EPOLLIN )
