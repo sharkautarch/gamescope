@@ -446,7 +446,7 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long
 #ifdef __clang__
 inline double __attribute__((always_inline, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #else
-inline double __attribute__((always_inline, const,optimize("-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #endif
 {
 
@@ -481,9 +481,9 @@ void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, c
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
-	void __attribute__((optimize("-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #endif
 {
