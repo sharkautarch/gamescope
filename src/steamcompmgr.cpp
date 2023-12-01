@@ -838,6 +838,7 @@ struct commit_t : public gamescope::IWaitable
 			return false;
 
 		// Will automatically remove from epoll!
+		g_ImageWaiter.RemoveWaitable( this );
 		close( m_nCommitFence );
 		m_nCommitFence = -1;
 		return true;
