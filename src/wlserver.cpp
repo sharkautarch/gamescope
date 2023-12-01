@@ -89,12 +89,15 @@ static void wlserver_x11_surface_info_set_wlr( struct wlserver_x11_surface_info 
 wlserver_wl_surface_info *get_wl_surface_info(struct wlr_surface *wlr_surf);
 static enum gamescope_commit_queue_v1_queue_mode gamescope_commit_queue_v1_get_surface_mode(struct wlr_surface *surface);
 
-std::vector<ResListEntry_t> gamescope_xwayland_server_t::retrieve_commits()
+std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 {
-	std::vector<ResListEntry_t> commits;
+	static std::vector<ResListEntry_t> commits;
+	commits.clear();
+	commits.reserve(16);
+
 	{
 		std::lock_guard<std::mutex> lock( wayland_commit_lock );
-		commits = std::move(wayland_commit_queue);
+		commits.swap(wayland_commit_queue);
 	}
 	return commits;
 }
@@ -121,6 +124,7 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 		wl_surf->present_id = std::nullopt;
 		wl_surf->desired_present_time = 0;
 		wl_surf->pending_presentation_feedbacks.clear();
+
 		wayland_commit_queue.push_back( newEntry );
 	}
 

@@ -6690,7 +6690,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
+			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN | EPOLLHUP );
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6702,7 +6702,7 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	// When importing buffer, we'll potentially need to perform operations with
 	// a wlserver lock (e.g. wlr_buffer_lock). We can't do this with a
 	// wayland_commit_queue lock because that causes deadlocks.
-	std::vector<ResListEntry_t> tmp_queue = ctx->xwayland_server->retrieve_commits();
+	std::vector<ResListEntry_t>& tmp_queue = ctx->xwayland_server->retrieve_commits();
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
