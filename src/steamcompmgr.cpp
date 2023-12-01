@@ -726,7 +726,6 @@ struct commit_t : public gamescope::IWaitable
     {
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			g_ImageWaiter.RemoveWaitable( this );
 			CloseFenceInternal();
 		}
 
@@ -789,11 +788,8 @@ struct commit_t : public gamescope::IWaitable
 
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			if ( m_nCommitFence < 0 )
+			if ( !CloseFenceInternal() )
 				return;
-
-			g_ImageWaiter.RemoveWaitable( this );
-			CloseFenceInternal();
 		}
 
 		uint64_t frametime;
@@ -824,18 +820,27 @@ struct commit_t : public gamescope::IWaitable
 		nudge_steamcompmgr();
 	}
 
+	void OnPollHangUp() final
+	{
+		std::unique_lock lock( m_WaitableCommitStateMutex );
+		CloseFenceInternal();
+	}
+
 	bool IsPerfOverlayFIFO()
 	{
 		return fifo || is_steam;
 	}
 
-	void CloseFenceInternal()
+	// Returns true if we had a fence that was closed.
+	bool CloseFenceInternal()
 	{
 		if ( m_nCommitFence < 0 )
-			return;
+			return false;
 
+		// Will automatically remove from epoll!
 		close( m_nCommitFence );
 		m_nCommitFence = -1;
+		return true;
 	}
 
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
@@ -858,6 +863,10 @@ static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &comm
 {
 	std::unique_lock lock( commit->m_WaitableCommitStateMutex );
 
+	// This case is basically never ever hit.
+	// But we should handle it just in case.
+	// I have not seen it ever trigger even in extensive
+	// stress testing.
 	if ( commit->m_nCommitFence >= 0 )
 	{
 		g_ImageWaiter.GCWaitable( commit, commit.get() );
@@ -4872,7 +4881,7 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 
 			if (gone)
 			{
-				// Manually GC this here to avoid bubbles on RemoveWaitable
+				// Manually GC this here to avoid bubbles on close/RemoveWaitable
 				for ( auto& commit : w->commit_queue )
 					GarbageCollectWaitableCommit( commit );
 				// release all commits now we are closed.

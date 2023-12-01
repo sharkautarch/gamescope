@@ -21,6 +21,8 @@ namespace gamescope
         virtual void OnPollOut() {}
         virtual void OnPollHangUp() {}
 
+        virtual bool ShouldCloseOnHangUp() const { return true; }
+
         void HandleEvents( uint32_t nEvents )
         {
             if ( nEvents & EPOLLIN )
@@ -89,7 +91,7 @@ namespace gamescope
         CWaiter()
             : m_nEpollFD{ epoll_create1( EPOLL_CLOEXEC ) }
         {
-            AddWaitable( &m_NudgeWaitable, EPOLLIN );   
+            AddWaitable( &m_NudgeWaitable, EPOLLIN | EPOLLHUP );
         }
 
         ~CWaiter()
@@ -141,7 +143,7 @@ namespace gamescope
         {
             epoll_event events[MaxEvents];
 
-            int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, -1);
+            int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, -1 );
 
             if ( !m_bRunning )
                 return;
@@ -156,7 +158,7 @@ namespace gamescope
             {
                 epoll_event &event = events[i];
 
-                IWaitable *pWaitable = reinterpret_cast<IWaitable *>(event.data.ptr);
+                IWaitable *pWaitable = reinterpret_cast<IWaitable *>( event.data.ptr );
                 pWaitable->HandleEvents( event.events );
             }
         }
