@@ -199,7 +199,7 @@ else
 #endif
 }
 
-inline void __attribute__((always_inline,target("sse"))) cpu_pause()
+inline void __attribute__((always_inline)) cpu_pause()
 {
 
 
@@ -274,7 +274,7 @@ long int cpu_pause_get_upper_q_avg()
 #if defined(__clang__)
 void __attribute__((target("waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 #else
-void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"),target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), target("waitpkg", "sse4.2","avx"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
 #endif
 {
 	int64_t diff;
@@ -340,15 +340,15 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 
 #if defined(__x86_64__)
 #	if defined(__clang__)
-void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=westmere"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	else
-void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), target_clones("default,arch=core2,arch=znver1,arch=westmere"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	endif
 #else
 #	if defined(__clang__)
-void spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	else
-void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"))) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	endif
 #endif
 {
