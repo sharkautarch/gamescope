@@ -580,8 +580,8 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
-	long int drawTime;
-	double lastVblank;
+	long int drawTime = g_uVblankDrawTimeNS.load();
+	double lastVblank = (double)g_lastVblank.load();
 	
 	int index=0;
 	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
@@ -625,7 +625,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		
 		
 		long int offset;
-		double offset_dec_real;
+		double offset_dec_real = (double)redZone;
 	 	
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
