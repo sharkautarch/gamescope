@@ -247,14 +247,14 @@ inline void __attribute__((always_inline)) cpu_pause()
 
 //measures the time it takes to do a single pause instruction -> 512 trials.
 //returns the average of the 25% longest run times
-long int cpu_pause_get_upper_q_avg()
+int64_t cpu_pause_get_upper_q_avg()
 {
 	const int num_test_runs=512;
-	long int trials[num_test_runs];
+	int64_t trials[num_test_runs];
 	
 	for (int i = 0; i < num_test_runs; i++)
 	{
-		long int before = get_time_in_nanos();
+		int64_t before = get_time_in_nanos();
 		cpu_pause();
 		trials[i]=get_time_in_nanos()-before;
 	}
@@ -266,7 +266,7 @@ long int cpu_pause_get_upper_q_avg()
 		sum += (uint64_t)trials[i];
 	}
 	
-	return static_cast<long int>(sum/((uint64_t)num_test_runs/4l));
+	return static_cast<int64_t>(sum/((uint64_t)num_test_runs/4l));
 }
 
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
@@ -340,15 +340,15 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 
 #if defined(__x86_64__)
 #	if defined(__clang__)
-inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const int64_t cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	else
-inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta", "-fipa-cp-clone", "-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const int64_t cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	endif
 #else
 #	if defined(__clang__)
-inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const int64_t cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	else
-inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const long int cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fmerge-all-constants","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline)) spin_wait(const long double nsPerTick_long, const double nsPerTick, const int64_t cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #	endif
 #endif
 {
@@ -359,15 +359,15 @@ inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-fu
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
-	const long int __cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
-	const long int cpu_pause_loop_iter = ((__cpu_pause_loop_iter-1l)>0l)?(__cpu_pause_loop_iter-1l):(1l);
+	const int64_t __cpu_pause_loop_iter = (int64_t) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
+	const int64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter-1l)>0l)?(__cpu_pause_loop_iter-1l):(1l);
 	
 	uint64_t prev = readCycleCount();
 	
 	#if defined(__clang__)
 	#pragma clang optimize off
 	#endif
-	for (long int k = 0l; k < cpu_pause_loop_iter; k += 2l) {
+	for (int64_t k = 0l; k < cpu_pause_loop_iter; k += 2l) {
 				cpu_pause();
 				cpu_pause();
 	}
@@ -459,7 +459,7 @@ inline long int __attribute__((nonnull(1))) IQM(uint16_t* a, const int n) //cred
 }
 #undef med
 
-inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const long int nanos, const long int offset, const long int sleep_weight)
+inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const int64_t nanos, const long int offset, const long int sleep_weight)
 {
 	timespec rem;
 	rem.tv_sec = 0l;
@@ -517,15 +517,15 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 
 #ifdef __clang__
 #	if defined(__x86_64__)
-	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
-void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake,arch=alderlake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
-	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const long int cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const bool cpu_supports_tpause, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #endif
 {
@@ -550,12 +550,12 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	double vblank_begin=0.0;
 	
 	
-	long int time_start = get_time_in_nanos();
+	int64_t time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	
 	
 	long int lastDrawTime = g_uVblankDrawTimeNS;
-	long int lastDrawTime_timestamp = get_time_in_nanos();
+	int64_t lastDrawTime_timestamp = get_time_in_nanos();
 	
 	
 	double first_cycle_sleep_duration = 0.0;
@@ -789,7 +789,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 
 
 #endif
-		long int targetPoint;
+		int64_t targetPoint;
 
 
 		if ( !neverBusyWait && ( alwaysBusyWait || sleep_cycle == 2 || offset*sleep_weights[sleep_cycle-1] / 100 < 1'000'000ll ) )
@@ -990,7 +990,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 		return g_vblankPipe[ 0 ];
 	}
 #endif
-	long int cpu_pause_time_len = cpu_pause_get_upper_q_avg();
+	int64_t cpu_pause_time_len = cpu_pause_get_upper_q_avg();
 	#define supports_tpause __builtin_cpu_is("sapphirerapids") | __builtin_cpu_is("alderlake") | __builtin_cpu_is("tremont")
 
 	#define NEVER_BUSY_WAIT true,false,supports_tpause,cpu_pause_time_len,CANT_USE_CPU_TIMER
