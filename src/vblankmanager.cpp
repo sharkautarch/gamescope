@@ -76,6 +76,8 @@ double NextAfter(double q)
 #endif
 }
 
+//#define VBLANK_DEBUG
+
 static int g_vblankPipe[2];
 
 std::atomic<uint64_t> g_lastVblank;
@@ -263,44 +265,91 @@ int64_t cpu_pause_get_upper_q_avg()
 	return static_cast<int64_t>(sum/((uint64_t)num_test_runs/4l));
 }
 
+int64_t __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) cpu_tpause_get_possible_max_delay()
+{
+	const int num_test_runs=512;
+	int64_t trials[num_test_runs];
+	
+	for (int i = 0; i < num_test_runs; i++)
+	{
+		int64_t before = get_time_in_nanos();
+		cpu_tpause(0, 2'000'000ul +  readCycleCount());
+		trials[i]=get_time_in_nanos()-before;
+	}
+	
+	std::sort(trials, trials+num_test_runs);
+	
+	uint64_t sum = 0;
+	for (int i = 3*num_test_runs/4; i < num_test_runs; i++) {
+		sum += (uint64_t)trials[i];
+	}
+	
+	return static_cast<int64_t>(sum/((uint64_t)num_test_runs/4l));
+}
+
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
 #if defined(__clang__)
-inline void __attribute__((always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #else
-inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick,  const double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #endif
 {
-	int64_t diff;
+	uint64_t diff;
 	double res = 0.0;
 	double check_this_first = 0.0;
 	long double check_this = 0.0L;
-	const uint64_t compared_int = (uint64_t)llroundl(compared_to/(nsPerTick_long*3.5L));
+	const double tpause_frac = 
+	( cpu_pause_time_len < 1'000'000.0L)
+		     ? fmin(compared_to/(nsPerTick_long*2.0L), cpu_pause_time_len)
+		     : compared_to/(nsPerTick_long*2.0L);
+	const uint64_t compared_int = (uint64_t) floor(tpause_frac);
+	const uint64_t __cpu_pause_loop_iter = (uint64_t) floor(compared_to/tpause_frac);
+	const uint64_t cpu_pause_loop_iter = (__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter-1ul):(0ul);
+	
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
-	int i = 0;
+	
+	const uint64_t dbl_max_rounded=(uint64_t)floor(DBL_MAX);
 	uint64_t prev = readCycleCount();
-	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	#ifdef VBLANK_DEBUG
+	
+	
+	int64_t before = get_time_in_nanos();
+	
+	#endif
+	
+	#if defined(__clang__)
+	#pragma clang optimize off
+	#endif
+	
+	for (unsigned int i = 1; i < 4*cpu_pause_loop_iter/7; i++)
 	{
-		#if defined(__clang__)
-		#pragma clang optimize off
-		#endif
-		for (int j = i;j<2;j++)
-		{
-			#if defined(__clang__)
-			#pragma clang optimize on
-			#endif
-			uint64_t tsc_time_value = readCycleCount() + compared_int*(2-j)/( ((2+i)*(2+i)) - 1);
-			cpu_tpause((uint64_t)tsc_time_value, true);
-			#if defined(__clang__)
-			#pragma clang optimize off
-			#endif
-		}
+		
 		#if defined(__clang__)
 		#pragma clang optimize on
 		#endif
 		
+		
+		uint64_t tsc_time_value = readCycleCount() + sqrt(4*i-1)*compared_int/(cpu_pause_loop_iter-2*i*2*i-1);
+
+		
+		cpu_tpause((uint64_t)tsc_time_value, true);
+
+		#if defined(__clang__)
+		#pragma clang optimize off
+		#endif
+	}
+	#if defined(__clang__)
+	#pragma clang optimize on
+	#endif
+	#ifdef VBLANK_DEBUG
+	fprintf(stdout, "total tpause dur: %.2fms\n", (get_time_in_nanos()-before)/ 1'000'000.0);
+	#endif
+	int i = 0;		
+	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	{
 		int j=4-i;
 		
 		while ( res < compared_to && j < 3 )
@@ -308,14 +357,10 @@ inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-fu
 			j++;
 			res = DBL_MAX;
 		
-			cpu_tpause(0, true);
+			cpu_pause();
 		
-			diff = (int64_t)readCycleCount() - (int64_t)prev;
-			if ( HMMM(diff < 0) )
-			{
-				std::cout << "oh noes\n";
-				continue; // in case tsc counter resets or something
-			}
+			diff = readCycleCount() - prev;
+			diff = (diff < dbl_max_rounded)*diff + (diff>dbl_max_rounded)*(dbl_max_rounded);
 		
 			check_this_first = (double)diff * nsPerTick;
 			if ( HMMM(isinf(check_this_first)) )
@@ -330,6 +375,7 @@ inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-fu
 		
 		i++;
 	}
+	
 }
 
 #if defined(__x86_64__)
@@ -418,7 +464,7 @@ inline int __attribute__((const, always_inline)) heaviside(const int v)
 // a feedback loop with our clocks. Pick a sane minimum draw time.
 const uint64_t g_uVBlankDrawTimeMinCompositing = 2'400'000;
 
-//#define VBLANK_DEBUG
+
 
 inline int __attribute__((const)) median(const uint16_t l, const uint16_t r) //credit for this function: https://www.geeksforgeeks.org/interquartile-range-iqr/
 {
@@ -778,7 +824,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		
 		//static uint64_t lastOffset = g_uVblankDrawTimeNS + redZone;
 
-		if ( sleep_cycle == 2 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) )
+		if ( sleep_cycle == 2 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) ))
 		{
 			if ( drawTime > (int)lastOffset )
 				fprintf( stderr, " !! missed vblank " );
@@ -941,11 +987,11 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 
 #ifdef __clang__
 #	if defined(__x86_64__)
-	void __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #endif
 {
@@ -1192,7 +1238,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		
 		//static uint64_t lastOffset = g_uVblankDrawTimeNS + redZone;
 
-		if ( sleep_cycle == 2 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) )
+		if ( sleep_cycle == 2 && (vblankIdx++ % 300 == 0 || drawTime > lround(lastOffset) ))
 		{
 			if ( drawTime > (int)lastOffset )
 				fprintf( stderr, " !! missed vblank " );
@@ -1231,7 +1277,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin) - vblank_begin;
 			const int64_t wait_start = get_time_in_nanos();
 			
-			spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
+			spin_wait_w_tpause(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 						
 			if (sleep_cycle == 1)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
@@ -1333,7 +1379,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			compared_to = fmin(compared_to, post_vblank_idle_time);
 			const int64_t wait_start = get_time_in_nanos();
 			
-			spin_wait_w_tpause(nsPerTick_long, nsPerTick, compared_to, wait_start);
+			spin_wait_w_tpause(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 			
 			if (counter % 300 == 0)
 				std::cout << "post-vblank TPAUSE wait loop duration: " << (double)((int64_t) get_time_in_nanos() - wait_start)/1'000'000.0L << "ms\n";
@@ -1404,7 +1450,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 		return g_vblankPipe[ 0 ];
 	}
 #endif
-	int64_t cpu_pause_time_len = cpu_pause_get_upper_q_avg();
+	
 	bool supports_tpause = __builtin_cpu_is("sapphirerapids") | __builtin_cpu_is("alderlake") | __builtin_cpu_is("tremont");
 
 	#define NEVER_BUSY_WAIT true,false,cpu_pause_time_len,CANT_USE_CPU_TIMER
@@ -1412,6 +1458,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 	#define ALWAYS_BUSY_WAIT false,true,cpu_pause_time_len
 	
 	if ( never_busy_wait ) {
+		int64_t cpu_pause_time_len = 0;
 		std::thread vblankThread( vblankThreadRun, NEVER_BUSY_WAIT );
 		vblankThread.detach();
 	}
@@ -1419,10 +1466,12 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 		const long double nsPerTick_long = getNsPerTick();
 		if (nsPerTick_long == CANT_USE_CPU_TIMER)
 		{
+			int64_t cpu_pause_time_len = 0;
 			std::thread vblankThread( vblankThreadRun, NEVER_BUSY_WAIT );
 			vblankThread.detach();
 		}
 		else if (supports_tpause) {
+			double cpu_pause_time_len = (double)cpu_tpause_get_possible_max_delay();
 			if (always_busy_wait) {
 				std::thread vblankThread( vblankThreadRun_tpause, ALWAYS_BUSY_WAIT, nsPerTick_long );
 				vblankThread.detach();
@@ -1433,6 +1482,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 			}
 		}
 		else {
+			int64_t cpu_pause_time_len = cpu_pause_get_upper_q_avg();
 			if (always_busy_wait) {
 				std::thread vblankThread( vblankThreadRun, ALWAYS_BUSY_WAIT, nsPerTick_long );
 				vblankThread.detach();
