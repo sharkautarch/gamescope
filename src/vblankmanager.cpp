@@ -510,6 +510,18 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
  
 
 #ifdef __clang__
+inline double __attribute__((always_inline, hot )) vblank_next_target_reloaded(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double prev, const double now, const double _lastVblank_pending )
+#else
+inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target_reloaded( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double prev, const double now, const double _lastVblank_pending )
+#endif
+{
+	const double vblank_diff = _lastVblank_pending-_lastVblank;
+	const double cond_time_diff = fmin(vblank_diff,1.0)*(now-prev); // cond_time_diff should always be >= 0 because the time values are obtained from the CLOCK_MONOTONIC clock
+	const double targetPoint = vblank_next_target(_lastVblank+vblank_diff, offset, nsecInterval, limitFactor, prev+cond_time_diff);
+	return targetPoint;
+}
+
+#ifdef __clang__
 #	if defined(__x86_64__)
 	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
@@ -809,7 +821,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			
 			if (sleep_cycle == 1)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		else
 		{
@@ -831,7 +842,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
@@ -843,7 +853,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			}
 				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
+			
 		}
 		
 		if (sleep_cycle == 1)
@@ -852,10 +862,13 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		}
 		
 	SKIPPING_SECOND_SLEEP:;
+		double now = (double) get_time_in_nanos();
+		double lastVblank_pending = (double)g_lastVblank.load();
+		targetPoint = vblank_next_target_reloaded(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending);
 		VBlankTimeInfo_t time_info =
 		{
 			.target_vblank_time = static_cast<uint64_t>(targetPoint + lround(offset_dec_real)),
-			.pipe_write_time    = static_cast<uint64_t>(get_time_in_nanos()),
+			.pipe_write_time    = static_cast<uint64_t>(now),
 		};
 		if (counter % 300 == 0)
 			std::cout << "vblank cycle time before write(): " << ( (long double)(get_time_in_nanos()-vblank_begin) )/1'000'000.0L << "ms\n";
@@ -1244,7 +1257,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				if ( now - vblank_begin > fmax(  offset_dec_capped,  lastOffset) )
 				{
 					offset_dec=fmin(fmax(  offset_dec, lastOffset), nsecInterval_dec+(double)redZone/2.0);
-					targetPoint = llround(vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin));
 					goto SKIPPING_SECOND_SLEEP;
 				}
 			}
@@ -1254,9 +1266,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				targetPoint = now + fmax(targetPoint - vblank_begin - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 			}
-				
 			
-			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		
 		if (sleep_cycle == 1)
@@ -1265,10 +1275,13 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		}
 		
 	SKIPPING_SECOND_SLEEP:;
+		double now = (double) get_time_in_nanos();
+		double lastVblank_pending = (double)g_lastVblank.load();
+		targetPoint = vblank_next_target_reloaded(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending);
 		VBlankTimeInfo_t time_info =
 		{
 			.target_vblank_time = static_cast<uint64_t>(targetPoint + lround(offset_dec_real)),
-			.pipe_write_time    = static_cast<uint64_t>(get_time_in_nanos()),
+			.pipe_write_time    = static_cast<uint64_t>(now),
 		};
 		if (counter % 300 == 0)
 			std::cout << "vblank cycle time before write(): " << ( (long double)(get_time_in_nanos()-vblank_begin) )/1'000'000.0L << "ms\n";
