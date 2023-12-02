@@ -317,23 +317,23 @@ void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-functions
 	
 	const int64_t compared_to_const = (int64_t)llround(compared_to);
 	
-	const long int cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
+	const long int __cpu_pause_loop_iter = (long int) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
+	const long int cpu_pause_loop_iter = ((__cpu_pause_loop_iter-1l)>0l)?(__cpu_pause_loop_iter-1l):(1l);
 	
-	int i = 0;
 	uint64_t prev = readCycleCount();
 	
 	#if defined(__clang__)
 	#pragma clang optimize off
 	#endif
-	for (long int k = 0; k < std::max(cpu_pause_loop_iter-1,0l); k += 2) {
+	for (long int k = 0l; k < cpu_pause_loop_iter; k += 2l) {
 				cpu_pause();
 				cpu_pause();
 	}
-	
 	#if defined(__clang__)
 	#pragma clang optimize on
 	#endif
-				
+		
+	int i = 0;		
 	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
 	{
 		int j=4-i;
