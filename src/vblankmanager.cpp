@@ -34,6 +34,48 @@
 
 #include "nominalFrequency.cc"
 
+#include <float.h>
+#include <math.h>
+
+
+
+/*  credit for NextAfter() function: https://stackoverflow.com/a/70512041
+    Return the next floating-point value after the finite value q.
+
+    This was inspired by Algorithm 3.5 in Siegfried M. Rump, Takeshi Ogita, and
+    Shin'ichi Oishi, "Accurate Floating-Point Summation", _Technical Report
+    05.12_, Faculty for Information and Communication Sciences, Hamburg
+    University of Technology, November 13, 2005.
+    
+    IEEE-754 and the default rounding mode,
+    round-to-nearest-ties-to-even, may be required.
+*/
+double NextAfter(double q)
+{
+    /*  Scale is .625 ULP, so multiplying it by any significand in [1, 2)
+        yields something in [.625 ULP, 1.25 ULP].
+    */
+    static const double Scale = 0.625 * DBL_EPSILON;
+
+    /*  Either of the following may be used, according to preference and
+        performance characteristics.  In either case, use a fused multiply-add
+        (fma) to add to q a number that is in [.625 ULP, 1.25 ULP].  When this
+        is rounded to the floating-point format, it must produce the next
+        number after q.
+    */
+#if 0
+    // SmallestPositive is the smallest positive floating-point number.
+    static const double SmallestPositive = DBL_EPSILON * DBL_MIN;
+
+    if (fabs(q) < 2*DBL_MIN)
+        return q + SmallestPositive;
+
+    return fma(fabs(q), Scale, q);
+#else
+    return fma(fmax(fabs(q), DBL_MIN), Scale, q);
+#endif
+}
+
 static int g_vblankPipe[2];
 
 std::atomic<uint64_t> g_lastVblank;
@@ -467,7 +509,7 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 	
 	double relativePoint = targetPoint - now;
 	
-	double cappedTargetPoint = fmin( nextafter(nsecInterval*limitFactor, DBL_MAX), relativePoint) + now;
+	double cappedTargetPoint = fmin( NextAfter(nsecInterval*limitFactor), relativePoint) + now;
 	
 	return cappedTargetPoint;
 }
