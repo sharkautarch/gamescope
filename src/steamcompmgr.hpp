@@ -13,11 +13,11 @@ extern uint32_t currentOutputHeight;
 typedef timespec* ts_pnt;
 
 unsigned int get_time_in_milliseconds(void);
-long int get_time_in_nanos();
-inline int sleep_for_nanos(long int nanos);
-inline int __sleep_for_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args);
-inline int sleep_until_nanos(long int nanos);
-int __sleep_until_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args, long int now);
+int64_t get_time_in_nanos();
+inline int sleep_for_nanos(int64_t nanos);
+inline int __sleep_for_nanos(int64_t nanos, int extra_args, std::array<ts_pnt,2> args);
+inline int sleep_until_nanos(int64_t nanos);
+int __sleep_until_nanos(int64_t nanos, int extra_args, std::array<ts_pnt,2> args, int64_t now);
 
 #define sleep_for_nanos_ext(nanos, extra_args, ...) \
 	__sleep_for_nanos(nanos, extra_args, std::array<ts_pnt,2> {{__VA_ARGS__}})
@@ -25,7 +25,7 @@ int __sleep_until_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> arg
 #define sleep_until_nanos_ext(nanos, extra_args, ...) \
 	__sleep_until_nanos(nanos, extra_args, std::array<ts_pnt,2> {{__VA_ARGS__}}, get_time_in_nanos())
 	
-inline int __attribute__((always_inline)) __sleep_for_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args)
+inline int __attribute__((always_inline)) __sleep_for_nanos(int64_t nanos, int extra_args, std::array<ts_pnt,2> args)
 {
     	timespec ts;
 	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
@@ -47,17 +47,17 @@ inline int __attribute__((always_inline)) __sleep_for_nanos(long int nanos, int 
 		return nanosleep(&ts, nullptr);
 }
 
-inline int __attribute__((always_inline)) sleep_for_nanos(long int nanos)
+inline int __attribute__((always_inline)) sleep_for_nanos(int64_t nanos)
 {
 	return sleep_for_nanos_ext(nanos, 0);
 }
 
-inline int __attribute__((always_inline)) sleep_until_nanos(long int nanos)
+inline int __attribute__((always_inline)) sleep_until_nanos(int64_t nanos)
 {
 	return sleep_until_nanos_ext(nanos, 0);
 }
 
-inline int __attribute__((always_inline)) __sleep_until_nanos(long int nanos, int extra_args, std::array<ts_pnt,2> args, long int now)
+inline int __attribute__((always_inline)) __sleep_until_nanos(int64_t nanos, int extra_args, std::array<ts_pnt,2> args, int64_t now)
 {
 	if (now >= nanos)
 		return 0;

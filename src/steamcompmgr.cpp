@@ -145,9 +145,9 @@ uint32_t g_reshade_technique_idx = 0;
 
 bool g_bSteamIsActiveWindow = false;
 
-long int timespec_to_nanos(struct timespec& spec)
+int64_t timespec_to_nanos(struct timespec& spec)
 {
-	return (long int)spec.tv_sec * 1'000'000'000l + spec.tv_nsec;
+	return (int64_t)spec.tv_sec * 1'000'000'000l + (int64_t)spec.tv_nsec;
 }
 
 static void
@@ -1282,7 +1282,7 @@ static inline void stats_printf( const char* format, ...)
 	}
 }
 
-long int get_time_in_nanos()
+int64_t get_time_in_nanos()
 {
 	timespec ts;
 	// Kernel reports page flips with CLOCK_MONOTONIC.
