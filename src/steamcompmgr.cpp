@@ -725,7 +725,6 @@ struct commit_t : public gamescope::IWaitable
     {
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			g_ImageWaiter.RemoveWaitable( this );
 			CloseFenceInternal();
 		}
 
@@ -764,6 +763,7 @@ struct commit_t : public gamescope::IWaitable
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
+	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
 	uint64_t win_seq = 0;
@@ -787,11 +787,8 @@ struct commit_t : public gamescope::IWaitable
 
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			if ( m_nCommitFence < 0 )
+			if ( !CloseFenceInternal() )
 				return;
-
-			g_ImageWaiter.RemoveWaitable( this );
-			CloseFenceInternal();
 		}
 
 		uint64_t frametime;
@@ -817,18 +814,33 @@ struct commit_t : public gamescope::IWaitable
 		}
 
 		if ( m_bMangoNudge )
-			mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+			mangoapp_update( IsPerfOverlayFIFO() ? uint64_t(~0ull) : frametime, frametime, uint64_t(~0ull) );
 
 		nudge_steamcompmgr();
 	}
 
-	void CloseFenceInternal()
+	void OnPollHangUp() final
+	{
+		std::unique_lock lock( m_WaitableCommitStateMutex );
+		CloseFenceInternal();
+	}
+
+	bool IsPerfOverlayFIFO()
+	{
+		return fifo || is_steam;
+	}
+
+	// Returns true if we had a fence that was closed.
+	bool CloseFenceInternal()
 	{
 		if ( m_nCommitFence < 0 )
-			return;
+			return false;
 
+		// Will automatically remove from epoll!
+		g_ImageWaiter.RemoveWaitable( this );
 		close( m_nCommitFence );
 		m_nCommitFence = -1;
+		return true;
 	}
 
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
@@ -851,6 +863,10 @@ static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &comm
 {
 	std::unique_lock lock( commit->m_WaitableCommitStateMutex );
 
+	// This case is basically never ever hit.
+	// But we should handle it just in case.
+	// I have not seen it ever trigger even in extensive
+	// stress testing.
 	if ( commit->m_nCommitFence >= 0 )
 	{
 		g_ImageWaiter.GCWaitable( commit, commit.get() );
@@ -947,6 +963,9 @@ bool			synchronize;
 std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 VBlankTimeInfo_t g_SteamCompMgrVBlankTime = {};
+
+uint64_t g_uCurrentBasePlaneCommitID = 0;
+bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
 static uint64_t g_uDynamicRefreshEqualityTime = 0;
@@ -1412,6 +1431,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->buf = buf;
 	commit->async = async;
 	commit->fifo = fifo;
+	commit->is_steam = window_is_steam( w );
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -2375,6 +2395,9 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
 		if ( !(flags & PaintWindowFlag::FadeTarget) )
 			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
+
+		g_uCurrentBasePlaneCommitID = lastCommit->commitID;
+		g_bCurrentBasePlaneIsFifo = lastCommit->IsPerfOverlayFIFO();
 	}
 }
 
@@ -4858,7 +4881,7 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 
 			if (gone)
 			{
-				// Manually GC this here to avoid bubbles on RemoveWaitable
+				// Manually GC this here to avoid bubbles on close/RemoveWaitable
 				for ( auto& commit : w->commit_queue )
 					GarbageCollectWaitableCommit( commit );
 				// release all commits now we are closed.
@@ -6675,7 +6698,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
+			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN | EPOLLHUP );
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6687,7 +6710,7 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	// When importing buffer, we'll potentially need to perform operations with
 	// a wlserver lock (e.g. wlr_buffer_lock). We can't do this with a
 	// wayland_commit_queue lock because that causes deadlocks.
-	std::vector<ResListEntry_t> tmp_queue = ctx->xwayland_server->retrieve_commits();
+	std::vector<ResListEntry_t>& tmp_queue = ctx->xwayland_server->retrieve_commits();
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
