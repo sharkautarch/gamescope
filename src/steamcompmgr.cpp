@@ -1061,6 +1061,11 @@ window_is_steam( steamcompmgr_win_t *w )
 
 bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
 
+bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
+{
+	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
+}
+
 static bool
 steamcompmgr_user_has_any_game_open()
 {
@@ -1070,16 +1075,11 @@ steamcompmgr_user_has_any_game_open()
 		if (!server->ctx)
 			continue;
 
-		if (server->ctx->focus.focusWindow && !window_is_steam(server->ctx->focus.focusWindow))
+		if (steamcompmgr_window_should_limit_fps( server->ctx->focus.focusWindow ))
 			return true;
 	}
 
 	return false;
-}
-
-bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
-{
-	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
 }
 
 bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
