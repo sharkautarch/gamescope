@@ -1281,7 +1281,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 						
 			if (sleep_cycle == 1)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
-			targetPoint = vblank_next_target(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin);
 		}
 		else
 		{
