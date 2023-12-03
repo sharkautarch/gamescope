@@ -770,7 +770,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				
 				rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
 			}
-			rollingMaxDrawTime = (uint64_t)std::clamp(centered_mean/2, (long int) rollingMaxDrawTime, nsecInterval + nsecInterval/10);
+			rollingMaxDrawTime = (uint64_t)std::clamp( (long int) rollingMaxDrawTime, centered_mean/2, nsecInterval + nsecInterval/10);
 			if (counter % 300 == 0) 
 				std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
 			
@@ -779,11 +779,11 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			offset_dec_real = rollingMaxDrawTime_real + redZone;
 			if (sleep_cycle == 2)
 			{
-				offset = std::clamp(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
+				offset = std::clamp(offset, std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
 			}
 			else
 			{
-				offset = std::clamp(std::min( nsecInterval, centered_mean)/2-nsecInterval/20, offset , nsecInterval+nsecInterval/5);
+				offset = std::clamp(offset, std::min( nsecInterval, centered_mean)/2-nsecInterval/20 , nsecInterval+nsecInterval/5);
 			}
 				
 			if (counter % 300 == 0) 
@@ -797,7 +797,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
 				index=0;
 				
-				centered_mean = (centered_mean + clamp(nsecInterval/2, IQM(drawtimes, n), 5*nsecInterval/3))/2;
+				centered_mean = (centered_mean + std::clamp(IQM(drawtimes, n), nsecInterval/2, 5*nsecInterval/3))/2;
 			}
 			
 		}
@@ -1184,7 +1184,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				
 				rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
 			}
-			rollingMaxDrawTime = (uint64_t)std::clamp(centered_mean/2, (long int) rollingMaxDrawTime, nsecInterval + nsecInterval/10);
+			rollingMaxDrawTime = (uint64_t)std::clamp((long int) rollingMaxDrawTime, centered_mean/2, nsecInterval + nsecInterval/10);
 			if (counter % 300 == 0) 
 				std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
 			
@@ -1193,11 +1193,11 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			offset_dec_real = rollingMaxDrawTime_real + redZone;
 			if (sleep_cycle == 2)
 			{
-				offset = std::clamp(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, offset, nsecInterval+nsecInterval/20);
+				offset = std::clamp(offset, std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
 			}
 			else
 			{
-				offset = std::clamp(std::min( nsecInterval, centered_mean)/2-nsecInterval/20, offset , nsecInterval+nsecInterval/5);
+				offset = std::clamp(offset, std::min( nsecInterval, centered_mean)/2-nsecInterval/20, nsecInterval+nsecInterval/5);
 			}
 				
 			if (counter % 300 == 0) 
@@ -1211,7 +1211,7 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 				memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
 				index=0;
 				
-				centered_mean = (centered_mean + clamp(nsecInterval/2, IQM(drawtimes, n), 5*nsecInterval/3))/2;
+				centered_mean = (centered_mean + std::clamp( IQM(drawtimes, n), nsecInterval/2, 5*nsecInterval/3))/2;
 			}
 			
 		}
