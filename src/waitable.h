@@ -107,8 +107,8 @@ namespace gamescope
             if ( !m_bRunning )
                 return;
 
-            Nudge();
             m_bRunning = false;
+            Nudge();
 
             if ( m_nEpollFD >= 0 )
             {
