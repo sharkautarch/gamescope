@@ -72,6 +72,11 @@ namespace gamescope
             }
         }
 
+        void OnPollIn() final
+        {
+            Drain();
+        }
+
         bool Nudge()
         {
             return write( m_nFDs[1], "\n", 1 ) >= 0;
