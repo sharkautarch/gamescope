@@ -1649,7 +1649,7 @@ void finish_drm(struct drm_t *drm)
 	// page-flip handler thread.
 }
 
-int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo, uint16_t * iterations )
 {
 	int ret;
 
@@ -1758,7 +1758,12 @@ int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo )
 	// is queued and would end up being the new page flip, rather than here.
 	// However, the page flip handler is called when the page flip occurs,
 	// not when it is successfully queued.
-	g_uVblankDrawTimeNS = get_time_in_nanos() - g_SteamCompMgrVBlankTime.pipe_write_time;
+	{
+		(*iterations)++;
+		uint64_t drawTime = get_time_in_nanos() - g_SteamCompMgrVBlankTime.pipe_write_time;
+		draw_info_t draw_info = draw_info_encode(drawTime, *iterations);
+		g_uVblankDrawTimeNS.store(draw_info.encoded, std::memory_order_release);
+	}
 
 	if ( isPageFlip ) {
 		// Wait for flip handler to unlock

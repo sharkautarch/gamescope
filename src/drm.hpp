@@ -334,7 +334,7 @@ extern bool g_bForceDisableColorMgmt;
 
 bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync);
 void finish_drm(struct drm_t *drm);
-int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo );
+int drm_commit(struct drm_t *drm, const struct FrameInfo_t *frameInfo, uint16_t * iterations );
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo );
 void drm_rollback( struct drm_t *drm );
 bool drm_poll_state(struct drm_t *drm);
