@@ -655,6 +655,7 @@ none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_re
 	static long double local_min = g_uVBlankDrawTimeMinCompositing;
 	static long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
 	static long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	static long double lastRollingMaxDrawTime_real = lastRollingMaxDrawTime;
 	
 	
 	
@@ -682,8 +683,9 @@ none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_re
 	{
 		lastDrawTime=drawTime;
 		lastDrawTimeTime=drawTimeTime;
-		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
+		lastRollingMaxDrawTime = (long double) rollingMaxDrawTime;
 		last_real_delta=real_delta;
+		lastRollingMaxDrawTime_real = (long double) rollingMaxDrawTime_real;
 		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
 		if ( this_time > 5)
 		{
@@ -707,23 +709,13 @@ none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_re
 	if (*sleep_cycle == 1)
 		drawtimes_pending[index] = (uint16_t)( drawTime /1000 );
 	
-	if (*sleep_cycle == 1)
-	{
-		if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
-			rollingMaxDrawTime_real = drawTime;
-		else
-			rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
-		rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
-
-	}
+	
 	
 	if (*sleep_cycle == 2)
-	{	
-		rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
 		g_uRollingMaxDrawTime.store(rollingMaxDrawTime, std::memory_order_relaxed);
-	}
 	else if (*sleep_cycle == 1)
 	{
+		rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
 		real_delta = ((long double)drawTime - (long double)lastDrawTime)/(drawTimeTime - lastDrawTimeTime);
 		if ( (double)real_delta < 0.0 || (drawTime < centered_mean && (double)drawTime-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
 		{
@@ -766,6 +758,24 @@ none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_re
 		
 		rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
 	}
+	if (*sleep_cycle == 1)
+	{
+		if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
+			rollingMaxDrawTime_real = drawTime;
+		else {
+			rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
+			if ((double)real_delta < 0.0)	
+				rollingMaxDrawTime_real=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+			
+			if ((double)real_delta >= 0.0)
+				rollingMaxDrawTime_real=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+		}
+		//rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
+
+	}
+	
+	
+	
 	long int half_centered_mean = std::min(centered_mean/2, nsecInterval);
 	rollingMaxDrawTime = (uint64_t)std::clamp( (long int) rollingMaxDrawTime, half_centered_mean, nsecInterval + nsecInterval/10);
 	if (*counter % 300 == 0) 
