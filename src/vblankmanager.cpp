@@ -626,6 +626,9 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_de
 	const uint64_t max_delta_apply = 50'000; //.05ms per sec
 	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
 	
+	const uint64_t max_delta_apply_real = 4'000'000;//4ms per sec
+	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime_real
+	
 	static draw_info_t last_draw_info = draw_info_encode(0, 0);
 	static draw_info_t curr_draw_info = {.encoded = g_uVblankDrawTimeNS.load() };
 	
@@ -734,10 +737,10 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_de
 		else {
 			rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
 			if ((double)real_delta < 0.0)	
-				rollingMaxDrawTime_real=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+				rollingMaxDrawTime_real=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply_real)));
 			
 			if ((double)real_delta >= 0.0)
-				rollingMaxDrawTime_real=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+				rollingMaxDrawTime_real=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply_real)));
 		}
 	};
 	

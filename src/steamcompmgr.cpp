@@ -7088,7 +7088,7 @@ dispatch_vblank( int fd )
 		g_SteamCompMgrVBlankTime = vblanktime;
 
 		uint64_t diff = (uint64_t)get_time_in_nanos() - vblanktime.pipe_write_time;
-		fprintf(stdout, "dispatch_vblank(int): VBlankTimeInfo_t receive latency: %.2fms\n", ((double)diff)/1'000'000.0);
+		//fprintf(stdout, "dispatch_vblank(int): VBlankTimeInfo_t receive latency: %.2fms\n", ((double)diff)/1'000'000.0);
 
 		// give it .5 ms of slack from pipe to steamcompmgr... maybe too long
 		if ( diff > 500'000ul )
