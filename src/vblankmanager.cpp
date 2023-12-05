@@ -567,17 +567,263 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 	return targetPoint;
 }
 
+
+#define CLEANUP 3
+#ifdef __clang__
+static inline void  __attribute__((always_inline, hot)) vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+#else
+static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
+vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+#endif
+{
+	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	// The redzone is relative to 60Hz, scale it by our
+	// target refresh so we don't miss submitting for vblank in DRM.
+	// (This fixes 4K@30Hz screens)
+	const long int nsecToSec = 1'000'000'000l;
+	const drm_screen_type screen_type = drm_get_screen_type( &g_DRM );
+	const long int redZone = screen_type == DRM_SCREEN_TYPE_INTERNAL
+		? g_uVblankDrawBufferRedZoneNS
+		: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
+	
+	
+	// VRR:
+	// Just ensure that if we missed a frame due to already
+	// having a page flip in-flight, that we flush it out with this.
+	// Nothing fancy needed, just need to get on the other side of the page flip.
+	//
+	// We don't use any of the rolling times due to them varying given our
+	// 'vblank' time is varying.
+	static int64_t time_start = get_time_in_nanos();
+
+	if (*sleep_cycle == CLEANUP)
+	{
+		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
+		if ( this_time > 5)
+		{
+			std::cout << *counter << " vblanks sent in " << this_time << " seconds\n";
+			time_start=get_time_in_nanos();
+			*counter=0;
+		}
+		return;
+	}
+	
+	*offset = 1'000'000 + redZone;
+	* offset_dec_real = (double)*offset;
+}
+#ifdef __clang__
+static inline void  __attribute__((always_inline, hot)) 
+
+none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+#else
+static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
+
+none_vrr_vblank(uint8_t * sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+#endif
+{
+	static uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
+	static uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
+	const uint64_t range = g_uVBlankRateOfDecayMax;
+	
+	const uint64_t max_delta_apply = 50'000; //.05ms per sec
+	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
+	
+	
+	
+	static int64_t time_start = get_time_in_nanos();
+
+	
+	static long int drawTime = g_uVblankDrawTimeNS.load();
+	
+	static long int lastDrawTime = g_uVblankDrawTimeNS;
+	
+	static long double drawTimeTime = get_time_in_nanos();
+	static long double lastDrawTimeTime = get_time_in_nanos(); 
+	
+	static float delta_trend_counter = 3.0f;
+	
+		
+	static long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
+	static uint16_t drawtimes[64] = {1};
+	static uint16_t drawtimes_pending[64];
+	
+	
+	
+	
+	static long double real_delta = 0.0L;
+	static long double last_real_delta = 0.0L; 
+	static long double local_min = g_uVBlankDrawTimeMinCompositing;
+	static long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
+	static long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	
+	
+	
+	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	const long int nsecInterval = 1'000'000'000l / refresh;
+	
+	const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
+	
+	const double nsecInterval_dec = (double)nsecInterval;
+	
+	// The redzone is relative to 60Hz, scale it by our
+	// target refresh so we don't miss submitting for vblank in DRM.
+	// (This fixes 4K@30Hz screens)
+	const long int nsecToSec = 1'000'000'000l;
+	const drm_screen_type screen_type = drm_get_screen_type( &g_DRM );
+	const long int redZone = screen_type == DRM_SCREEN_TYPE_INTERNAL
+		? g_uVblankDrawBufferRedZoneNS
+		: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
+	
+	
+		
+	static int index=0;
+	
+	if (*sleep_cycle == CLEANUP)
+	{
+		lastDrawTime=drawTime;
+		lastDrawTimeTime=drawTimeTime;
+		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
+		last_real_delta=real_delta;
+		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
+		if ( this_time > 5)
+		{
+			std::cout << *counter << " vblanks sent in " << this_time << " seconds\n";
+			time_start=get_time_in_nanos();
+			*counter=0;
+		}
+		return;
+	}
+	
+	
+	if (*sleep_cycle == 1)
+	{
+		drawTime = g_uVblankDrawTimeNS.load();	
+		drawTimeTime = (long double)get_time_in_nanos();
+	}
+	
+	
+	if ( *sleep_cycle == 1 && g_bCurrentlyCompositing )
+		drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
+	if (*sleep_cycle == 1)
+		drawtimes_pending[index] = (uint16_t)( drawTime /1000 );
+	
+	if (*sleep_cycle == 1)
+	{
+		if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
+			rollingMaxDrawTime_real = drawTime;
+		else
+			rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
+		rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
+
+	}
+	
+	if (*sleep_cycle == 2)
+	{	
+		rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
+		g_uRollingMaxDrawTime.store(rollingMaxDrawTime, std::memory_order_relaxed);
+	}
+	else if (*sleep_cycle == 1)
+	{
+		real_delta = ((long double)drawTime - (long double)lastDrawTime)/(drawTimeTime - lastDrawTimeTime);
+		if ( (double)real_delta < 0.0 || (drawTime < centered_mean && (double)drawTime-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
+		{
+			if ((double)last_real_delta >= 0.0)
+				delta_trend_counter=1.25f;
+			
+			local_min=(long double)drawTime+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
+			real_delta = -fmaxl( fabsl(real_delta), fabsl( ((long double)drawTime - (long double)rollingMaxDrawTime)/(drawTimeTime - lastDrawTimeTime)));
+		}
+		
+		if ((double)real_delta >= 0.0 || (drawTime >= centered_mean && (double)drawTime+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
+		{
+			if ((double)last_real_delta <= 0.0)
+				delta_trend_counter=1.25f;
+				
+			local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
+		}
+		
+		
+		if (*counter % 300 == 0) {
+			std::cout << "rollingMaxDrawTime: " << rollingMaxDrawTime << "\n";
+		} 
+	}
+	if ((double)real_delta < 0.0)
+	{
+		if ((double)last_real_delta < 0.0)
+			delta_trend_counter+=1.25f;
+		else
+			delta_trend_counter=1.25f;
+		
+		rollingMaxDrawTime=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+	}
+	
+	if ((double)real_delta >= 0.0)
+	{
+		if ((double)last_real_delta >= 0.0)
+			delta_trend_counter+=1.25f;
+		else
+			delta_trend_counter=1.25f;
+		
+		rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
+	}
+	long int half_centered_mean = std::min(centered_mean/2, nsecInterval);
+	rollingMaxDrawTime = (uint64_t)std::clamp( (long int) rollingMaxDrawTime, half_centered_mean, nsecInterval + nsecInterval/10);
+	if (*counter % 300 == 0) 
+		std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
+	
+	
+	*offset = rollingMaxDrawTime + redZone;
+	*offset_dec_real = rollingMaxDrawTime_real + redZone;
+	if (*sleep_cycle == 2)
+	{
+		half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
+		*offset = std::clamp(*offset, half_centered_mean, nsecInterval+nsecInterval/20);
+	}
+	else if (*sleep_cycle == 1)
+	{
+		half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/20, nsecInterval+nsecInterval/5);
+		*offset = std::clamp(*offset, half_centered_mean, nsecInterval+nsecInterval/5);
+	}
+		
+	if (*counter % 300 == 0) 
+		std::cout << "offset: " << *offset << " sleep_cycle: "<< *sleep_cycle << "\n";	
+	
+	
+	if ( *sleep_cycle == 1 && index >= 64 )
+	{
+		const uint16_t n = 64; 
+		memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
+		index=0;
+		
+		centered_mean = (centered_mean + std::clamp(IQM(drawtimes, n), nsecInterval/2, (5*nsecInterval)/3))/2;
+	}
+	else
+		index++;
+	
+}
+
+
 #ifdef __clang__
 #	if defined(__x86_64__)
-	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+
+	void __attribute__((target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) 
+	
+	vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
-void __attribute__((hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+
+void __attribute__((hot, flatten )) 
+vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+
+void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) 
+vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
-	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
+
+	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) 
+	
+	vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #endif
 {
@@ -587,13 +833,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	#endif
 	
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
-
-	// Start off our average with our starting draw time.
-	uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
-	uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
-	const uint64_t range = g_uVBlankRateOfDecayMax;
-	
-	
 	
 	const double nsPerTick = (double) nsPerTick_long;
 	std::cout << "nsPerTick: " << nsPerTick << "\n";
@@ -601,27 +840,10 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	
 	double vblank_begin=0.0;
 	
-	
-	int64_t time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	
 	
-	long int lastDrawTime = g_uVblankDrawTimeNS;
-	int64_t lastDrawTime_timestamp = get_time_in_nanos();
-	
-	
 	double first_cycle_sleep_duration = 0.0;
-	long double drawTimeTime = get_time_in_nanos();
-	long double lastDrawTimeTime = get_time_in_nanos(); 
-	
-	
-	
-	float delta_trend_counter = 3.0f;
-	double offset_dec = 0.0;
-	
-	
-	const uint64_t max_delta_apply = 50'000; //.05ms per sec
-	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
 	
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
@@ -632,26 +854,12 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
-	long int drawTime = g_uVblankDrawTimeNS.load();
 	double lastVblank = (double)g_lastVblank.load();
-	
-	int index=0;
-	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
-	uint16_t drawtimes[64] = {1};
-	uint16_t drawtimes_pending[64];
-	std::fill_n(drawtimes, 64, (uint16_t)((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) /1000 )  );
-	
-	
-	
-	double lastOffset = (double)centered_mean;
-	long double real_delta = 0.0L;
-	long double last_real_delta = 0.0L; 
-	long double local_min = g_uVBlankDrawTimeMinCompositing;
-	long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
-	long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	double lastOffset = (double)(1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh));
 	
 	
 	const long int sleep_weights[2] = {60, 40};
+	
 	uint8_t sleep_cycle = 0;	
 	while ( true )
 	{
@@ -674,150 +882,20 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			? g_uVblankDrawBufferRedZoneNS
 			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
+	
+	
+	
 		
-		
-		long int offset;
+	 	long int offset;
 		double offset_dec_real = (double)redZone;
-	 	
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-		{
-			const long double nsecInterval_dec = (long double) nsecInterval;
-			const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
-			
-			if (sleep_cycle == 1)
-			{
-				drawTime = g_uVblankDrawTimeNS.load();	
-				drawTimeTime = (long double)get_time_in_nanos();
-			}
-			
-			
-			if ( sleep_cycle == 1 && g_bCurrentlyCompositing )
-				drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
-			if (sleep_cycle == 1)
-				drawtimes_pending[index] = (uint16_t)( drawTime /1000 );
-			
-			if (sleep_cycle == 1)
-			{
-				if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
-					rollingMaxDrawTime_real = drawTime;
-				else
-					rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
-				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
-
-			}
-			
-			if (sleep_cycle == 2)
-			{	
-				rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
-				g_uRollingMaxDrawTime.store(rollingMaxDrawTime, std::memory_order_relaxed);
-			}
-			else
-			{
-				real_delta = ((long double)drawTime - (long double)lastDrawTime)/(drawTimeTime - lastDrawTimeTime);
-				if ( (double)real_delta < 0.0 || (drawTime < centered_mean && (double)drawTime-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
-				{
-					if ((double)last_real_delta >= 0.0)
-						delta_trend_counter=1.25f;
-					
-					local_min=(long double)drawTime+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
-					real_delta = -fmaxl( fabsl(real_delta), fabsl( ((long double)drawTime - (long double)rollingMaxDrawTime)/(drawTimeTime - lastDrawTimeTime)));
-				}
-				
-				if ((double)real_delta >= 0.0 || (drawTime >= centered_mean && (double)drawTime+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
-				{
-					if ((double)last_real_delta <= 0.0)
-						delta_trend_counter=1.25f;
-						
-					local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
-				}
-				
-				double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
-				double sinc = (double) (heaviside((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp)) * sin(radians)/fmax(radians, 0.0000001);
-				
-				double delta_check = pow(fmax((double)( sinc*fabs((int64_t)lastDrawTime - (int64_t)drawTime)), 1.0 )/100000.0, 2);
-				double delta = fmax( delta_check * (double)(heaviside( (int64_t)nsecInterval/1000000 - ((int) round(2.0*delta_check)))) , 1);
-				//						^ branchless way of checking if value delta_check is so large that it'll mess up
-				//						  the rollingMaxDrawTime calculations
-				double ratio = ((double)drawTime) / ( fmax( ((double) heaviside( (int64_t) nsecInterval - (int64_t)lastDrawTime)) * ( (double) lastDrawTime), drawTime ) );
-				rollingMaxDrawTime = (uint64_t)(llroundl( (double) fmax( (double) centered_mean, (double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))
-				      		* ratio /( delta)));
-				if (counter % 300 == 0) {
-		        		std::cout << "delta= " << delta << "\n";
-		        		std::cout << "(double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))* ratio /( delta):\n";
-		        		std::cout << (double) (( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range)) * ratio /( delta) << "\n\n";
-		        		std::cout << "ratio= " << ratio << "\n";
-					std::cout << "rollingMaxDrawTime after using fmin: " << rollingMaxDrawTime << "\n";
-				} 
-			}
-			if ((double)real_delta < 0.0)
-			{
-				if ((double)last_real_delta < 0.0)
-					delta_trend_counter+=1.25f;
-				else
-					delta_trend_counter=1.25f;
-				
-				rollingMaxDrawTime=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
-			}
-			
-			if ((double)real_delta >= 0.0)
-			{
-				if ((double)last_real_delta >= 0.0)
-					delta_trend_counter+=1.25f;
-				else
-					delta_trend_counter=1.25f;
-				
-				rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
-			}
-			long int half_centered_mean = std::min(centered_mean/2, nsecInterval);
-			rollingMaxDrawTime = (uint64_t)std::clamp( (long int) rollingMaxDrawTime, half_centered_mean, nsecInterval + nsecInterval/10);
-			if (counter % 300 == 0) 
-				std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
-			
-			
-			offset = rollingMaxDrawTime + redZone;
-			offset_dec_real = rollingMaxDrawTime_real + redZone;
-			if (sleep_cycle == 2)
-			{
-				half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
-				offset = std::clamp(offset, half_centered_mean, nsecInterval+nsecInterval/20);
-			}
-			else
-			{
-				half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/20, nsecInterval+nsecInterval/5);
-				offset = std::clamp(offset, half_centered_mean, nsecInterval+nsecInterval/5);
-			}
-				
-			if (counter % 300 == 0) 
-				std::cout << "offset: " << offset << " sleep_cycle: "<< sleep_cycle << "\n";	
-			
-			
-			if ( sleep_cycle == 1 && index >= 64 )
-			{
-				index++;
-				const uint16_t n = 64; 
-				memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
-				index=0;
-				
-				centered_mean = (centered_mean + std::clamp(IQM(drawtimes, n), nsecInterval/2, (5*nsecInterval)/3))/2;
-			}
-			
-		}
+			none_vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
 		else
-		{
-			// VRR:
-			// Just ensure that if we missed a frame due to already
-			// having a page flip in-flight, that we flush it out with this.
-			// Nothing fancy needed, just need to get on the other side of the page flip.
-			//
-			// We don't use any of the rolling times due to them varying given our
-			// 'vblank' time is varying.
-			g_uRollingMaxDrawTime = g_uStartingDrawTime;
-
-			offset = 1'000'000 + redZone;
-		}
-		offset_dec=(double)offset;
+			vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
+			
+		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
 		
 
@@ -934,20 +1012,14 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			counter++;
 		}
 		
-		lastDrawTime=drawTime;
-		lastDrawTimeTime=drawTimeTime;
-		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
-		last_real_delta=real_delta;
-		lastDrawTime_timestamp=get_time_in_nanos();
 		
 		
-		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
-		if ( this_time > 5)
-		{
-			std::cout << counter << " vblanks sent in " << this_time << " seconds\n";
-			time_start=get_time_in_nanos();
-			counter=0;
-		}
+		
+		sleep_cycle=CLEANUP;
+		if ( !bVRR )
+			none_vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
+		else
+			vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
 		
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
@@ -979,22 +1051,26 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		if (counter % 300 == 0)
 			std::cout << "total vblank period: " << (double)( get_time_in_nanos() - vblank_begin)/1'000'000.0L << "ms\n";
 			
+		
 		sleep_cycle=0;
 		
 		vblank_begin=0;
 		lastOffset = offset_dec;
-		
 		
 	}
 }
 
 #ifdef __clang__
 #	if defined(__x86_64__)
-	void __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
+	void __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") ))
+	
+vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
+void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) 
+
+vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
 #endif
 {
@@ -1004,13 +1080,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	#endif
 	
 	pthread_setname_np( pthread_self(), "gamescope-vblk" );
-
-	// Start off our average with our starting draw time.
-	uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
-	uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
-	const uint64_t range = g_uVBlankRateOfDecayMax;
-	
-	
 	
 	const double nsPerTick = (double) nsPerTick_long;
 	std::cout << "nsPerTick: " << nsPerTick << "\n";
@@ -1019,26 +1088,11 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	double vblank_begin=0.0;
 	
 	
-	int64_t time_start = get_time_in_nanos();
 	uint32_t counter = 0;
 	
 	
-	long int lastDrawTime = g_uVblankDrawTimeNS;
-	int64_t lastDrawTime_timestamp = get_time_in_nanos();
-	
 	
 	double first_cycle_sleep_duration = 0.0;
-	long double drawTimeTime = get_time_in_nanos();
-	long double lastDrawTimeTime = get_time_in_nanos(); 
-	
-	
-	
-	float delta_trend_counter = 3.0f;
-	double offset_dec = 0.0;
-	
-	
-	const uint64_t max_delta_apply = 50'000; //.05ms per sec
-	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
 	
 	
 	const double targetPoint_max_percent_of_refresh_vblank_waiting = 0.90; //limits how much longer vblankmanager waits before submitting a vblank
@@ -1049,26 +1103,12 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 	const double offset_max_percent_of_refresh_vblank_waiting = 0.85;
 	//^ similar to targetPoint_max_percent_of_refresh_vblank_waiting
 	
-	long int drawTime = g_uVblankDrawTimeNS.load();
 	double lastVblank = (double)g_lastVblank.load();
-	
-	int index=0;
-	long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
-	uint16_t drawtimes[64] = {1};
-	uint16_t drawtimes_pending[64];
-	std::fill_n(drawtimes, 64, (uint16_t)((1'000'000'000ul / (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh)) /1000 )  );
-	
-	
-	
-	double lastOffset = (double)centered_mean;
-	long double real_delta = 0.0L;
-	long double last_real_delta = 0.0L; 
-	long double local_min = g_uVBlankDrawTimeMinCompositing;
-	long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
-	long double lastRollingMaxDrawTime = (long double)centered_mean/2;
+	double lastOffset = (double)(1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh));
 	
 	
 	const long int sleep_weights[2] = {60, 40};
+	
 	uint8_t sleep_cycle = 0;	
 	while ( true )
 	{
@@ -1081,7 +1121,6 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 		const long int nsecInterval = 1'000'000'000l / refresh;
 		const double nsecInterval_dec = (double)nsecInterval;
-		
 		// The redzone is relative to 60Hz, scale it by our
 		// target refresh so we don't miss submitting for vblank in DRM.
 		// (This fixes 4K@30Hz screens)
@@ -1091,150 +1130,22 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			? g_uVblankDrawBufferRedZoneNS
 			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
+	
 		
+		// The redzone is relative to 60Hz, scale it by our
+		// target refresh so we don't miss submitting for vblank in DRM.
+		// (This fixes 4K@30Hz screens)
 		
-		long int offset;
+	 	long int offset;
 		double offset_dec_real = (double)redZone;
-	 	
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-		{
-			const long double nsecInterval_dec = (long double) nsecInterval;
-			const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
-			
-			if (sleep_cycle == 1)
-			{
-				drawTime = g_uVblankDrawTimeNS.load();	
-				drawTimeTime = (long double)get_time_in_nanos();
-			}
-			
-			
-			if ( sleep_cycle == 1 && g_bCurrentlyCompositing )
-				drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
-			if (sleep_cycle == 1)
-				drawtimes_pending[index] = (uint16_t)( drawTime /1000 );
-			
-			if (sleep_cycle == 1)
-			{
-				if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
-					rollingMaxDrawTime_real = drawTime;
-				else
-					rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
-				rollingMaxDrawTime_real = std::min( rollingMaxDrawTime_real, static_cast<uint64_t>(nsecInterval - redZone) );
-
-			}
-			
-			if (sleep_cycle == 2)
-			{	
-				rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range);
-				g_uRollingMaxDrawTime.store(rollingMaxDrawTime, std::memory_order_relaxed);
-			}
-			else
-			{
-				real_delta = ((long double)drawTime - (long double)lastDrawTime)/(drawTimeTime - lastDrawTimeTime);
-				if ( (double)real_delta < 0.0 || (drawTime < centered_mean && (double)drawTime-(double)g_uVBlankDrawTimeMinCompositing/2.0 <= (double)local_min) )
-				{
-					if ((double)last_real_delta >= 0.0)
-						delta_trend_counter=1.25f;
-					
-					local_min=(long double)drawTime+(long double)g_uVBlankDrawTimeMinCompositing/4.0L;
-					real_delta = -fmaxl( fabsl(real_delta), fabsl( ((long double)drawTime - (long double)rollingMaxDrawTime)/(drawTimeTime - lastDrawTimeTime)));
-				}
-				
-				if ((double)real_delta >= 0.0 || (drawTime >= centered_mean && (double)drawTime+(double)g_uVBlankDrawTimeMinCompositing >= (double)local_max) )
-				{
-					if ((double)last_real_delta <= 0.0)
-						delta_trend_counter=1.25f;
-						
-					local_max=fmaxl((long double)drawTime-(long double)g_uVBlankDrawTimeMinCompositing/2.0L, local_min);
-				}
-				
-				double radians = 2.0*M_PI * (double) ((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp) / ( (double) nsecInterval);
-				double sinc = (double) (heaviside((int64_t)get_time_in_nanos()-(int64_t)lastDrawTime_timestamp)) * sin(radians)/fmax(radians, 0.0000001);
-				
-				double delta_check = pow(fmax((double)( sinc*fabs((int64_t)lastDrawTime - (int64_t)drawTime)), 1.0 )/100000.0, 2);
-				double delta = fmax( delta_check * (double)(heaviside( (int64_t)nsecInterval/1000000 - ((int) round(2.0*delta_check)))) , 1);
-				//						^ branchless way of checking if value delta_check is so large that it'll mess up
-				//						  the rollingMaxDrawTime calculations
-				double ratio = ((double)drawTime) / ( fmax( ((double) heaviside( (int64_t) nsecInterval - (int64_t)lastDrawTime)) * ( (double) lastDrawTime), drawTime ) );
-				rollingMaxDrawTime = (uint64_t)(llroundl( (double) fmax( (double) centered_mean, (double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))
-				      		* ratio /( delta)));
-				if (counter % 300 == 0) {
-		        		std::cout << "delta= " << delta << "\n";
-		        		std::cout << "(double) ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range))* ratio /( delta):\n";
-		        		std::cout << (double) (( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / (range)) * ratio /( delta) << "\n\n";
-		        		std::cout << "ratio= " << ratio << "\n";
-					std::cout << "rollingMaxDrawTime after using fmin: " << rollingMaxDrawTime << "\n";
-				} 
-			}
-			if ((double)real_delta < 0.0)
-			{
-				if ((double)last_real_delta < 0.0)
-					delta_trend_counter+=1.25f;
-				else
-					delta_trend_counter=1.25f;
-				
-				rollingMaxDrawTime=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
-			}
-			
-			if ((double)real_delta >= 0.0)
-			{
-				if ((double)last_real_delta >= 0.0)
-					delta_trend_counter+=1.25f;
-				else
-					delta_trend_counter=1.25f;
-				
-				rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
-			}
-			long int half_centered_mean = std::min(centered_mean/2, nsecInterval);
-			rollingMaxDrawTime = (uint64_t)std::clamp( (long int) rollingMaxDrawTime, half_centered_mean, nsecInterval + nsecInterval/10);
-			if (counter % 300 == 0) 
-				std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
-			
-			
-			offset = rollingMaxDrawTime + redZone;
-			offset_dec_real = rollingMaxDrawTime_real + redZone;
-			if (sleep_cycle == 2)
-			{
-				half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
-				offset = std::clamp(offset, half_centered_mean, nsecInterval+nsecInterval/20);
-			}
-			else
-			{
-				half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/20, nsecInterval+nsecInterval/5);
-				offset = std::clamp(offset, half_centered_mean, nsecInterval+nsecInterval/5);
-			}
-				
-			if (counter % 300 == 0) 
-				std::cout << "offset: " << offset << " sleep_cycle: "<< sleep_cycle << "\n";	
-			
-			
-			if ( sleep_cycle == 1 && index >= 64 )
-			{
-				index++;
-				const uint16_t n = 64; 
-				memcpy(drawtimes, drawtimes_pending, n * sizeof(drawtimes_pending[0]));
-				index=0;
-				
-				centered_mean = (centered_mean + std::clamp(IQM(drawtimes, n), nsecInterval/2, (5*nsecInterval)/3))/2;
-			}
-			
-		}
+			none_vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
 		else
-		{
-			// VRR:
-			// Just ensure that if we missed a frame due to already
-			// having a page flip in-flight, that we flush it out with this.
-			// Nothing fancy needed, just need to get on the other side of the page flip.
-			//
-			// We don't use any of the rolling times due to them varying given our
-			// 'vblank' time is varying.
-			g_uRollingMaxDrawTime = g_uStartingDrawTime;
-
-			offset = 1'000'000 + redZone;
-		}
-		offset_dec=(double)offset;
+			vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
+			
+		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
 		
 
@@ -1349,21 +1260,11 @@ void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trappi
 			counter++;
 		}
 		
-		lastDrawTime=drawTime;
-		lastDrawTimeTime=drawTimeTime;
-		lastRollingMaxDrawTime=(long double) rollingMaxDrawTime;
-		last_real_delta=real_delta;
-		lastDrawTime_timestamp=get_time_in_nanos();
-		
-		
-		uint64_t this_time=(get_time_in_nanos() - time_start)/1'000'000'000ul;
-		if ( this_time > 5)
-		{
-			std::cout << counter << " vblanks sent in " << this_time << " seconds\n";
-			time_start=get_time_in_nanos();
-			counter=0;
-		}
-		
+		sleep_cycle=CLEANUP;
+		if ( !bVRR )
+			none_vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
+		else
+			vrr_vblank(&sleep_cycle, &offset, &offset_dec_real, &counter);
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
 		
