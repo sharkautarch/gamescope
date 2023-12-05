@@ -157,6 +157,8 @@ public:
 	bool needs_server_flush() const { return m_needs_server_flush; }
 	void inform_flush() { m_needs_server_flush = false; }
 
+	void GetDesiredSize( int& nWidth, int &nHeight );
+
 private:
 	void warp(int x, int y);
 	void checkSuspension();
