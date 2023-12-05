@@ -2421,7 +2421,7 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 }
 
 static void
-paint_all(bool async)
+paint_all(bool async, uint16_t * iterations)
 {
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
@@ -2903,7 +2903,13 @@ paint_all(bool async)
 			}
 
 			// Update the time it took us to commit
-			g_uVblankDrawTimeNS = get_time_in_nanos() - g_SteamCompMgrVBlankTime.pipe_write_time;
+			{
+				(*iterations)++;
+				uint64_t drawTime = get_time_in_nanos() - g_SteamCompMgrVBlankTime.pipe_write_time;
+				draw_info_t draw_info = draw_info_encode(drawTime, *iterations);
+				g_uVblankDrawTimeNS.store(draw_info.encoded, std::memory_order_release);
+			}
+			
 		}
 		else
 		{
@@ -3030,7 +3036,7 @@ paint_all(bool async)
 				}
 			}
 
-			drm_commit( &g_DRM, &compositeFrameInfo );
+			drm_commit( &g_DRM, &compositeFrameInfo, iterations );
 		}
 
 #if HAVE_PIPEWIRE
@@ -3046,7 +3052,7 @@ paint_all(bool async)
 	{
 		assert( BIsNested() == false );
 
-		drm_commit( &g_DRM, &frameInfo );
+		drm_commit( &g_DRM, &frameInfo, iterations );
 	}
 
 	if ( takeScreenshot )
@@ -7759,7 +7765,16 @@ steamcompmgr_main(int argc, char **argv)
 	if ( BIsVRSession() )
 		vrsession_steam_mode( steamMode );
 #endif
-
+	
+	uint16_t iterations = 1; //increment this before each update to g_uVblankDrawTimeNS -> gets encoded into the atomic w/ the drawTime
+				 //this helps vblankmanager know if it has recieved a new update to g_uVblankDrawTimeNS (it can't know for sure just by checking if drawTime has changed, because drawTime could be the same)
+	if (true)
+	{
+		
+		uint64_t drawTime = g_uStartingDrawTime;
+		draw_info_t draw_info = draw_info_encode(drawTime, iterations);
+		g_uVblankDrawTimeNS.store(draw_info.encoded, std::memory_order_release);
+	}
 	int vblankFD = vblank_init(never_busy_wait, always_busy_wait);
 	assert( vblankFD >= 0 );
 
@@ -8202,7 +8217,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( bShouldPaint )
 		{
-			paint_all( !vblank && !bVRR );
+			paint_all( !vblank && !bVRR, &iterations );
 
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
