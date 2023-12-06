@@ -568,10 +568,10 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 
 #define CLEANUP 3
 #ifdef __clang__
-static inline void  __attribute__((always_inline, hot)) vrr_vblank(uint8_t sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+static inline void  __attribute__((always_inline, hot)) vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
 #else
 static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
-vrr_vblank(uint8_t  sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+vrr_vblank(uint8_t  sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
 #endif
 {
 	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
@@ -607,27 +607,23 @@ vrr_vblank(uint8_t  sleep_cycle, long int * offset, double * offset_dec_real, ui
 	}
 	
 	*offset = 1'000'000 + redZone;
-	* offset_dec_real = (double)*offset;
+	* offset_real = *offset;
 }
 #ifdef __clang__
 static inline void  __attribute__((always_inline, hot)) 
 
-none_vrr_vblank(uint8_t sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+none_vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
 #else
 static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
 
-none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_dec_real, uint32_t * counter )
+none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
 #endif
 {
 	static uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
 	static uint64_t rollingMaxDrawTime_real = g_uStartingDrawTime; //this will be used for the values of the VBlankTimeInfo_t that is sent out
 	const uint64_t range = g_uVBlankRateOfDecayMax;
 	
-	const uint64_t max_delta_apply = 50'000; //.05ms per sec
-	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
 	
-	const uint64_t max_delta_apply_real = 4'000'000;//4ms per sec
-	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime_real
 	
 	static draw_info_t last_draw_info = draw_info_encode(0, 0);
 	static draw_info_t curr_draw_info = {.encoded = g_uVblankDrawTimeNS.load() };
@@ -663,6 +659,13 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_de
 	
 	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 	const long int nsecInterval = 1'000'000'000l / refresh;
+	
+	const uint64_t max_delta_apply = 50'000; //.05ms per sec
+	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
+	
+	const uint64_t max_delta_apply_real = nsecInterval/100;
+	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime_real
+	
 	
 	const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
 	
@@ -733,15 +736,33 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_de
 		}
 		
 		if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
-			rollingMaxDrawTime_real = drawTime;
+			rollingMaxDrawTime_real = std::min(drawTime, nsecInterval*10);
 		else {
-			rollingMaxDrawTime_real = ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
-			if ((double)real_delta < 0.0)	
+			rollingMaxDrawTime_real =  ( ( alpha * rollingMaxDrawTime_real ) + ( range - alpha ) * drawTime ) / range;
+
+			
+			
+			if ((double)real_delta < 0.0)
+			{
+				// If we need to offset for our draw more than half of our vblank, something is very wrong.
+			 	// Clamp our max time to half of the vblank if we can.
+				rollingMaxDrawTime_real = std::min( (int64_t)rollingMaxDrawTime_real, std::clamp((int64_t)nsecInterval, (int64_t)nsecInterval - std::abs((int64_t)llroundl(last_real_delta/2.0)), (int64_t)nsecInterval + std::abs((int64_t)llroundl(last_real_delta/4.0)) ));
 				rollingMaxDrawTime_real=(uint64_t) llroundl(fmaxl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real-fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply_real)));
+			 	
+				
+			}
 			
 			if ((double)real_delta >= 0.0)
+			{
+				// If we need to offset for our draw more than half of our vblank, something is very wrong.
+				// Clamp our max time to half of the vblank if we can.
+				rollingMaxDrawTime_real = std::min( (int64_t)rollingMaxDrawTime_real, std::clamp((int64_t)nsecInterval, (int64_t)nsecInterval - std::abs((int64_t)llroundl(last_real_delta/4.0)), (int64_t)nsecInterval + std::abs((int64_t)llroundl(last_real_delta/2.0)) ));
 				rollingMaxDrawTime_real=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime_real, lastRollingMaxDrawTime_real+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply_real)));
+				
+			}
 		}
+		rollingMaxDrawTime_real = std::min(rollingMaxDrawTime_real, (8*(uint64_t)centered_mean)/3);
+		rollingMaxDrawTime = std::min(rollingMaxDrawTime, (8*(uint64_t)centered_mean)/3);
 	};
 	
 	
@@ -895,7 +916,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, double * offset_de
 	
 	
 	*offset = rollingMaxDrawTime + redZone;
-	*offset_dec_real = rollingMaxDrawTime_real + redZone;
+	*offset_real = rollingMaxDrawTime_real + redZone;
 	if (sleep_cycle == 2)
 	{
 		half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
@@ -982,7 +1003,8 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 	
 	const long int sleep_weights[2] = {60, 40};
 	
-	uint8_t sleep_cycle = 0;	
+	uint8_t sleep_cycle = 0;
+	int64_t targetPointToSubmit = get_time_in_nanos();	
 	while ( true )
 	{
 		sleep_cycle++;
@@ -1009,13 +1031,13 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 	
 		
 	 	long int offset;
-		double offset_dec_real = (double)redZone;
+		long int offset_real = redZone;
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 			
 		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
@@ -1105,20 +1127,42 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 			
 		}
 		
+		if (sleep_cycle == 2)
+		{
+			double now = (double) get_time_in_nanos();
+			double lastVblank_pending = (double)g_lastVblank.load();
+			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
+		}
+		
 		if (sleep_cycle == 1)
 		{
 			continue;
 		}
 		
 	SKIPPING_SECOND_SLEEP:;
-		double now = (double) get_time_in_nanos();
-		double lastVblank_pending = (double)g_lastVblank.load();
-		targetPoint = vblank_next_target_reloaded(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending);
-		VBlankTimeInfo_t time_info =
+		
+		VBlankTimeInfo_t time_info;
+		if (sleep_cycle == 1)
 		{
-			.target_vblank_time = static_cast<uint64_t>(targetPoint + lround(offset_dec_real)),
-			.pipe_write_time    = static_cast<uint64_t>(now),
-		};
+			double now = (double) get_time_in_nanos();
+			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_relaxed); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
+			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
+			time_info =
+			{
+				.target_vblank_time = static_cast<uint64_t>(targetPointToSubmit + offset_real),
+				.pipe_write_time    = static_cast<uint64_t>(now),
+			};
+		}
+		else
+		{
+			int64_t now = get_time_in_nanos();
+			time_info =
+			{
+				.target_vblank_time = static_cast<uint64_t>(targetPointToSubmit + offset_real),
+				.pipe_write_time    = static_cast<uint64_t>(now),
+			};
+		}
+		
 		if (counter % 300 == 0)
 			std::cout << "vblank cycle time before write(): " << ( (long double)(get_time_in_nanos()-vblank_begin) )/1'000'000.0L << "ms\n";
 		ssize_t ret = write( g_vblankPipe[ 1 ], &time_info, sizeof( time_info ) );
@@ -1139,9 +1183,9 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 		
 		sleep_cycle=CLEANUP;
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 		
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
@@ -1232,6 +1276,7 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 	const long int sleep_weights[2] = {60, 40};
 	
 	uint8_t sleep_cycle = 0;	
+	int64_t targetPointToSubmit = get_time_in_nanos();	
 	while ( true )
 	{
 		sleep_cycle++;
@@ -1243,6 +1288,7 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 		const long int nsecInterval = 1'000'000'000l / refresh;
 		const double nsecInterval_dec = (double)nsecInterval;
+		
 		// The redzone is relative to 60Hz, scale it by our
 		// target refresh so we don't miss submitting for vblank in DRM.
 		// (This fixes 4K@30Hz screens)
@@ -1253,19 +1299,17 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
 	
-		
-		// The redzone is relative to 60Hz, scale it by our
-		// target refresh so we don't miss submitting for vblank in DRM.
-		// (This fixes 4K@30Hz screens)
+	
+	
 		
 	 	long int offset;
-		double offset_dec_real = (double)redZone;
+		long int offset_real = redZone;
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 			
 		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
@@ -1317,7 +1361,7 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 			const int64_t wait_start = get_time_in_nanos();
 			
 			spin_wait_w_tpause(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
-						
+			
 			if (sleep_cycle == 1)
 				first_cycle_sleep_duration=(double)get_time_in_nanos() - vblank_begin;
 		}
@@ -1350,7 +1394,16 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 				targetPoint = now + fmax(targetPoint - vblank_begin - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
 				sleep_until_nanos( targetPoint );
 			}
+				
 			
+			
+		}
+		
+		if (sleep_cycle == 2)
+		{
+			double now = (double) get_time_in_nanos();
+			double lastVblank_pending = (double)g_lastVblank.load();
+			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
 		}
 		
 		if (sleep_cycle == 1)
@@ -1359,14 +1412,29 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		}
 		
 	SKIPPING_SECOND_SLEEP:;
-		double now = (double) get_time_in_nanos();
-		double lastVblank_pending = (double)g_lastVblank.load();
-		targetPoint = vblank_next_target_reloaded(lastVblank, offset_dec_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending);
-		VBlankTimeInfo_t time_info =
+		
+		VBlankTimeInfo_t time_info;
+		if (sleep_cycle == 1)
 		{
-			.target_vblank_time = static_cast<uint64_t>(targetPoint + lround(offset_dec_real)),
-			.pipe_write_time    = static_cast<uint64_t>(now),
-		};
+			double now = (double) get_time_in_nanos();
+			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_relaxed); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
+			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
+			time_info =
+			{
+				.target_vblank_time = static_cast<uint64_t>(targetPointToSubmit + offset_real),
+				.pipe_write_time    = static_cast<uint64_t>(now),
+			};
+		}
+		else
+		{
+			int64_t now = get_time_in_nanos();
+			time_info =
+			{
+				.target_vblank_time = static_cast<uint64_t>(targetPointToSubmit + offset_real),
+				.pipe_write_time    = static_cast<uint64_t>(now),
+			};
+		}
+		
 		if (counter % 300 == 0)
 			std::cout << "vblank cycle time before write(): " << ( (long double)(get_time_in_nanos()-vblank_begin) )/1'000'000.0L << "ms\n";
 		ssize_t ret = write( g_vblankPipe[ 1 ], &time_info, sizeof( time_info ) );
@@ -1382,17 +1450,21 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 			counter++;
 		}
 		
+		
+		
+		
 		sleep_cycle=CLEANUP;
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_dec_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+		
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
 		
 		//ensure we don't wait longer post-vblank, if waiting longer could cause us to send vblanks out at a lower rate than the refresh rate:
 		const double time_elapsed_since_vblank_sent = (double)get_time_in_nanos() - vblank_begin;
-		const double post_vblank_idle_time = nsecInterval_dec - time_elapsed_since_vblank_sent;
+		const double post_vblank_idle_time = nsecInterval_dec - 20'000 - time_elapsed_since_vblank_sent;
 		
 		const bool skip_post_vblank_idle = (post_vblank_idle_time<=0);  
 		// Get on the other side of it now
@@ -1417,12 +1489,11 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		if (counter % 300 == 0)
 			std::cout << "total vblank period: " << (double)( get_time_in_nanos() - vblank_begin)/1'000'000.0L << "ms\n";
 			
+		
 		sleep_cycle=0;
 		
 		vblank_begin=0;
 		lastOffset = offset_dec;
-		
-		
 	}
 }
 
