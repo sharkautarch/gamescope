@@ -72,6 +72,11 @@ namespace gamescope
             }
         }
 
+        void OnPollIn() final
+        {
+            Drain();
+        }
+
         bool Nudge()
         {
             return write( m_nFDs[1], "\n", 1 ) >= 0;
@@ -102,8 +107,8 @@ namespace gamescope
             if ( !m_bRunning )
                 return;
 
-            Nudge();
             m_bRunning = false;
+            Nudge();
 
             if ( m_nEpollFD >= 0 )
             {

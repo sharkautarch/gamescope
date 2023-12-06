@@ -3050,12 +3050,12 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 {
 	int width = g_nOutputWidth;
 	int height = g_nOutputHeight;
+
 	if ( g_bRotated ) {
 		int tmp = width;
 		width = height;
 		height = tmp;
 	}
-
 	if (!drm->connector || !drm->connector->connector)
 		return false;
 
@@ -3113,8 +3113,16 @@ int drm_get_default_refresh(struct drm_t *drm)
 
 	if ( drm->connector && drm->connector->connector )
 	{
+		int width = g_nOutputWidth;
+		int height = g_nOutputHeight;
+		if ( g_bRotated ) {
+			int tmp = width;
+			width = height;
+			height = tmp;
+		}
+
 		drmModeConnector *connector = drm->connector->connector;
-		const drmModeModeInfo *mode = find_mode( connector, g_nOutputWidth, g_nOutputHeight, 0);
+		const drmModeModeInfo *mode = find_mode( connector, width, height, 0);
 		if ( mode )
 			return mode->vrefresh;
 	}
