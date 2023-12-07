@@ -305,7 +305,7 @@ inline void __attribute__((optimize("-fallow-store-data-races","-fno-unsafe-math
 
 	const uint64_t compared_int = (uint64_t) ceill(compared_to/nsPerTick_long);
 	const uint64_t __cpu_pause_loop_iter = (uint64_t) ceill(compared_to/tpause_frac);
-	const uint64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter):(0ul))*4;
+	const uint64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter):(0ul));
 	
 	#ifdef VBLANK_DEBUG
 	printf("cpu_pause_loop_iter=%lu\n",cpu_pause_loop_iter);
