@@ -290,7 +290,7 @@ int64_t __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,mov
 #if defined(__clang__)
 inline void __attribute__((always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #else
-inline void __attribute__((optimize("-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math","-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick,  const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((optimize("-fallow-store-data-races", "-O3","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick,  const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #endif
 {
 	uint64_t diff;
@@ -303,10 +303,10 @@ inline void __attribute__((optimize("-fallow-store-data-races","-fno-unsafe-math
 		     ? cpu_pause_time_len
 		     : (long double)compared_to/(nsPerTick_long*1.4L);
 
-	const uint64_t compared_int = (uint64_t) ceill(compared_to/nsPerTick_long);
-	const uint64_t __cpu_pause_loop_iter = (uint64_t) ceill(compared_to/tpause_frac);
-	const uint64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter):(0ul));
 	
+	const uint64_t __cpu_pause_loop_iter = (uint64_t) floorl(compared_to/tpause_frac);
+	const uint64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter-1):(0ul));
+	const uint64_t compared_int = (uint64_t) floorl(compared_to/(cpu_pause_loop_iter*nsPerTick_long));
 	#ifdef VBLANK_DEBUG
 	printf("cpu_pause_loop_iter=%lu\n",cpu_pause_loop_iter);
 	#endif
@@ -327,16 +327,22 @@ inline void __attribute__((optimize("-fallow-store-data-races","-fno-unsafe-math
 	#endif
 	
 	
-	
+#ifdef __clang__
 	for (uint64_t i = 1; i < cpu_pause_loop_iter+1; i++)
+#else	
+	for (uint64_t i = 1; i < 6*cpu_pause_loop_iter/7+1; i++)
+#endif
 	{
 		
 		#if defined(__clang__)
 		#pragma clang optimize on
 		#endif
 		
+		#ifdef __clang__
 		uint64_t tsc_time_value = readCycleCount()+compared_int;
-
+		#else
+		uint64_t tsc_time_value = readCycleCount()+compared_int/(i*i/sqrt(i));
+		#endif
 		
 		cpu_tpause((uint64_t)tsc_time_value, true);
 
@@ -1499,8 +1505,11 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		
 		//ensure we don't wait longer post-vblank, if waiting longer could cause us to send vblanks out at a lower rate than the refresh rate:
 		const double time_elapsed_since_vblank_sent = (double)get_time_in_nanos() - vblank_begin;
+		#ifdef __clang__
 		const double post_vblank_idle_time = nsecInterval_dec  - 20'000 - time_elapsed_since_vblank_sent;
-		
+		#else
+		const double post_vblank_idle_time = nsecInterval_dec  - 28'000 - time_elapsed_since_vblank_sent;
+		#endif 
 		const bool skip_post_vblank_idle = (post_vblank_idle_time<=0);  
 		// Get on the other side of it now
 		if ( !skip_post_vblank_idle && !alwaysBusyWait && neverBusyWait )
