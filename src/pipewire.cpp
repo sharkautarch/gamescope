@@ -478,7 +478,11 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	if (is_dmabuf) {
 		const struct wlr_dmabuf_attributes dmabuf = buffer->texture->dmabuf();
-		assert(dmabuf.n_planes == 1);
+		if (dmabuf.n_planes != 1)
+		{
+			pwr_log.errorf("dmabuf.n_planes != 1");
+			goto error;
+		}
 
 		off_t size = lseek(dmabuf.fd[0], 0, SEEK_END);
 		if (size < 0) {
