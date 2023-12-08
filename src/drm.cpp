@@ -272,6 +272,7 @@ static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
 
 std::atomic<uint64_t> g_nCompletedPageFlipCount = { 0u };
 
+extern void mangoapp_output_update( uint64_t vblanktime );
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
 	uint64_t flipcount = (uint64_t)data;
@@ -333,6 +334,8 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	g_DRM.fbids_queued.clear();
 
 	g_DRM.flip_lock.unlock();
+
+	mangoapp_output_update( vblanktime );
 }
 
 void flip_handler_thread_run(void)
@@ -2445,6 +2448,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
 					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_CTM", 0 );
 				}
 			}
 
@@ -3041,12 +3045,12 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 {
 	int width = g_nOutputWidth;
 	int height = g_nOutputHeight;
+
 	if ( g_bRotated ) {
 		int tmp = width;
 		width = height;
 		height = tmp;
 	}
-
 	if (!drm->connector || !drm->connector->connector)
 		return false;
 
@@ -3104,8 +3108,16 @@ int drm_get_default_refresh(struct drm_t *drm)
 
 	if ( drm->connector && drm->connector->connector )
 	{
+		int width = g_nOutputWidth;
+		int height = g_nOutputHeight;
+		if ( g_bRotated ) {
+			int tmp = width;
+			width = height;
+			height = tmp;
+		}
+
 		drmModeConnector *connector = drm->connector->connector;
-		const drmModeModeInfo *mode = find_mode( connector, g_nOutputWidth, g_nOutputHeight, 0);
+		const drmModeModeInfo *mode = find_mode( connector, width, height, 0);
 		if ( mode )
 			return mode->vrefresh;
 	}

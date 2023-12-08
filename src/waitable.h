@@ -72,6 +72,11 @@ namespace gamescope
             }
         }
 
+        void OnPollIn() final
+        {
+            Drain();
+        }
+
         bool Nudge()
         {
             return write( m_nFDs[1], "\n", 1 ) >= 0;
@@ -89,7 +94,7 @@ namespace gamescope
         CWaiter()
             : m_nEpollFD{ epoll_create1( EPOLL_CLOEXEC ) }
         {
-            AddWaitable( &m_NudgeWaitable, EPOLLIN );   
+            AddWaitable( &m_NudgeWaitable, EPOLLIN | EPOLLHUP );
         }
 
         ~CWaiter()
@@ -102,8 +107,8 @@ namespace gamescope
             if ( !m_bRunning )
                 return;
 
-            Nudge();
             m_bRunning = false;
+            Nudge();
 
             if ( m_nEpollFD >= 0 )
             {
@@ -141,7 +146,7 @@ namespace gamescope
         {
             epoll_event events[MaxEvents];
 
-            int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, -1);
+            int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, -1 );
 
             if ( !m_bRunning )
                 return;
@@ -156,7 +161,7 @@ namespace gamescope
             {
                 epoll_event &event = events[i];
 
-                IWaitable *pWaitable = reinterpret_cast<IWaitable *>(event.data.ptr);
+                IWaitable *pWaitable = reinterpret_cast<IWaitable *>( event.data.ptr );
                 pWaitable->HandleEvents( event.events );
             }
         }

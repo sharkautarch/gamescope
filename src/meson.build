@@ -1,5 +1,6 @@
 dep_xdamage = dependency('xdamage')
 dep_xcomposite = dependency('xcomposite')
+dep_xcursor = dependency('xcursor')
 dep_xrender = dependency('xrender')
 dep_xext = dependency('xext')
 dep_xfixes = dependency('xfixes')
@@ -134,7 +135,7 @@ endif
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep,
+      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor,
     ],
     install: true,
   )

@@ -32,6 +32,7 @@
 #include "xwayland_ctx.hpp"
 #include <X11/X.h>
 #include <X11/Xlib.h>
+#include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
 #include <cstdint>
 #include <drm_mode.h>
@@ -87,6 +88,8 @@
 #include "log.hpp"
 #include "defer.hpp"
 
+static const int g_nBaseCursorScale = 36;
+
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
 #endif
@@ -99,6 +102,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image.h>
 #include <stb_image_write.h>
+#include <stb_image_resize.h>
 
 #define GPUVIS_TRACE_IMPLEMENTATION
 #include "gpuvis_trace_utils.h"
@@ -726,7 +730,6 @@ struct commit_t : public gamescope::IWaitable
     {
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			g_ImageWaiter.RemoveWaitable( this );
 			CloseFenceInternal();
 		}
 
@@ -765,6 +768,7 @@ struct commit_t : public gamescope::IWaitable
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
+	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
 	uint64_t win_seq = 0;
@@ -788,11 +792,8 @@ struct commit_t : public gamescope::IWaitable
 
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
-			if ( m_nCommitFence < 0 )
+			if ( !CloseFenceInternal() )
 				return;
-
-			g_ImageWaiter.RemoveWaitable( this );
-			CloseFenceInternal();
 		}
 
 		uint64_t frametime;
@@ -818,18 +819,33 @@ struct commit_t : public gamescope::IWaitable
 		}
 
 		if ( m_bMangoNudge )
-			mangoapp_update( frametime, uint64_t(~0ull), uint64_t(~0ull) );
+			mangoapp_update( IsPerfOverlayFIFO() ? uint64_t(~0ull) : frametime, frametime, uint64_t(~0ull) );
 
 		nudge_steamcompmgr();
 	}
 
-	void CloseFenceInternal()
+	void OnPollHangUp() final
+	{
+		std::unique_lock lock( m_WaitableCommitStateMutex );
+		CloseFenceInternal();
+	}
+
+	bool IsPerfOverlayFIFO()
+	{
+		return fifo || is_steam;
+	}
+
+	// Returns true if we had a fence that was closed.
+	bool CloseFenceInternal()
 	{
 		if ( m_nCommitFence < 0 )
-			return;
+			return false;
 
+		// Will automatically remove from epoll!
+		g_ImageWaiter.RemoveWaitable( this );
 		close( m_nCommitFence );
 		m_nCommitFence = -1;
+		return true;
 	}
 
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits )
@@ -852,6 +868,10 @@ static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &comm
 {
 	std::unique_lock lock( commit->m_WaitableCommitStateMutex );
 
+	// This case is basically never ever hit.
+	// But we should handle it just in case.
+	// I have not seen it ever trigger even in extensive
+	// stress testing.
 	if ( commit->m_nCommitFence >= 0 )
 	{
 		g_ImageWaiter.GCWaitable( commit, commit.get() );
@@ -949,6 +969,9 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 VBlankTimeInfo_t g_SteamCompMgrVBlankTime = {};
 
+uint64_t g_uCurrentBasePlaneCommitID = 0;
+bool g_bCurrentBasePlaneIsFifo = false;
+
 static int g_nSteamCompMgrTargetFPS = 0;
 static uint64_t g_uDynamicRefreshEqualityTime = 0;
 static int g_nDynamicRefreshRate[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
@@ -1042,6 +1065,11 @@ window_is_steam( steamcompmgr_win_t *w )
 
 bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
 
+bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
+{
+	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
+}
+
 static bool
 steamcompmgr_user_has_any_game_open()
 {
@@ -1051,16 +1079,11 @@ steamcompmgr_user_has_any_game_open()
 		if (!server->ctx)
 			continue;
 
-		if (server->ctx->focus.focusWindow && !window_is_steam(server->ctx->focus.focusWindow))
+		if (steamcompmgr_window_should_limit_fps( server->ctx->focus.focusWindow ))
 			return true;
 	}
 
 	return false;
-}
-
-bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
-{
-	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
 }
 
 bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
@@ -1429,6 +1452,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->buf = buf;
 	commit->async = async;
 	commit->fifo = fifo;
+	commit->is_steam = window_is_steam( w );
 	commit->presentation_feedbacks = std::move(presentation_feedbacks);
 	if (swapchain_feedback)
 		commit->feedback = *swapchain_feedback;
@@ -1805,29 +1829,11 @@ error_image:
 
 bool MouseCursor::setCursorImageByName(const char *name)
 {
-	int screen = DefaultScreen(m_ctx->dpy);
-
-	XColor fg;
-	fg.pixel = WhitePixel(m_ctx->dpy, screen);
-	XQueryColor(m_ctx->dpy, DefaultColormap(m_ctx->dpy, screen), &fg);
-
-	XColor bg;
-	bg.pixel = BlackPixel(m_ctx->dpy, screen);
-	XQueryColor(m_ctx->dpy, DefaultColormap(m_ctx->dpy, screen), &bg);
-
 	int index = XmuCursorNameToIndex(name);
 	if (index < 0)
 		return false;
 
-	Font font = XLoadFont(m_ctx->dpy, "cursor");
-	if (!font)
-		return false;
-	defer( XUnloadFont(m_ctx->dpy, font) );
-
-	Cursor cursor = XCreateGlyphCursor(m_ctx->dpy, font, font, index, index + 1, &fg, &bg);
-	if ( !cursor )
-		return false;
-	defer( XFreeCursor(m_ctx->dpy, cursor) );
+	Cursor cursor = XcursorShapeLoadCursor( m_ctx->dpy, index );
 
 	XDefineCursor(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy), cursor);
 	XFlush(m_ctx->dpy);
@@ -1968,6 +1974,9 @@ bool MouseCursor::getTexture()
 	m_hotspotX = image->xhot;
 	m_hotspotY = image->yhot;
 
+	int nDesiredWidth, nDesiredHeight;
+	GetDesiredSize( nDesiredWidth, nDesiredHeight );
+
 	uint32_t surfaceWidth;
 	uint32_t surfaceHeight;
 	if ( BIsNested() == false && alwaysComposite == false )
@@ -1977,8 +1986,8 @@ bool MouseCursor::getTexture()
 	}
 	else
 	{
-		surfaceWidth = image->width;
-		surfaceHeight = image->height;
+		surfaceWidth = nDesiredWidth;
+		surfaceHeight = nDesiredHeight;
 	}
 
 	m_texture = nullptr;
@@ -1988,19 +1997,58 @@ bool MouseCursor::getTexture()
 
 	std::shared_ptr<std::vector<uint32_t>> cursorBuffer = nullptr;
 
+	int nContentWidth = image->width;
+	int nContentHeight = image->height;
+
 	if (image->width && image->height)
 	{
-		cursorBuffer = std::make_shared<std::vector<uint32_t>>(surfaceWidth * surfaceHeight);
-		for (int i = 0; i < image->height; i++) {
-			for (int j = 0; j < image->width; j++) {
-				(*cursorBuffer)[i * surfaceWidth + j] = image->pixels[i * image->width + j];
+		if ( nDesiredWidth < image->width || nDesiredHeight < image->height )
+		{
+			std::vector<uint32_t> pixels(image->width * image->height);
+			for (int i = 0; i < image->height; i++)
+			{
+				for (int j = 0; j < image->width; j++)
+				{
+					pixels[i * image->width + j] = image->pixels[i * image->width + j];
+				}
+			} 
+			std::vector<uint32_t> resizeBuffer( nDesiredWidth * nDesiredHeight );
+			stbir_resize_uint8_srgb( (unsigned char *)pixels.data(),       image->width,  image->height,  0,
+									 (unsigned char *)resizeBuffer.data(), nDesiredWidth, nDesiredHeight, 0,
+									 4, 3, STBIR_FLAG_ALPHA_PREMULTIPLIED );
 
-				if ( (*cursorBuffer)[i * surfaceWidth + j] & 0xff000000 ) {
-					bNoCursor = false;
+			cursorBuffer = std::make_shared<std::vector<uint32_t>>(surfaceWidth * surfaceHeight);
+			for (int i = 0; i < nDesiredHeight; i++) {
+				for (int j = 0; j < nDesiredWidth; j++) {
+					(*cursorBuffer)[i * surfaceWidth + j] = resizeBuffer[i * nDesiredWidth + j];
+
+					if ( (*cursorBuffer)[i * surfaceWidth + j] & 0xff000000 ) {
+						bNoCursor = false;
+					}
+				}
+			}
+
+			m_hotspotX = ( m_hotspotX * nDesiredWidth ) / image->width;
+			m_hotspotY = ( m_hotspotY * nDesiredHeight ) / image->height;
+
+			nContentWidth = nDesiredWidth;
+			nContentHeight = nDesiredHeight;
+		}
+		else
+		{
+			cursorBuffer = std::make_shared<std::vector<uint32_t>>(surfaceWidth * surfaceHeight);
+			for (int i = 0; i < image->height; i++) {
+				for (int j = 0; j < image->width; j++) {
+					(*cursorBuffer)[i * surfaceWidth + j] = image->pixels[i * image->width + j];
+
+					if ( (*cursorBuffer)[i * surfaceWidth + j] & 0xff000000 ) {
+						bNoCursor = false;
+					}
 				}
 			}
 		}
 	}
+
 
 	if (bNoCursor)
 		cursorBuffer = nullptr;
@@ -2029,12 +2077,25 @@ bool MouseCursor::getTexture()
 		// TODO: choose format & modifiers from cursor plane
 	}
 
-	m_texture = vulkan_create_texture_from_bits(surfaceWidth, surfaceHeight, image->width, image->height, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer->data());
-	sdlwindow_cursor(std::move(cursorBuffer), image->width, image->height, image->xhot, image->yhot);
+	m_texture = vulkan_create_texture_from_bits(surfaceWidth, surfaceHeight, nContentWidth, nContentHeight, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer->data());
+	sdlwindow_cursor(std::move(cursorBuffer), nDesiredWidth, nDesiredHeight, image->xhot, image->yhot);
 	assert(m_texture);
 	XFree(image);
 
 	return true;
+}
+
+void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
+{
+	int nSize = g_nBaseCursorScale;
+	if ( g_nCursorScaleHeight > 0 )
+	{
+		nSize = nSize * floor(g_nOutputHeight / (float)g_nCursorScaleHeight);
+		nSize = std::clamp( nSize, g_nBaseCursorScale, 256 );
+	}
+
+	nWidth = nSize;
+	nHeight = nSize;
 }
 
 void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, struct FrameInfo_t *frameInfo)
@@ -2065,7 +2126,9 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	float cursor_scale = 1.0f;
 	if ( g_nCursorScaleHeight > 0 )
 	{
-		cursor_scale = floor(currentOutputHeight / (float)g_nCursorScaleHeight);
+		int nDesiredWidth, nDesiredHeight;
+		GetDesiredSize( nDesiredWidth, nDesiredHeight );
+		cursor_scale = nDesiredHeight / (float)m_texture->contentHeight();
 	}
 	cursor_scale = std::max(cursor_scale, 1.0f);
 
@@ -2392,6 +2455,9 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		g_CachedPlanes[ HELD_COMMIT_BASE ] = basePlane;
 		if ( !(flags & PaintWindowFlag::FadeTarget) )
 			g_CachedPlanes[ HELD_COMMIT_FADE ] = basePlane;
+
+		g_uCurrentBasePlaneCommitID = lastCommit->commitID;
+		g_bCurrentBasePlaneIsFifo = lastCommit->IsPerfOverlayFIFO();
 	}
 }
 
@@ -4875,7 +4941,7 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 
 			if (gone)
 			{
-				// Manually GC this here to avoid bubbles on RemoveWaitable
+				// Manually GC this here to avoid bubbles on close/RemoveWaitable
 				for ( auto& commit : w->commit_queue )
 					GarbageCollectWaitableCommit( commit );
 				// release all commits now we are closed.
@@ -6692,7 +6758,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN );
+			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN | EPOLLHUP );
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6704,7 +6770,7 @@ void check_new_xwayland_res(xwayland_ctx_t *ctx)
 	// When importing buffer, we'll potentially need to perform operations with
 	// a wlserver lock (e.g. wlr_buffer_lock). We can't do this with a
 	// wayland_commit_queue lock because that causes deadlocks.
-	std::vector<ResListEntry_t> tmp_queue = ctx->xwayland_server->retrieve_commits();
+	std::vector<ResListEntry_t>& tmp_queue = ctx->xwayland_server->retrieve_commits();
 
 	for ( uint32_t i = 0; i < tmp_queue.size(); i++ )
 	{
@@ -7958,6 +8024,8 @@ steamcompmgr_main(int argc, char **argv)
 					uint32_t hdr_value = ( g_bOutputHDREnabled || g_bForceHDRSupportDebug ) ? 1 : 0;
 					XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeHDROutputFeedback, XA_CARDINAL, 32, PropModeReplace,
 						(unsigned char *)&hdr_value, 1 );
+
+					server->ctx->cursor->setDirty();
 
 					if (server->ctx.get() == root_ctx)
 					{

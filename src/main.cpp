@@ -697,6 +697,7 @@ int main(int argc, char **argv)
 #endif
 
 	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
+	setenv( "XCURSOR_SIZE", "256", 1 );
 
 	raise_fd_limit();
 
