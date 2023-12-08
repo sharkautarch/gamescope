@@ -73,7 +73,17 @@ struct VBlankTimeInfo_t
 
 int vblank_init( const bool never_busy_wait, const bool always_busy_wait );
 
-void vblank_mark_possible_vblank( uint64_t nanos );
+extern std::atomic<uint64_t> g_lastVblank;
+
+inline void vblank_mark_possible_vblank( uint64_t nanos )
+{
+	g_lastVblank = nanos;
+}
+
+inline void vblank_mark_possible_vblank_weaker( uint64_t nanos )
+{
+	g_lastVblank.store(nanos, std::memory_order_release);
+}
 
 extern std::atomic<uint64_t> g_uVblankDrawTimeNS;
 

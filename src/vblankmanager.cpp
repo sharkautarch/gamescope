@@ -110,7 +110,7 @@ static std::atomic<uint64_t> g_uRollingMaxDrawTime = { g_uStartingDrawTime };
 std::atomic<bool> g_bCurrentlyCompositing = { false };
 
 
-
+#if defined(__x86_64__) || defined(__i386__)
 #if defined(__clang__)
 inline void __attribute__((always_inline,target("waitpkg"))) cpu_tpause(const uint64_t counter, const bool do_timed_pause)
 #else
@@ -192,6 +192,7 @@ else
 # undef _PAUSE
 #endif
 }
+#endif
 
 inline void __attribute__((always_inline)) cpu_pause()
 {
@@ -263,9 +264,10 @@ int64_t cpu_pause_get_upper_q_avg()
 	return static_cast<int64_t>(sum/((uint64_t)num_test_runs/4l));
 }
 
+#if defined(__x86_64__) || defined(__i386__)
 int64_t __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) cpu_tpause_get_possible_max_delay()
 {
-	const int num_test_runs=512;
+	const int num_test_runs=64;
 	int64_t trials[num_test_runs];
 	
 	for (int i = 0; i < num_test_runs; i++)
@@ -285,36 +287,30 @@ int64_t __attribute__((target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,mov
 	return static_cast<int64_t>(sum/((uint64_t)num_test_runs/4l));
 }
 
+
 #define HMMM(expr) __builtin_expect_with_probability(expr, 1, .05) //hmmm has slightly higher probability than meh
 #define MEH(expr) __builtin_expect_with_probability(expr, 1, .02)
 #if defined(__clang__)
-inline void __attribute__((always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((always_inline, hot, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick, const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #else
-inline void __attribute__((optimize("-fallow-store-data-races", "-O3","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick,  const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
+inline void __attribute__((hot, optimize("-fallow-store-data-races", "-Os","-falign-functions=32","-falign-jumps", "-falign-loops", "-falign-labels", "-fweb", "-ftree-slp-vectorize", "-fivopts" ,"-ftree-vectorize","-fgcse-sm", "-fgcse-las", "-fgcse-after-reload", "-fsplit-paths","-fsplit-loops","-fipa-pta","-fipa-cp-clone","-fdevirtualize-speculatively"), always_inline, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg"))) spin_wait_w_tpause(const long double nsPerTick_long, const double nsPerTick,  const long double cpu_pause_time_len, const double compared_to, const int64_t wait_start)
 #endif
 {
-	uint64_t diff;
-	double res = 0.0;
-	double check_this_first = 0.0;
-	long double check_this = 0.0L;
-
-	const long double tpause_frac = 
-	( cpu_pause_time_len < 1'000'000.0L)
-		     ? cpu_pause_time_len
-		     : (long double)compared_to/(nsPerTick_long*1.4L);
-
+	uint64_t prev = readCycleCount();
+	uint64_t diff = 0;
 	
-	const uint64_t __cpu_pause_loop_iter = (uint64_t) floorl(compared_to/tpause_frac);
+	const uint64_t __cpu_pause_loop_iter = (uint64_t) llroundl( (long double)(compared_to)/1.8L/cpu_pause_time_len);
 	const uint64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter>1ul)?(__cpu_pause_loop_iter-1):(0ul));
-	const uint64_t compared_int = (uint64_t) floorl(compared_to/(cpu_pause_loop_iter*nsPerTick_long));
+	const uint64_t compared_int_tpause = (uint64_t) llroundl( (long double)compared_to/(cpu_pause_loop_iter*nsPerTick_long));
+	const uint64_t compared_int = (uint64_t) llroundl( floorl(((long double)compared_to-4000.0L)/(nsPerTick_long)));
 	#ifdef VBLANK_DEBUG
 	printf("cpu_pause_loop_iter=%lu\n",cpu_pause_loop_iter);
 	#endif
-	const int64_t compared_to_const = (int64_t)llround(compared_to);
+	const uint64_t compared_to_const_first = (uint64_t)llround( fminl(((long double)compared_to-1500000.0L)/nsPerTick_long, 0.0L));
+	const uint64_t compared_to_const_second = (uint64_t)llround( fminl(((long double)compared_to-650000.0L)/nsPerTick_long, 0.0L));
 	
 	
-	const uint64_t dbl_max_rounded=(uint64_t)llround(fmin(floor(DBL_MAX), UINT64_MAX));
-	uint64_t prev = readCycleCount();
+	
 	#ifdef VBLANK_DEBUG
 	
 	
@@ -327,65 +323,48 @@ inline void __attribute__((optimize("-fallow-store-data-races", "-O3","-falign-f
 	#endif
 	
 	
-#ifdef __clang__
-	for (uint64_t i = 1; i < cpu_pause_loop_iter+1; i++)
-#else	
-	for (uint64_t i = 1; i < 6*cpu_pause_loop_iter/7+1; i++)
-#endif
+	
+	if (readCycleCount() - prev < compared_to_const_first)
 	{
+		for (uint64_t i = 1; i < 5*cpu_pause_loop_iter/7 && readCycleCount() - prev < compared_to_const_second ; i++)
+		{
 		
-		#if defined(__clang__)
-		#pragma clang optimize on
-		#endif
-		
-		#ifdef __clang__
-		uint64_t tsc_time_value = readCycleCount()+compared_int;
-		#else
-		uint64_t tsc_time_value = readCycleCount()+compared_int/(i*i/sqrt(i));
-		#endif
-		
-		cpu_tpause((uint64_t)tsc_time_value, true);
+			#if defined(__clang__)
+			#pragma clang optimize on
+			#endif
+			
+			
+			uint64_t tsc_time_value = readCycleCount()+compared_int_tpause/(2*i*i/sqrt(i));
+			
+			cpu_tpause((uint64_t)tsc_time_value, true);
 
-		#if defined(__clang__)
-		#pragma clang optimize off
-		#endif
+			#if defined(__clang__)
+			#pragma clang optimize off
+			#endif
+		}
 	}
+	
+	
+
+	
 	#if defined(__clang__)
 	#pragma clang optimize on
 	#endif
 	#ifdef VBLANK_DEBUG
 	fprintf(stdout, "total tpause dur: %.2fms\n", (get_time_in_nanos()-before)/ 1'000'000.0);
 	#endif
-	int i = 0;		
-	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	
+	
+	
+	while ( diff < compared_int )
 	{
-		int j=4-i;
+		cpu_pause();
 		
-		while ( res < compared_to && j < 3 )
-		{
-			j++;
-			res = DBL_MAX;
-		
-			cpu_pause();
-		
-			diff = readCycleCount() - prev;
-			diff = (diff < dbl_max_rounded)*diff + (diff>dbl_max_rounded)*(dbl_max_rounded);
-		
-			check_this_first = (double)diff * nsPerTick;
-			if ( HMMM(isinf(check_this_first)) )
-			{
-				check_this = (long double)diff * nsPerTick_long;
-				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-					break;					       //     hopefully might reduce fruitless speculative execution
-			}
-			
-			res = check_this_first;
-		}
-		
-		i++;
+		diff = readCycleCount() - prev;
 	}
 	
 }
+#endif
 
 #if defined(__x86_64__)
 #	if defined(__clang__)
@@ -401,15 +380,13 @@ inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-fu
 #	endif
 #endif
 {
-	int64_t diff;
-	double res = 0.0;
-	double check_this_first = 0.0;
-	long double check_this = 0.0L;
+	uint64_t diff = 0;
 	
-	const int64_t compared_to_const = (int64_t)llround(compared_to);
+	
 	
 	const int64_t __cpu_pause_loop_iter = (int64_t) llroundl(compared_to/(2.5L*(long double)cpu_pause_time_len));
 	const int64_t cpu_pause_loop_iter = ((__cpu_pause_loop_iter-1l)>0l)?(__cpu_pause_loop_iter-1l):(1l);
+	const uint64_t compared_int = (uint64_t) llroundl( floorl(((long double)compared_to-4000.0L)/(nsPerTick_long)));
 	
 	uint64_t prev = readCycleCount();
 	
@@ -424,46 +401,12 @@ inline void __attribute__((optimize("-fallow-store-data-races","-Os","-falign-fu
 	#pragma clang optimize on
 	#endif
 		
-	int i = 0;		
-	while ( res < compared_to && get_time_in_nanos() < wait_start + compared_to_const)
+	while ( diff < compared_int )
 	{
-		int j=4-i;
+		cpu_pause();
 		
-		while ( res < compared_to && j < 3 )
-		{
-			j++;
-			res = DBL_MAX;
-		
-			cpu_pause();
-		
-			diff = (int64_t)readCycleCount() - (int64_t)prev;
-			if ( HMMM(diff < 0) )
-			{
-				std::cout << "oh noes\n";
-				continue; // in case tsc counter resets or something
-			}
-		
-			check_this_first = (double)diff * nsPerTick;
-			if ( HMMM(isinf(check_this_first)) )
-			{
-				check_this = (long double)diff * nsPerTick_long;
-				if ( MEH(std::fpclassify(check_this) == FP_INFINITE) ) //meh and hmmm: compiler hints that this branch is unlikely to occur
-					break;					       //     hopefully might reduce fruitless speculative execution
-			}
-			
-			res = check_this_first;
-		}
-		
-		i++;
+		diff = readCycleCount() - prev;
 	}
-}
-
-
-
-#include <climits>
-inline int __attribute__((const, always_inline)) heaviside(const int v)
-{
-	return 1 ^ ((unsigned int)v >> (sizeof(int) * CHAR_BIT - 1)); //credit: http://www.graphics.stanford.edu/~seander/bithacks.html#CopyIntegerSign
 }
 
 
@@ -537,7 +480,7 @@ inline __attribute__((always_inline)) void sleep_until_nanos_retrying(const int6
 #ifdef __clang__
 inline double __attribute__((always_inline, hot )) vblank_next_target(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #else
-inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
+inline double __attribute__((always_inline, const,optimize("-O2","-fno-associative-math","-ffp-contract=on","-fallow-store-data-races","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double now )
 #endif
 {
 
@@ -567,7 +510,7 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 #ifdef __clang__
 inline double __attribute__((always_inline, hot )) vblank_next_target_reloaded(const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double prev, const double now, const double _lastVblank_pending )
 #else
-inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target_reloaded( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double prev, const double now, const double _lastVblank_pending )
+inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-data-races","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) vblank_next_target_reloaded( const double _lastVblank, const double offset, const double nsecInterval, const double limitFactor, const double prev, const double now, const double _lastVblank_pending )
 #endif
 {
 	const double vblank_diff = _lastVblank_pending-_lastVblank;
@@ -579,10 +522,10 @@ inline double __attribute__((always_inline, const,optimize("-O2","-fallow-store-
 
 #define CLEANUP 3
 #ifdef __clang__
-static inline void  __attribute__((always_inline, hot)) vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
+static inline void  __attribute__((always_inline, hot)) vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter,long int * centered_mean_assign )
 #else
-static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
-vrr_vblank(uint8_t  sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
+static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
+vrr_vblank(uint8_t  sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter,long int * centered_mean_assign )
 #endif
 {
 	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
@@ -595,7 +538,7 @@ vrr_vblank(uint8_t  sleep_cycle, long int * offset, long int * offset_real, uint
 		? g_uVblankDrawBufferRedZoneNS
 		: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
 	
-	
+	static long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
 	// VRR:
 	// Just ensure that if we missed a frame due to already
 	// having a page flip in-flight, that we flush it out with this.
@@ -619,15 +562,16 @@ vrr_vblank(uint8_t  sleep_cycle, long int * offset, long int * offset_real, uint
 	
 	*offset = 1'000'000 + redZone;
 	* offset_real = *offset;
+	*centered_mean_assign = centered_mean;
 }
 #ifdef __clang__
 static inline void  __attribute__((always_inline, hot)) 
 
-none_vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
+none_vrr_vblank(uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter, long int * centered_mean_assign )
 #else
-static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
+static inline void  __attribute__((always_inline, optimize("-O2","-fallow-store-data-races","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot )) 
 
-none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter )
+none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_real, uint32_t * counter, long int * centered_mean_assign )
 #endif
 {
 	static uint64_t rollingMaxDrawTime = g_uStartingDrawTime; //this will be used to determine the times this thread should sleep for
@@ -654,18 +598,19 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 	
 		
 	static long int centered_mean = 1'000'000'000l / (long int) (g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh);
+	
 	static uint16_t drawtimes[64] = {1};
 	static uint16_t drawtimes_pending[64];
 	
 	
 	
-	
+
 	static long double real_delta = 0.0L;
 	static long double last_real_delta = 0.0L; 
 	static long double local_min = g_uVBlankDrawTimeMinCompositing;
 	static long double local_max = (long double)2*centered_mean + g_uVBlankDrawTimeMinCompositing;
-	static long double lastRollingMaxDrawTime = (long double)centered_mean/2;
-	static long double lastRollingMaxDrawTime_real = lastRollingMaxDrawTime;
+	static long double lastRollingMaxDrawTime = centered_mean/2;
+	static uint64_t lastRollingMaxDrawTime_real = lastRollingMaxDrawTime;
 	
 	
 	
@@ -675,7 +620,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 	const uint64_t max_delta_apply = 50'000; //.05ms per sec
 	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime 
 	
-	const uint64_t max_delta_apply_real = nsecInterval/100;
+	const uint64_t max_delta_apply_real = nsecInterval/4;
 	// ^ For non-vrr, base rate of change in rollingMaxDeltaTime_real
 	
 	
@@ -697,7 +642,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 	static int index=0;
 	
 	auto calculateRollingMaxDrawTime = [&] () {
-		if ( g_bCurrentlyCompositing )
+		if ( g_bCurrentlyCompositing.load(std::memory_order_consume) )
 			drawTime = fmax(drawTime, g_uVBlankDrawTimeMinCompositing);
 			
 		if (drawTime_is_new)
@@ -756,6 +701,8 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 			rollingMaxDrawTime=(uint64_t) llroundl(fminl((long double)rollingMaxDrawTime, lastRollingMaxDrawTime+fminl(fabsl(real_delta)*nsecInterval_dec, fmax(logf(delta_trend_counter), 4.0)*max_delta_apply)));
 		}
 		
+		
+		
 		if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime_real) )
 		{
 			rollingMaxDrawTime_real = std::min(drawTime, nsecInterval*10);
@@ -805,7 +752,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 				lastDrawTime=drawTime;
 				lastDrawTimeTime=drawTimeTime;
 				lastRollingMaxDrawTime = (long double) rollingMaxDrawTime;
-				lastRollingMaxDrawTime_real = (long double) rollingMaxDrawTime_real;
+				lastRollingMaxDrawTime_real = rollingMaxDrawTime_real;
 				last_real_delta = real_delta;
 			}
 			
@@ -825,7 +772,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 			
 		case 1:
 		{
-			curr_draw_info.encoded = g_uVblankDrawTimeNS.load(std::memory_order_acquire);
+			curr_draw_info.encoded = g_uVblankDrawTimeNS.load(std::memory_order_relaxed);
 			if (last_draw_info.encoded != curr_draw_info.encoded)
 			{
 				drawTime_is_new=true;
@@ -837,7 +784,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 			{
 				curr_draw_info = last_draw_info;
 				rollingMaxDrawTime = (uint64_t) llroundl(lastRollingMaxDrawTime);
-				rollingMaxDrawTime_real = (uint64_t) llroundl(lastRollingMaxDrawTime_real);
+				rollingMaxDrawTime_real = lastRollingMaxDrawTime_real;
 			}
 			
 			calculateRollingMaxDrawTime();
@@ -941,7 +888,7 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 		{
 			if (!drawTime_is_new)
 			{	
-				curr_draw_info.encoded = g_uVblankDrawTimeNS.load(std::memory_order_acquire);
+				curr_draw_info.encoded = g_uVblankDrawTimeNS.load(std::memory_order_consume);
 				if (last_draw_info.encoded != curr_draw_info.encoded)
 				{
 					drawTime_is_new=true;
@@ -998,9 +945,8 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 	if (*counter % 300 == 0) 
 		std::cout << "rollingMaxDrawTime after using std::clamp: " << rollingMaxDrawTime << "\n";
 	
-	
 	*offset = rollingMaxDrawTime + redZone;
-	*offset_real = rollingMaxDrawTime_real + redZone;
+	
 	if (sleep_cycle == 2)
 	{
 		half_centered_mean = std::min(std::min(nsecInterval, centered_mean)/2-nsecInterval/25, nsecInterval+nsecInterval/20);
@@ -1029,6 +975,10 @@ none_vrr_vblank(const uint8_t sleep_cycle, long int * offset, long int * offset_
 		index++;
 		index_already_incremented=true;
 	}
+	
+	
+	*offset_real = rollingMaxDrawTime_real + redZone;
+	*centered_mean_assign = centered_mean;
 }
 
 
@@ -1046,11 +996,11 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 #else
 #	if defined(__x86_64__)
 
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) 
+void __attribute__((optimize("-O2","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target_clones("default,arch=core2,arch=znver1,arch=znver2,arch=westmere,arch=skylake") )) 
 vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	else
 
-	void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) 
+	void __attribute__((optimize("-O2","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten )) 
 	
 	vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int64_t cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
@@ -1090,7 +1040,8 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 	const long int sleep_weights[2] = {60, 40};
 	
 	uint8_t sleep_cycle = 0;
-	int64_t targetPointToSubmit = get_time_in_nanos();	
+	int64_t targetPointToSubmit = get_time_in_nanos();
+	long int centered_mean;	
 	while ( true )
 	{
 		sleep_cycle++;
@@ -1121,9 +1072,9 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 			
 		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
@@ -1146,7 +1097,7 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 			if (sleep_cycle == 2)
 			{
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin)  - vblank_begin;
-				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
+				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration) - 500.0;
 			}
 			else
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin) - vblank_begin;
@@ -1209,7 +1160,7 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 		if (sleep_cycle == 1)
 		{
 			double now = (double) get_time_in_nanos();
-			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_relaxed); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
+			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_consume); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
 			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
 			time_info =
 			{
@@ -1247,16 +1198,16 @@ vblankThreadRun( const bool neverBusyWait, const bool alwaysBusyWait, const int6
 		
 		sleep_cycle=CLEANUP;
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
 		
 		//ensure we don't wait longer post-vblank, if waiting longer could cause us to send vblanks out at a lower rate than the refresh rate:
 		const double time_elapsed_since_vblank_sent = (double)get_time_in_nanos() - vblank_begin;
-		const double post_vblank_idle_time = nsecInterval_dec - 15'000 - time_elapsed_since_vblank_sent;
+		const double post_vblank_idle_time = nsecInterval_dec - time_elapsed_since_vblank_sent;
 		
 		const bool skip_post_vblank_idle = (post_vblank_idle_time<=0);  
 		// Get on the other side of it now
@@ -1298,7 +1249,7 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 #	endif
 #else
 #	if defined(__x86_64__)
-void __attribute__((optimize("-O2","-fno-unsafe-math-optimizations","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) 
+void __attribute__((optimize("-O2","-fno-associative-math","-ffp-contract=on","-fno-trapping-math", "-fsplit-paths","-fsplit-loops","-fipa-pta","-ftree-partial-pre","-fira-hoist-pressure","-fdevirtualize-speculatively","-fgcse-after-reload","-fgcse-sm","-fgcse-las"), hot, flatten, target("avx2,sse4.2,fma,mmx,rdpid,aes,sha,vaes,prfchw,movdir64b,movdiri,pclmul,clflushopt,xsave,xsavec,xsaves,xsaveopt,fsgsbase,movbe,adx,popcnt,vpclmulqdq,waitpkg") )) 
 
 vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, const double cpu_pause_time_len, const long double nsPerTick_long  )
 #	endif
@@ -1340,7 +1291,10 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 	const long int sleep_weights[2] = {60, 40};
 	
 	uint8_t sleep_cycle = 0;	
-	int64_t targetPointToSubmit = get_time_in_nanos();	
+	int64_t targetPointToSubmit = get_time_in_nanos();
+	
+	
+		
 	while ( true )
 	{
 		sleep_cycle++;
@@ -1364,16 +1318,16 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		const double vblank_adj_factor = 60.0 / ( (double)((std::max(refresh,g_nOutputRefresh))) );
 	
 	
-	
+		 long int centered_mean = nsecInterval;
 		
 	 	long int offset;
 		long int offset_real = redZone;
 		
 		bool bVRR = drm_get_vrr_in_use( &g_DRM );
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 			
 		double offset_dec=(double)offset;
 		const double offset_dec_capped = fmin(nsecInterval_dec*offset_max_percent_of_refresh_vblank_waiting, offset_dec);
@@ -1395,10 +1349,10 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 			if (sleep_cycle == 2)
 			{
 				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin)  - vblank_begin;
-				compared_to = fmax(compared_to - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration);
+				compared_to = fmax(compared_to  - first_cycle_sleep_duration, offset_dec_capped - first_cycle_sleep_duration) - 500.0;
 			}
 			else
-				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin) - vblank_begin;
+				compared_to = vblank_next_target( lastVblank, offset_dec_capped*sleep_weights[sleep_cycle-1] / 100, nsecInterval_dec, targetPoint_max_percent_of_refresh_vblank_waiting, vblank_begin) - vblank_begin - 500.0;
 			const int64_t wait_start = get_time_in_nanos();
 			
 			spin_wait_w_tpause(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
@@ -1458,7 +1412,7 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		if (sleep_cycle == 1)
 		{
 			double now = (double) get_time_in_nanos();
-			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_relaxed); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
+			double lastVblank_pending = (double)g_lastVblank.load(std::memory_order_consume); //if we're skipping second sleep, we might be late to submitting the vblank, so use a faster atomic op
 			targetPointToSubmit = (int64_t)floor(vblank_next_target_reloaded(lastVblank, offset_real, nsecInterval_dec, targetPoint_max_percent_of_refresh_vsync_value, vblank_begin, now, lastVblank_pending));
 			time_info =
 			{
@@ -1496,20 +1450,18 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 		
 		sleep_cycle=CLEANUP;
 		if ( !bVRR )
-			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			none_vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		else
-			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter);
+			vrr_vblank(sleep_cycle, &offset, &offset_real, &counter, &centered_mean);
 		
 		
 		const uint64_t adjusted_extra_sleep = (uint64_t)llroundl(1'000'000.0*std::sqrt(vblank_adj_factor));
 		
 		//ensure we don't wait longer post-vblank, if waiting longer could cause us to send vblanks out at a lower rate than the refresh rate:
 		const double time_elapsed_since_vblank_sent = (double)get_time_in_nanos() - vblank_begin;
-		#ifdef __clang__
-		const double post_vblank_idle_time = nsecInterval_dec  - 20'000 - time_elapsed_since_vblank_sent;
-		#else
-		const double post_vblank_idle_time = nsecInterval_dec  - 28'000 - time_elapsed_since_vblank_sent;
-		#endif 
+		
+		const double post_vblank_idle_time =  nsecInterval_dec - time_elapsed_since_vblank_sent;
+		
 		const bool skip_post_vblank_idle = (post_vblank_idle_time<=0);  
 		// Get on the other side of it now
 		if ( !skip_post_vblank_idle && !alwaysBusyWait && neverBusyWait )
@@ -1526,13 +1478,17 @@ vblankThreadRun_tpause( const bool neverBusyWait, const bool alwaysBusyWait, con
 			spin_wait_w_tpause(nsPerTick_long, nsPerTick, cpu_pause_time_len, compared_to, wait_start);
 			
 			if (counter % 300 == 0)
-				std::cout << "post-vblank TPAUSE wait loop duration: " << (double)((int64_t) get_time_in_nanos() - wait_start)/1'000'000.0L << "ms\n";
-			
+			{
+				int64_t dur = (get_time_in_nanos() - wait_start)/100'000l;
+				std::cout << "post-vblank TPAUSE wait loop duration: " << dur << "*10 ms\n";
+			}
 		}
 		
 		if (counter % 300 == 0)
-			std::cout << "total vblank period: " << (double)( get_time_in_nanos() - vblank_begin)/1'000'000.0L << "ms\n";
-			
+		{
+			int64_t dur = (get_time_in_nanos() - vblank_begin)/100'000l;
+			std::cout << "total vblank period: " << dur << "*10 ms\n";
+		}
 		
 		sleep_cycle=0;
 		
@@ -1613,6 +1569,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 			std::thread vblankThread( vblankThreadRun, NEVER_BUSY_WAIT );
 			vblankThread.detach();
 		}
+		#if defined(__x86_64__) || defined(__i386__)
 		else if ( supports_tpause) {
 			double cpu_pause_time_len = (double)cpu_tpause_get_possible_max_delay();
 			if (always_busy_wait) {
@@ -1624,6 +1581,7 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 				vblankThread.detach();
 			}
 		}
+		#endif
 		else {
 			int64_t cpu_pause_time_len = cpu_pause_get_upper_q_avg();
 			if (always_busy_wait) {
@@ -1640,7 +1598,6 @@ int vblank_init( const bool never_busy_wait, const bool always_busy_wait )
 	return g_vblankPipe[ 0 ];
 }
 
-void vblank_mark_possible_vblank( uint64_t nanos )
-{
-	g_lastVblank = nanos;
-}
+
+
+

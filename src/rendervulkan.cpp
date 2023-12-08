@@ -2600,7 +2600,7 @@ static void present_wait_thread_func( void )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
-				vblank_mark_possible_vblank( vblanktime );
+				vblank_mark_possible_vblank_weaker( vblanktime );
 				mangoapp_output_update( vblanktime );
 			}
 		}
