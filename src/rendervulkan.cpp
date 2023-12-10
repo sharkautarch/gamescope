@@ -462,7 +462,7 @@ bool CVulkanDevice::createDevice()
 
 	VkDeviceQueueCreateInfo queueCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-		.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
+		.pNext = nullptr,
 		.queueFamilyIndex = m_queueFamily,
 		.queueCount = 1,
 		.pQueuePriorities = &queuePriorities
