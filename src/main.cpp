@@ -21,6 +21,7 @@
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "drm.hpp"
+#include "modegen.hpp"
 #include "rendervulkan.hpp"
 #include "sdlwindow.hpp"
 #include "wlserver.hpp"
@@ -79,6 +80,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-output", required_argument, nullptr, 'O' },
 	{ "default-touch-mode", required_argument, nullptr, 0 },
 	{ "generate-drm-mode", required_argument, nullptr, 0 },
+	{ "generate-drm-mode-custom-dir", required_argument, nullptr, 0 },
 	{ "immediate-flips", no_argument, nullptr, 0 },
 	{ "adaptive-sync", no_argument, nullptr, 0 },
 	{ "framerate-limit", required_argument, nullptr, 0 },
@@ -197,7 +199,8 @@ const char usage[] =
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
-	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
+	"  --generate-drm-mode            DRM mode generation method (cvt, fixed, custom)\n"
+	"  --generate-drm-mode-custom-dir FOr custom generation, provide a directory with modeline configurations.\n"
 	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
 	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
 	"\n"
@@ -354,6 +357,8 @@ static enum drm_mode_generation parse_drm_mode_generation(const char *str)
 		return DRM_MODE_GENERATE_CVT;
 	} else if (strcmp(str, "fixed") == 0) {
 		return DRM_MODE_GENERATE_FIXED;
+	} else if (strcmp(str, "custom") == 0) {
+		return DRM_MODE_GENERATE_CUSTOM;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --generate-drm-mode\n" );
 		exit(1);
@@ -619,6 +624,8 @@ int main(int argc, char **argv)
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+				} else if (strcmp(opt_name, "generate-drm-mode-custom-dir") == 0) {
+					initialize_custom_modes( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
 					g_drmModeOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||

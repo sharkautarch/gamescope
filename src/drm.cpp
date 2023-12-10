@@ -900,7 +900,13 @@ static void parse_edid( drm_t *drm, struct connector *conn)
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "ANX7530 U") == 0) ||
 		(strcmp(conn->make_pnp, "VLV") == 0 && strcmp(conn->model, "Jupiter") == 0);
 
-	if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
+	if (g_drmModeGeneration == DRM_MODE_GENERATE_CUSTOM) {
+		conn->is_galileo_display = 0;
+		auto fr = get_custom_framerates(conn->make_pnp, conn->model);
+		if (fr.size()) {
+			conn->valid_display_rates = fr;
+		}
+	} else if ((vendor_product->product == GALILEO_SDC_PID) || (vendor_product->product == GALILEO_BOE_PID)) {
 		conn->is_galileo_display = vendor_product->product;
 		conn->valid_display_rates = std::span(galileo_display_rates);
 	} else {
@@ -3080,6 +3086,10 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 				generate_fixed_mode( &mode, preferred_mode, refresh, drm->connector->is_steam_deck_display, drm->connector->is_galileo_display );
 				break;
 			}
+		case DRM_MODE_GENERATE_CUSTOM:
+			const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
+			generate_custom_mode(&mode, preferred_mode, refresh, drm->connector->make_pnp, drm->connector->model);
+			break;
 		}
 	}
 

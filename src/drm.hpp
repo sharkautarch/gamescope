@@ -315,6 +315,7 @@ extern const char *g_sOutputName;
 enum drm_mode_generation {
 	DRM_MODE_GENERATE_CVT,
 	DRM_MODE_GENERATE_FIXED,
+	DRM_MODE_GENERATE_CUSTOM,
 };
 
 enum g_panel_orientation {
