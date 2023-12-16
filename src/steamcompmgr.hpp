@@ -1,5 +1,10 @@
-#include <stdint.h>
+#pragma once
 
+#include <stdint.h>
+#include "SPSCQueue.h"
+#include <xcb/xcb.h>
+#include <xcb/xinput.h>
+#include <thread>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -57,11 +62,19 @@ enum TakeScreenshotMode_t
 	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
 };
 
+struct global_pos {
+	int x;
+	int y;
+	uint64_t timestamp;
+}
+
+
+
 class MouseCursor
 {
 public:
 	explicit MouseCursor(xwayland_ctx_t *ctx);
-
+	
 	int x() const;
 	int y() const;
 
@@ -96,8 +109,12 @@ public:
 	void inform_flush() { m_needs_server_flush = false; }
 
 	void GetDesiredSize( int& nWidth, int &nHeight );
-
+	
+	void LaunchAsyncCursorThread();
+	bool nonBlockingQueryGlobalPosition(int &x, int &y);
+	
 private:
+	std::atomic<bool> asyncThreadRunning = false;
 	void warp(int x, int y);
 	void checkSuspension();
 
@@ -108,7 +125,10 @@ private:
 	bool getTexture();
 
 	void updateCursorFeedback( bool bForce = false );
-
+	const size_t maxCursorPoints = 4096;
+	SPSCQueue<global_pos> AbsCursorPoints(maxCursorPoints);
+	void AsyncCursorThread();
+	 
 	int m_x = 0, m_y = 0;
 	int m_hotspotX = 0, m_hotspotY = 0;
 

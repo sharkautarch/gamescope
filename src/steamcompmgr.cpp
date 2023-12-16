@@ -1543,6 +1543,14 @@ void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth
 	out_scale_y *= globalScaleRatio;
 }
 
+
+void MouseCursor::LaunchAsyncCursorThread() {
+	if (!asyncThreadRunning) {
+		std::thread cursorThread(AsyncCursorThread).detach();
+		asyncThreadRunning=true;
+	}
+}
+
 /**
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
  */
@@ -1556,6 +1564,7 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	m_lastX = g_nNestedWidth / 2;
 	m_lastY = g_nNestedHeight / 2;
 	updateCursorFeedback( true );
+	LaunchAsyncCursorThread();
 }
 
 void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
@@ -1573,6 +1582,77 @@ void MouseCursor::queryGlobalPosition(int &x, int &y)
 	int winX, winY;
 	queryPositions(x, y, winX, winY);
 }
+
+bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
+{
+	if (!asyncThreadRunning) {
+		std::thread cursorThread(AsyncCursorThread).detach();
+		asyncThreadRunning=true;
+	}
+	
+	global_pos pos = {0,0,0};
+	std::vector<global_pos> buffer;
+	const size_t batch_size = 4;
+	while (!AbsCursorPoints.empty()) {
+		if (AbsCursorPoints.size() > batch_size - 1) {
+			for (int i = 0; i < batch_size; i++) {
+				buffer.push_back(AbsCursorPoints.pop();
+			}
+		}
+		
+		if (!AbsCursorPoints.empty())
+			pos = AbsCursorPoints.pop();
+		else if (!buffer.empty())
+			pos = buffer.back();
+			
+		if (pos != {0,0,0} && get_time_in_nanos()-pos.timestamp > 500'000ul) {//can't be later than .5ms
+			x=pos.x;
+			y=pos.y;
+			return true;
+		}
+		
+		pos={0,0,0};
+		buffer.clear();
+		
+	}
+	
+	return false;
+}
+
+void MouseCursor::AsyncCursorThread() {
+	// \/ snippet from https://stackoverflow.com/a/76576242  \/
+	
+	xcb_connection_t *conn = xcb_connect(NULL, NULL);
+	xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
+
+	struct
+	{
+		xcb_input_event_mask_t info;
+		xcb_input_xi_event_mask_t mask;
+	} input_mask;
+	
+	input_mask.info.deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
+	input_mask.info.mask_len = 1;
+	input_mask.mask = XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_PRESS | XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_RELEASE;
+	xcb_input_xi_select_events(conn, screen->root, 1, &input_mask.info);
+
+	xcb_flush(conn);
+
+	xcb_generic_event_t *event;
+	while ((event = xcb_wait_for_event(conn))) {
+	// /\ snippet from https://stackoverflow.com/a/76576242  /\ 
+		int x, y;
+		
+		queryGlobalPosition(x, y);
+		global_pos pos = {.x=x, .y=y, .timestamp=get_time_in_nanos()};
+		AbsCursorPoints.try_push(pos);
+		
+	}
+	
+	asyncThreadRunning=false;
+
+}
+
 
 void MouseCursor::queryButtonMask(unsigned int &mask)
 {
@@ -1788,7 +1868,9 @@ void MouseCursor::constrainPosition()
 
 	// Make sure the cursor is somewhere in our jail
 	int rootX, rootY;
-	queryGlobalPosition(rootX, rootY);
+	if (!nonBlockingQueryGlobalPosition(rootX, rootY))
+		queryGlobalPosition(rootX, rootY);
+	
 
 	if ( rootX >= x2 || rootY >= y2 || rootX < x1 || rootY < y1 ) {
 		if ( window_wants_no_focus_when_mouse_hidden( window ) && m_hideForMovement )
@@ -1847,7 +1929,9 @@ void MouseCursor::move(int x, int y)
 void MouseCursor::updatePosition()
 {
 	int x,y;
-	queryGlobalPosition(x, y);
+	if (!nonBlockingQueryGlobalPosition(x,y))
+		queryGlobalPosition(x, y);
+
 	move(x, y);
 	checkSuspension();
 }

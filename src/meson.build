@@ -115,6 +115,9 @@ src = [
   'reshade_effect_manager.cpp',
 ]
 
+ringbuffer_inc = include_directories(['../thirdparty/SPSCQueue/include/rigtorp/'])
+
+
 src += spirv_shaders
 src += protocols_server_src
 
@@ -129,7 +132,7 @@ endif
   executable(
     'gamescope',
     src, reshade_src,
-    include_directories : [reshade_include],
+    include_directories : [reshade_include, ringbuffer_inc],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,

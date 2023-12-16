@@ -20,5 +20,5 @@
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
 [submodule "thirdparty/SPSCQueue"]
-        path = thirdparty/SPSCQueue
-        url = https://github.com/rigtorp/SPSCQueue
+	path = thirdparty/SPSCQueue
+	url = https://github.com/rigtorp/SPSCQueue.git
