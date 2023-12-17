@@ -15,7 +15,6 @@
 #include "main.hpp"
 
 #include "shaders/descriptor_set_constants.h"
-#include <advisor-annotate.h>
 
 class CVulkanCmdBuffer;
 

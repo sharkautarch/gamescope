@@ -16,7 +16,6 @@
 #include <X11/extensions/XRes.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/xf86vmode.h>
-#include <advisor-annotate.h>
 
 class gamescope_xwayland_server_t;
 struct ignore;

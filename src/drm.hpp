@@ -9,7 +9,6 @@
 #include <drm_mode.h>
 
 #include <span>
-#include <advisor-annotate.h>
 #include "color_helpers.h"
 
 // Josh: Okay whatever, this header isn't

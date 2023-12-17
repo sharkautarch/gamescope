@@ -6,7 +6,6 @@
 #include <sys/epoll.h>
 
 #include <functional>
-#include <advisor-annotate.h>
 
 #include "log.hpp"
 

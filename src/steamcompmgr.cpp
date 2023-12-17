@@ -1594,7 +1594,6 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 	global_pos empty_pos = {0,0,0};
 	std::vector<global_pos> buffer;
 	const size_t batch_size = 4;
-	ANNOTATE_SITE_BEGIN(MouseCursor::nonBlockingQueryGlobalPosition);
 	while (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
 			for (int i = 0; i < batch_size; i++) {
@@ -1622,13 +1621,11 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 		buffer.clear();
 		
 	}
-	ANNOTATE_SITE_END(MouseCursor::nonBlockingQueryGlobalPosition);
 	return false;
 }
 
 inline void MouseCursor::AsyncCursorThread() {
 	pthread_setname_np( pthread_self(), "gamescope-cursor" );
-	ANNOTATE_SITE_BEGIN(MouseCursor::AsyncCursorThread);
 	// \/ snippet from https://stackoverflow.com/a/76576242  \/
 	static thread_local int localx,localy;
 	
@@ -1697,7 +1694,6 @@ inline void MouseCursor::AsyncCursorThread() {
 	}
 	
 	
-	ANNOTATE_SITE_END(MouseCursor::AsyncCursorThread);
 	asyncThreadRunning=false;
 
 }
@@ -2526,7 +2522,6 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 static void
 paint_all(bool async)
 {
-	ANNOTATE_SITE_BEGIN(paint_all);
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 
@@ -3156,7 +3151,6 @@ paint_all(bool async)
 		}
 	}
 #endif
-	ANNOTATE_SITE_END(paint_all);
 	if ( takeScreenshot )
 	{
 		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
@@ -7878,7 +7872,6 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
-		ANNOTATE_SITE_BEGIN(steamcompmgr_main);
 		vblank = false;
 
 		{
@@ -8261,7 +8254,6 @@ steamcompmgr_main(int argc, char **argv)
 		vulkan_garbage_collect();
 
 		vblank = false;
-		ANNOTATE_SITE_END(steamcompmgr_main);
 	}
 
 	steamcompmgr_exit();

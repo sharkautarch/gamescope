@@ -6,7 +6,6 @@
 #include <xcb/xinput.h>
 #include <thread>
 #include <atomic>
-#include <advisor-annotate.h>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
