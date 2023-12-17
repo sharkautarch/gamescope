@@ -73,6 +73,7 @@ union global_pos {
 };
 
 extern std::atomic<int64_t> cursor_event_notifier;
+//#define ASYNC_CURSOR_DEBUG 1
 
 class MouseCursor
 {

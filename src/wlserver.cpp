@@ -1771,9 +1771,8 @@ void wlserver_run(void)
 			if (get_time_in_nanos()-last_time > 250'000 ) {
 				std::atomic_signal_fence(std::memory_order_seq_cst);
 			
-				int64_t val = cursor_event_notifier.load();
-				val=std::min(++val, 8l);
-				cursor_event_notifier=val;
+				
+				cursor_event_notifier++;
 			
 			
 				//wl_log.infof("cursor_event_notifier incremented (=%li)\n", val);

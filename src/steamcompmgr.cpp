@@ -1585,11 +1585,26 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 		LaunchAsyncCursorThread();
 	}
 	
-	global_pos pos = {0,0,0};
-	global_pos empty_pos = {0,0,0};
-	std::vector<global_pos> buffer;
+	static thread_local global_pos pos = {0,0,0};
+	static thread_local global_pos empty_pos = {0,0,0};
+	static thread_local std::vector<global_pos> buffer;
 	const size_t batch_size = 4;
-	while (!AbsCursorPoints.empty()) {
+	if (!buffer.empty()) {
+		pos = buffer.front();
+		uint64_t t = get_time_in_nanos();
+		if (pos.val != empty_pos.val && t-pos.timestamp < 200'000ul) {//can't be later than .2ms
+			x=pos.x;
+			y=pos.y;
+			#ifdef ASYNC_CURSOR_DEBUG
+			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
+			#endif
+			return true;
+		}
+		buffer.clear();
+		pos.val=empty_pos.val;
+	}
+	
+	if (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
 			for (size_t i = 0; i < batch_size; i++) {
 				buffer.push_back(*(AbsCursorPoints.front()));
@@ -1605,17 +1620,83 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 		else if (!buffer.empty())
 			pos = buffer.back();
 			
-		if (pos.val != empty_pos.val && get_time_in_nanos()-pos.timestamp > 500'000ul) {//can't be later than .5ms
+		uint64_t t = get_time_in_nanos();
+		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
 			x=pos.x;
 			y=pos.y;
-			//xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded\n");
+			#ifdef ASYNC_CURSOR_DEBUG
+			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
+			#endif
 			return true;
 		}
 		
 		pos.val=empty_pos.val;
-		buffer.clear();
+		//buffer.clear();
 		
 	}
+	if (!buffer.empty()) {
+		pos = buffer.front();
+		uint64_t t = get_time_in_nanos();
+		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+			x=pos.x;
+			y=pos.y;
+			#ifdef ASYNC_CURSOR_DEBUG
+			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
+			#endif
+			return true;
+		}
+		buffer.clear();
+		pos.val=empty_pos.val;
+	}
+	
+	while (!AbsCursorPoints.empty()) {
+		
+		if (AbsCursorPoints.size() > batch_size - 1) {
+			for (size_t i = 0; i < batch_size; i++) {
+				buffer.push_back(*(AbsCursorPoints.front()));
+				AbsCursorPoints.pop();
+			}
+			
+		}
+		
+		if (!AbsCursorPoints.empty()) {
+			pos = *(AbsCursorPoints.front());
+			AbsCursorPoints.pop();
+		}
+		else if (!buffer.empty())
+			pos = buffer.back();
+			
+		uint64_t t = get_time_in_nanos();
+		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+			x=pos.x;
+			y=pos.y;
+			#ifdef ASYNC_CURSOR_DEBUG
+			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
+			#endif
+			return true;
+		}
+		
+		
+		if (!buffer.empty()) {
+			pos = buffer.front();
+			uint64_t t = get_time_in_nanos();
+			if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+				x=pos.x;
+				y=pos.y;
+				#ifdef ASYNC_CURSOR_DEBUG
+				xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
+				#endif
+				return true;
+			}
+		}
+		buffer.clear();
+		pos.val=empty_pos.val;
+		
+	}
+	#ifdef ASYNC_CURSOR_DEBUG
+	uint64_t t = get_time_in_nanos();
+	xwm_log.infof("nonBlockingQueryGlobalPosition() failed time:%lu\n", t);
+	#endif
 	return false;
 }
 
@@ -1633,44 +1714,45 @@ inline void MouseCursor::AsyncCursorThread() {
 		cursor_event_notifier.wait(cursor_event_notifier_cached+1); //wait for count to increment
 		
 		
-		int64_t prev = cursor_event_notifier.load(std::memory_order_consume);
+		int64_t prev = cursor_event_notifier;
 		int64_t amnt_incremented = std::max(prev-cursor_event_notifier_cached, 0l);
 		
 		
-		#ifdef __clang__
-		 [[clang::always_inline]] int_fast64_t timestamp_initial = get_time_in_nanos();
-		int_fast64_t cycle_initial = __builtin_readcyclecounter();
-		int_fast16_t adj_abs_clock = (int_fast16_t)( timestamp_initial/cycle_initial);
-		
-		#pragma omp simd 
-		for (int i = 0; i < amnt_incremented; i++) {
-			[[clang::always_inline]] this->queryGlobalPosition(localx, localy);
-			global_pos pos;
-			pos.x=localx;
-			pos.y=localy;
-			pos.timestamp=timestamp_initial + (int_fast64_t)( adj_abs_clock * (__builtin_readcyclecounter()-cycle_initial));
-			[[clang::always_inline]] AbsCursorPoints.try_push(pos);
+		this->queryGlobalPosition(localx, localy);
+		global_pos pos;
+		pos.x=localx;
+		pos.y=localy;
+		pos.timestamp=get_time_in_nanos();
+		if ( AbsCursorPoints.try_push(pos) ) {
+			cursor_event_notifier--;
+			#ifdef ASYNC_CURSOR_DEBUG
+			xwm_log.infof("AsyncCursorThread() pushed a position time:%lu \n", pos.timestamp);
+			#endif
 		}
-		#else
-		#pragma omp simd
-		for (int i = 0; i < amnt_incremented; i++) {
+		std::this_thread::yield();
+		std::this_thread::yield();
+		std::this_thread::yield();
+		for (int i = 0; i < amnt_incremented-1; i++) {
 			this->queryGlobalPosition(localx, localy);
 			global_pos pos;
 			pos.x=localx;
 			pos.y=localy;
 			pos.timestamp=get_time_in_nanos();
-			AbsCursorPoints.try_push(pos);
+			if ( AbsCursorPoints.try_push(pos) ) {
+				cursor_event_notifier--;
+				#ifdef ASYNC_CURSOR_DEBUG
+				xwm_log.infof("AsyncCursorThread() pushed a position time:%lu \n", pos.timestamp);
+				#endif
+			}
+			std::this_thread::yield();
+			std::this_thread::yield();
+			std::this_thread::yield();
 		}
-		#endif
-		
-		int64_t cursor_event_notifier_updated = cursor_event_notifier.load(std::memory_order_consume);
-		cursor_event_notifier_updated = std::clamp(cursor_event_notifier_updated-amnt_incremented, 0l, 1l);
-		
-		cursor_event_notifier=cursor_event_notifier_updated;
 		
 	}
-	
-	
+	#ifdef ASYNC_CURSOR_DEBUG
+	xwm_log.infof("AsyncCursorThread() exited\n");
+	#endif
 	asyncThreadRunning=false;
 
 }
@@ -1958,10 +2040,11 @@ void MouseCursor::move(int x, int y)
 
 void MouseCursor::updatePosition()
 {
+	cursor_event_notifier++;
 	int x,y;
 	if (!nonBlockingQueryGlobalPosition(x,y))
 		queryGlobalPosition(x, y);
-
+	
 	move(x, y);
 	checkSuspension();
 }
@@ -7863,7 +7946,8 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		g_SteamCompMgrWaiter.PollEvents();
-
+		cursor_event_notifier++;
+		cursor_event_notifier.notify_one();
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = g_VBlankTimer.ProcessVBlank() )
 		{
 			g_SteamCompMgrVBlankTime = *pendingVBlank;
