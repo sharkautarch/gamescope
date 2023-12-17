@@ -8,6 +8,7 @@
 #include <string.h>
 #include <poll.h>
 #include <fcntl.h>
+#include <atomic>
 
 #include <linux/input-event-codes.h>
 
@@ -1726,6 +1727,7 @@ void wlserver_run(void)
 	if ( pipe2( g_wlserverNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 	{
 		wl_log.errorf_errno( "wlserver: pipe2 failed" );
+		cursor_event_notifier = -1;
 		exit( 1 );
 	}
 
@@ -1742,7 +1744,7 @@ void wlserver_run(void)
 
 	while ( g_bRun ) {
 		int ret = poll( pollfds, 2, -1 );
-
+		static uint64_t last_time=get_time_in_nanos(); 
 		if ( ret < 0 ) {
 			if ( errno == EINTR || errno == EAGAIN )
 				continue;
@@ -1766,7 +1768,20 @@ void wlserver_run(void)
 			}
 
 			wlserver_unlock();
+			if (get_time_in_nanos()-last_time > 250'000 ) {
+				std::atomic_signal_fence(std::memory_order_seq_cst);
+			
+				int64_t val = cursor_event_notifier.load();
+				val=std::min(++val, 8l);
+				cursor_event_notifier=val;
+			
+			
+				//wl_log.infof("cursor_event_notifier incremented (=%li)\n", val);
+				cursor_event_notifier.notify_one();
+			}
+			last_time=get_time_in_nanos();
 		}
+		
 	}
 
 	{
@@ -1787,14 +1802,14 @@ void wlserver_run(void)
 	wlserver.wlr.xwayland_servers.clear();
 	wl_display_destroy_clients(wlserver.display);
 	wl_display_destroy(wlserver.display);
-    wlserver.display = NULL;
+    	wlserver.display = NULL;
 	wlserver_unlock(false);
 }
 
 void wlserver_force_shutdown()
 {
     assert( wlserver_is_lock_held() );
-
+    cursor_event_notifier = -1;
     if (wlserver.display)
     {
         if ( write( g_wlserverNudgePipe[ 1 ], "\n", 1 ) < 0 )
@@ -1862,7 +1877,7 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
-
+	
 	// TODO: Pick the xwayland_server with active focus
 	auto server = steamcompmgr_get_focused_server();
 	if ( server != NULL )

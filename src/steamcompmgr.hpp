@@ -5,6 +5,8 @@
 #include <xcb/xcb.h>
 #include <xcb/xinput.h>
 #include <thread>
+#include <atomic>
+#include <advisor-annotate.h>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -54,6 +56,24 @@ extern EStreamColorspace g_ForcedNV12ColorSpace;
 // use the proper libliftoff composite plane system.
 static constexpr bool kDisablePartialComposition = true;
 
+template <typename E>
+constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept {
+    return static_cast<typename std::underlying_type<E>::type>(e);
+}
+
+const xcb_input_xi_event_mask_t xcb_all_events = static_cast<xcb_input_xi_event_mask_t>(to_underlying(XCB_INPUT_XI_EVENT_MASK_DEVICE_CHANGED) | to_underlying(XCB_INPUT_XI_EVENT_MASK_KEY_PRESS)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_KEY_RELEASE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_BUTTON_RELEASE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_MOTION)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_ENTER) | to_underlying(XCB_INPUT_XI_EVENT_MASK_LEAVE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_FOCUS_IN)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_FOCUS_OUT) | to_underlying(XCB_INPUT_XI_EVENT_MASK_HIERARCHY) | to_underlying(XCB_INPUT_XI_EVENT_MASK_PROPERTY)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_KEY_PRESS) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_KEY_RELEASE)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_PRESS) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_RELEASE)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_MOTION) | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_BEGIN)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_UPDATE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_END)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_OWNERSHIP) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_BEGIN)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_UPDATE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_END)
+    | to_underlying(XCB_INPUT_XI_EVENT_MASK_BARRIER_HIT) | to_underlying(XCB_INPUT_XI_EVENT_MASK_BARRIER_LEAVE));
+
 enum TakeScreenshotMode_t
 {
 	TAKE_SCREENSHOT_BASEPLANE_ONLY = 1, // Just the game/base plane
@@ -62,13 +82,16 @@ enum TakeScreenshotMode_t
 	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
 };
 
-struct global_pos {
-	int x;
-	int y;
-	uint64_t timestamp;
-}
+union global_pos {
+	struct {
+		int x;
+		int y;
+		uint64_t timestamp;
+	};
+	uintmax_t val;
+};
 
-
+extern std::atomic<int64_t> cursor_event_notifier;
 
 class MouseCursor
 {
@@ -79,9 +102,10 @@ public:
 	int y() const;
 
 	void move(int x, int y);
-	void updatePosition();
-	void constrainPosition();
-	void resetPosition();
+	
+	inline void updatePosition();
+	inline void constrainPosition();
+	inline void resetPosition();
 
 	void paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, FrameInfo_t *frameInfo);
 	void setDirty();
@@ -111,22 +135,28 @@ public:
 	void GetDesiredSize( int& nWidth, int &nHeight );
 	
 	void LaunchAsyncCursorThread();
-	bool nonBlockingQueryGlobalPosition(int &x, int &y);
+	#pragma omp declare simd
+	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
 	
 private:
 	std::atomic<bool> asyncThreadRunning = false;
 	void warp(int x, int y);
 	void checkSuspension();
-
+	
+	#pragma omp declare simd
 	void queryGlobalPosition(int &x, int &y);
+	#pragma omp declare simd
 	void queryPositions(int &rootX, int &rootY, int &winX, int &winY);
+	#pragma omp declare simd
 	void queryButtonMask(unsigned int &mask);
 
 	bool getTexture();
 
 	void updateCursorFeedback( bool bForce = false );
 	const size_t maxCursorPoints = 4096;
-	SPSCQueue<global_pos> AbsCursorPoints(maxCursorPoints);
+	rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
+	
+	#pragma omp declare simd
 	void AsyncCursorThread();
 	 
 	int m_x = 0, m_y = 0;

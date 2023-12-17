@@ -34,6 +34,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
+#include <xcb/xcb.h>
+#include <xcb/xinput.h>
 #include <cstdint>
 #include <drm_mode.h>
 #include <memory>
@@ -892,6 +894,8 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
+std::atomic<int64_t> cursor_event_notifier = {0};
+
 uint64_t g_uCurrentBasePlaneCommitID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
 
@@ -1257,7 +1261,7 @@ should_ignore(xwayland_ctx_t *ctx, unsigned long sequence)
 	return ctx->ignore_head && ctx->ignore_head->sequence == sequence;
 }
 
-bool xwayland_ctx_t::HasQueuedEvents()
+inline bool xwayland_ctx_t::HasQueuedEvents()
 {
 	// If mode is QueuedAlready, XEventsQueued() returns the number of
 	// events already in the event queue (and never performs a system call).
@@ -1544,12 +1548,7 @@ void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth
 }
 
 
-void MouseCursor::LaunchAsyncCursorThread() {
-	if (!asyncThreadRunning) {
-		std::thread cursorThread(AsyncCursorThread).detach();
-		asyncThreadRunning=true;
-	}
-}
+
 
 /**
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
@@ -1560,6 +1559,7 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	, m_imageEmpty(false)
 	, m_hideForMovement(true)
 	, m_ctx(ctx)
+	, AbsCursorPoints(4096)
 {
 	m_lastX = g_nNestedWidth / 2;
 	m_lastY = g_nNestedHeight / 2;
@@ -1567,7 +1567,7 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	LaunchAsyncCursorThread();
 }
 
-void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
+inline void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
 {
 	Window window, child;
 	unsigned int mask;
@@ -1577,52 +1577,63 @@ void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
 
 }
 
-void MouseCursor::queryGlobalPosition(int &x, int &y)
+inline void MouseCursor::queryGlobalPosition(int &x, int &y)
 {
 	int winX, winY;
 	queryPositions(x, y, winX, winY);
 }
 
-bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
+inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 {
+	
 	if (!asyncThreadRunning) {
-		std::thread cursorThread(AsyncCursorThread).detach();
-		asyncThreadRunning=true;
+		LaunchAsyncCursorThread();
 	}
 	
 	global_pos pos = {0,0,0};
+	global_pos empty_pos = {0,0,0};
 	std::vector<global_pos> buffer;
 	const size_t batch_size = 4;
+	ANNOTATE_SITE_BEGIN(MouseCursor::nonBlockingQueryGlobalPosition);
 	while (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
 			for (int i = 0; i < batch_size; i++) {
-				buffer.push_back(AbsCursorPoints.pop();
+				buffer.push_back(*(AbsCursorPoints.front()));
+				AbsCursorPoints.pop();
 			}
+			
 		}
 		
-		if (!AbsCursorPoints.empty())
-			pos = AbsCursorPoints.pop();
+		if (!AbsCursorPoints.empty()) {
+			pos = *(AbsCursorPoints.front());
+			AbsCursorPoints.pop();
+		}
 		else if (!buffer.empty())
 			pos = buffer.back();
 			
-		if (pos != {0,0,0} && get_time_in_nanos()-pos.timestamp > 500'000ul) {//can't be later than .5ms
+		if (pos.val != empty_pos.val && get_time_in_nanos()-pos.timestamp > 500'000ul) {//can't be later than .5ms
 			x=pos.x;
 			y=pos.y;
+			//xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded\n");
 			return true;
 		}
 		
-		pos={0,0,0};
+		pos.val=empty_pos.val;
 		buffer.clear();
 		
 	}
-	
+	ANNOTATE_SITE_END(MouseCursor::nonBlockingQueryGlobalPosition);
 	return false;
 }
 
-void MouseCursor::AsyncCursorThread() {
+inline void MouseCursor::AsyncCursorThread() {
+	pthread_setname_np( pthread_self(), "gamescope-cursor" );
+	ANNOTATE_SITE_BEGIN(MouseCursor::AsyncCursorThread);
 	// \/ snippet from https://stackoverflow.com/a/76576242  \/
+	static thread_local int localx,localy;
 	
-	xcb_connection_t *conn = xcb_connect(NULL, NULL);
+	int64_t cursor_event_notifier_cached = cursor_event_notifier;
+	/*xcb_connection_t *conn = xcb_connect(NULL, NULL);
 	xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
 
 	struct
@@ -1633,24 +1644,70 @@ void MouseCursor::AsyncCursorThread() {
 	
 	input_mask.info.deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
 	input_mask.info.mask_len = 1;
-	input_mask.mask = XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_PRESS | XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_RELEASE;
+	input_mask.mask = xcb_all_events;
 	xcb_input_xi_select_events(conn, screen->root, 1, &input_mask.info);
 
 	xcb_flush(conn);
 
-	xcb_generic_event_t *event;
-	while ((event = xcb_wait_for_event(conn))) {
+	xcb_generic_event_t *event;*/
+	while ( (cursor_event_notifier_cached=cursor_event_notifier) > -1 ) {
 	// /\ snippet from https://stackoverflow.com/a/76576242  /\ 
-		int x, y;
 		
-		queryGlobalPosition(x, y);
-		global_pos pos = {.x=x, .y=y, .timestamp=get_time_in_nanos()};
-		AbsCursorPoints.try_push(pos);
+		cursor_event_notifier.wait(cursor_event_notifier_cached+1); //wait for count to increment
 		
+		
+		int64_t prev = cursor_event_notifier.load(std::memory_order_consume);
+		int64_t amnt_incremented = std::max(prev-cursor_event_notifier_cached, 0l);
+		
+		
+		#ifdef __clang__
+		 [[clang::always_inline]] int_fast64_t timestamp_initial = get_time_in_nanos();
+		int_fast64_t cycle_initial = __builtin_readcyclecounter();
+		int_fast16_t adj_abs_clock = (int_fast16_t)( timestamp_initial/cycle_initial);
+		
+		#pragma omp simd 
+		for (int i = 0; i < amnt_incremented; i++) {
+			[[clang::always_inline]] this->queryGlobalPosition(localx, localy);
+			global_pos pos;
+			pos.x=localx;
+			pos.y=localy;
+			pos.timestamp=timestamp_initial + (int_fast64_t)( adj_abs_clock * (__builtin_readcyclecounter()-cycle_initial));
+			[[clang::always_inline]] AbsCursorPoints.try_push(pos);
+		}
+		#else
+		#pragma omp simd
+		for (int i = 0; i < amnt_incremented; i++) {
+			this->queryGlobalPosition(localx, localy);
+			global_pos pos;
+			pos.x=localx;
+			pos.y=localy;
+			pos.timestamp=get_time_in_nanos();
+			AbsCursorPoints.try_push(pos);
+		}
+		#endif
+		
+		int64_t cursor_event_notifier_updated = cursor_event_notifier.load(std::memory_order_consume);
+		cursor_event_notifier_updated = std::clamp(cursor_event_notifier_updated-amnt_incremented, 0l, 1l);
+		
+		cursor_event_notifier=cursor_event_notifier_updated;
+		//std::this_thread::yield();
+		//sleep_for_nanos(500'000ul); 
+		
+		pause();
 	}
 	
+	
+	ANNOTATE_SITE_END(MouseCursor::AsyncCursorThread);
 	asyncThreadRunning=false;
 
+}
+void MouseCursor::LaunchAsyncCursorThread() {
+	if (!asyncThreadRunning) {
+		std::thread cursorThread([this](){ this->AsyncCursorThread(); });
+		
+		cursorThread.detach();
+		asyncThreadRunning=true;
+	}
 }
 
 
@@ -1725,7 +1782,7 @@ void MouseCursor::warp(int x, int y)
 	XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, x, y);
 }
 
-void MouseCursor::resetPosition()
+inline void MouseCursor::resetPosition()
 {
 	warp(m_x, m_y);
 }
@@ -2469,6 +2526,7 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 static void
 paint_all(bool async)
 {
+	ANNOTATE_SITE_BEGIN(paint_all);
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 
@@ -3098,7 +3156,7 @@ paint_all(bool async)
 		}
 	}
 #endif
-
+	ANNOTATE_SITE_END(paint_all);
 	if ( takeScreenshot )
 	{
 		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
@@ -6932,6 +6990,7 @@ handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent 
 	XFlush(ctx->dpy);
 }
 
+
 void xwayland_ctx_t::Dispatch()
 {
 	xwayland_ctx_t *ctx = this;
@@ -7819,6 +7878,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
+		ANNOTATE_SITE_BEGIN(steamcompmgr_main);
 		vblank = false;
 
 		{
@@ -8201,6 +8261,7 @@ steamcompmgr_main(int argc, char **argv)
 		vulkan_garbage_collect();
 
 		vblank = false;
+		ANNOTATE_SITE_END(steamcompmgr_main);
 	}
 
 	steamcompmgr_exit();

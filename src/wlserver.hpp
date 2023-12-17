@@ -12,7 +12,7 @@
 #include <list>
 #include <optional>
 #include <vulkan/vulkan_core.h>
-
+#include <advisor-annotate.h>
 #include "drm.hpp"
 #include "steamcompmgr_shared.hpp"
 

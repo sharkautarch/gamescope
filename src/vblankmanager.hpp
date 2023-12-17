@@ -2,6 +2,7 @@
 
 #include <optional>
 #include "waitable.h"
+#include <advisor-annotate.h>
 
 namespace gamescope
 {

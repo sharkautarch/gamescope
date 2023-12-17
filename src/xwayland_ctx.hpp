@@ -16,6 +16,7 @@
 #include <X11/extensions/XRes.h>
 #include <X11/extensions/shape.h>
 #include <X11/extensions/xf86vmode.h>
+#include <advisor-annotate.h>
 
 class gamescope_xwayland_server_t;
 struct ignore;
@@ -237,8 +238,8 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom primarySelection;
 		Atom targets;
 	} atoms;
-
-	bool HasQueuedEvents();
+	
+	inline bool HasQueuedEvents();
 
 	void Dispatch();
 

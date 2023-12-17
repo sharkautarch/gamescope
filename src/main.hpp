@@ -3,6 +3,7 @@
 #include <getopt.h>
 
 #include <atomic>
+#include <advisor-annotate.h>
 
 extern const char *gamescope_optstring;
 extern const struct option *gamescope_options;
