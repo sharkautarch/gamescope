@@ -237,7 +237,7 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom primarySelection;
 		Atom targets;
 	} atoms;
-	
+
 	inline bool HasQueuedEvents();
 
 	void Dispatch();

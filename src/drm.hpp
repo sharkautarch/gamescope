@@ -9,6 +9,7 @@
 #include <drm_mode.h>
 
 #include <span>
+
 #include "color_helpers.h"
 
 // Josh: Okay whatever, this header isn't

@@ -2,10 +2,9 @@
 
 #include <stdint.h>
 #include "SPSCQueue.h"
-#include <xcb/xcb.h>
-#include <xcb/xinput.h>
 #include <thread>
 #include <atomic>
+#include <latch>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -55,23 +54,6 @@ extern EStreamColorspace g_ForcedNV12ColorSpace;
 // use the proper libliftoff composite plane system.
 static constexpr bool kDisablePartialComposition = true;
 
-template <typename E>
-constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept {
-    return static_cast<typename std::underlying_type<E>::type>(e);
-}
-
-const xcb_input_xi_event_mask_t xcb_all_events = static_cast<xcb_input_xi_event_mask_t>(to_underlying(XCB_INPUT_XI_EVENT_MASK_DEVICE_CHANGED) | to_underlying(XCB_INPUT_XI_EVENT_MASK_KEY_PRESS)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_KEY_RELEASE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_BUTTON_PRESS)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_BUTTON_RELEASE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_MOTION)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_ENTER) | to_underlying(XCB_INPUT_XI_EVENT_MASK_LEAVE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_FOCUS_IN)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_FOCUS_OUT) | to_underlying(XCB_INPUT_XI_EVENT_MASK_HIERARCHY) | to_underlying(XCB_INPUT_XI_EVENT_MASK_PROPERTY)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_KEY_PRESS) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_KEY_RELEASE)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_PRESS) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_BUTTON_RELEASE)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_MOTION) | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_BEGIN)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_UPDATE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_END)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_TOUCH_OWNERSHIP) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_BEGIN)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_UPDATE) | to_underlying(XCB_INPUT_XI_EVENT_MASK_RAW_TOUCH_END)
-    | to_underlying(XCB_INPUT_XI_EVENT_MASK_BARRIER_HIT) | to_underlying(XCB_INPUT_XI_EVENT_MASK_BARRIER_LEAVE));
 
 enum TakeScreenshotMode_t
 {
@@ -137,6 +119,7 @@ public:
 	#pragma omp declare simd
 	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
 	const size_t maxCursorPoints = 4096;
+	std::latch async_cursor_latch{1}; //only need to make sure async_thread isn't started before xwayland is initialized
 	
 private:
 	std::atomic<bool> asyncThreadRunning = false;
@@ -154,7 +137,7 @@ private:
 
 	void updateCursorFeedback( bool bForce = false );
 	
-	rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
+	
 	
 	#pragma omp declare simd
 	void AsyncCursorThread();
@@ -172,12 +155,14 @@ private:
 	PointerBarrier m_scaledFocusBarriers[4] = { None };
 
 	xwayland_ctx_t *m_ctx;
-
+	
 	int m_lastX = 0;
 	int m_lastY = 0;
 
 	bool m_bCursorVisibleFeedback = false;
 	bool m_needs_server_flush = false;
+	
+	rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
 };
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;

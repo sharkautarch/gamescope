@@ -12,6 +12,7 @@
 #include <list>
 #include <optional>
 #include <vulkan/vulkan_core.h>
+
 #include "drm.hpp"
 #include "steamcompmgr_shared.hpp"
 

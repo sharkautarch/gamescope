@@ -34,8 +34,6 @@
 #include <X11/Xlib.h>
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
-#include <xcb/xcb.h>
-#include <xcb/xinput.h>
 #include <cstdint>
 #include <drm_mode.h>
 #include <memory>
@@ -1547,9 +1545,6 @@ void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth
 	out_scale_y *= globalScaleRatio;
 }
 
-
-
-
 /**
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
  */
@@ -1596,7 +1591,7 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 	const size_t batch_size = 4;
 	while (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
-			for (sitze_t i = 0; i < batch_size; i++) {
+			for (size_t i = 0; i < batch_size; i++) {
 				buffer.push_back(*(AbsCursorPoints.front()));
 				AbsCursorPoints.pop();
 			}
@@ -1627,6 +1622,8 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 inline void MouseCursor::AsyncCursorThread() {
 	pthread_setname_np( pthread_self(), "gamescope-cursor" );
 	
+	
+	this->async_cursor_latch.wait();
 	static thread_local int localx,localy;
 	
 	int64_t cursor_event_notifier_cached = cursor_event_notifier;
@@ -3132,6 +3129,7 @@ paint_all(bool async)
 		}
 	}
 #endif
+
 	if ( takeScreenshot )
 	{
 		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
@@ -6965,7 +6963,6 @@ handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent 
 	XFlush(ctx->dpy);
 }
 
-
 void xwayland_ctx_t::Dispatch()
 {
 	xwayland_ctx_t *ctx = this;
@@ -7522,6 +7519,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 
 	XFlush(ctx->dpy);
+	ctx->cursor->async_cursor_latch.count_down();
 }
 
 void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
