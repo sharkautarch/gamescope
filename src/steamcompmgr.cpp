@@ -1559,7 +1559,7 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	, m_imageEmpty(false)
 	, m_hideForMovement(true)
 	, m_ctx(ctx)
-	, AbsCursorPoints(4096)
+	, AbsCursorPoints(maxCursorPoints)
 {
 	m_lastX = g_nNestedWidth / 2;
 	m_lastY = g_nNestedHeight / 2;
@@ -1596,7 +1596,7 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 	const size_t batch_size = 4;
 	while (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
-			for (int i = 0; i < batch_size; i++) {
+			for (sitze_t i = 0; i < batch_size; i++) {
 				buffer.push_back(*(AbsCursorPoints.front()));
 				AbsCursorPoints.pop();
 			}
@@ -1626,29 +1626,12 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 
 inline void MouseCursor::AsyncCursorThread() {
 	pthread_setname_np( pthread_self(), "gamescope-cursor" );
-	// \/ snippet from https://stackoverflow.com/a/76576242  \/
+	
 	static thread_local int localx,localy;
 	
 	int64_t cursor_event_notifier_cached = cursor_event_notifier;
-	/*xcb_connection_t *conn = xcb_connect(NULL, NULL);
-	xcb_screen_t *screen = xcb_setup_roots_iterator(xcb_get_setup(conn)).data;
-
-	struct
-	{
-		xcb_input_event_mask_t info;
-		xcb_input_xi_event_mask_t mask;
-	} input_mask;
 	
-	input_mask.info.deviceid = XCB_INPUT_DEVICE_ALL_MASTER;
-	input_mask.info.mask_len = 1;
-	input_mask.mask = xcb_all_events;
-	xcb_input_xi_select_events(conn, screen->root, 1, &input_mask.info);
-
-	xcb_flush(conn);
-
-	xcb_generic_event_t *event;*/
 	while ( (cursor_event_notifier_cached=cursor_event_notifier) > -1 ) {
-	// /\ snippet from https://stackoverflow.com/a/76576242  /\ 
 		
 		cursor_event_notifier.wait(cursor_event_notifier_cached+1); //wait for count to increment
 		
@@ -1687,8 +1670,6 @@ inline void MouseCursor::AsyncCursorThread() {
 		cursor_event_notifier_updated = std::clamp(cursor_event_notifier_updated-amnt_incremented, 0l, 1l);
 		
 		cursor_event_notifier=cursor_event_notifier_updated;
-		//std::this_thread::yield();
-		//sleep_for_nanos(500'000ul); 
 		
 		pause();
 	}

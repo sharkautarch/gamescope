@@ -136,6 +136,7 @@ public:
 	void LaunchAsyncCursorThread();
 	#pragma omp declare simd
 	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
+	const size_t maxCursorPoints = 4096;
 	
 private:
 	std::atomic<bool> asyncThreadRunning = false;
@@ -152,7 +153,7 @@ private:
 	bool getTexture();
 
 	void updateCursorFeedback( bool bForce = false );
-	const size_t maxCursorPoints = 4096;
+	
 	rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
 	
 	#pragma omp declare simd
