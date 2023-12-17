@@ -1668,7 +1668,6 @@ inline void MouseCursor::AsyncCursorThread() {
 		
 		cursor_event_notifier=cursor_event_notifier_updated;
 		
-		pause();
 	}
 	
 	
