@@ -892,7 +892,8 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
-std::atomic<int64_t> cursor_event_notifier = {0};
+std::atomic_signed_lock_free cursor_event_notifier = {0};
+std::atomic_signed_lock_free xcursor_barrier = 0;
 
 uint64_t g_uCurrentBasePlaneCommitID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
@@ -1548,13 +1549,15 @@ void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth
 /**
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
  */
+const size_t maxCursorPoints = 4096;
+rigtorp::SPSCQueue<global_pos> AbsCursorPoints(maxCursorPoints);
+std::latch async_cursor_latch{1};
 MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	: m_texture(0)
 	, m_dirty(true)
 	, m_imageEmpty(false)
 	, m_hideForMovement(true)
 	, m_ctx(ctx)
-	, AbsCursorPoints(maxCursorPoints)
 {
 	m_lastX = g_nNestedWidth / 2;
 	m_lastY = g_nNestedHeight / 2;
@@ -1581,28 +1584,31 @@ inline void MouseCursor::queryGlobalPosition(int &x, int &y)
 inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 {
 	
-	if (!asyncThreadRunning) {
+	/*if (!asyncThreadRunning) {
 		LaunchAsyncCursorThread();
-	}
+	}*/
 	
-	static thread_local global_pos pos = {0,0,0};
-	static thread_local global_pos empty_pos = {0,0,0};
-	static thread_local std::vector<global_pos> buffer;
+	global_pos pos = {0,0,0};
+	const global_pos empty_pos = {0,0,0};
+	static std::vector<global_pos> buffer;
 	const size_t batch_size = 4;
-	if (!buffer.empty()) {
-		pos = buffer.front();
+	{
 		uint64_t t = get_time_in_nanos();
-		if (pos.val != empty_pos.val && t-pos.timestamp < 200'000ul) {//can't be later than .2ms
+		if (!buffer.empty() && t-buffer.front().timestamp > 400'000ul) {
+				buffer.clear();
+		}
+		else if (!buffer.empty() && t - (pos=buffer.back()).timestamp < 400'000ul)
+		{//can't be later than .2ms
 			x=pos.x;
 			y=pos.y;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 			#endif
+			buffer.pop_back();
 			return true;
 		}
-		buffer.clear();
-		pos.val=empty_pos.val;
 	}
+	buffer.clear();
 	
 	if (!AbsCursorPoints.empty()) {
 		if (AbsCursorPoints.size() > batch_size - 1) {
@@ -1704,17 +1710,23 @@ inline void MouseCursor::AsyncCursorThread() {
 	pthread_setname_np( pthread_self(), "gamescope-cursor" );
 	
 	
-	this->async_cursor_latch.wait();
-	static thread_local int localx,localy;
+	async_cursor_latch.wait();
+	int localx,localy;
 	
 	int64_t cursor_event_notifier_cached = cursor_event_notifier;
-	
-	while ( (cursor_event_notifier_cached=cursor_event_notifier) > -1 ) {
+	int64_t prev = 0;
+	while ( (cursor_event_notifier_cached=cursor_event_notifier) > -1 || prev > 0 ) {
 		
 		cursor_event_notifier.wait(cursor_event_notifier_cached+1); //wait for count to increment
 		
+		const int zero = 0;
+		int &status_barrier_lowered = const_cast<int&>(zero);
+		bool last_status=false;
+		if (!(last_status=xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1)))
+			xcursor_barrier.wait(1);
 		
-		int64_t prev = cursor_event_notifier;
+		
+		prev = cursor_event_notifier;
 		int64_t amnt_incremented = std::max(prev-cursor_event_notifier_cached, 0l);
 		
 		
@@ -1724,15 +1736,20 @@ inline void MouseCursor::AsyncCursorThread() {
 		pos.y=localy;
 		pos.timestamp=get_time_in_nanos();
 		if ( AbsCursorPoints.try_push(pos) ) {
-			cursor_event_notifier--;
+			if (amnt_incremented > 1)
+				cursor_event_notifier--;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("AsyncCursorThread() pushed a position time:%lu \n", pos.timestamp);
 			#endif
 		}
 		std::this_thread::yield();
-		std::this_thread::yield();
-		std::this_thread::yield();
+		std::atomic_thread_fence(std::memory_order_seq_cst);
 		for (int i = 0; i < amnt_incremented-1; i++) {
+			if (last_status = xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1))
+				xcursor_barrier.compare_exchange_strong(status_barrier_lowered,last_status);
+			else
+				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
+
 			this->queryGlobalPosition(localx, localy);
 			global_pos pos;
 			pos.x=localx;
@@ -1744,10 +1761,28 @@ inline void MouseCursor::AsyncCursorThread() {
 				xwm_log.infof("AsyncCursorThread() pushed a position time:%lu \n", pos.timestamp);
 				#endif
 			}
-			std::this_thread::yield();
-			std::this_thread::yield();
+		}
+		
+		for (int i = 0; i < (amnt_incremented-1)/2; i++) {
+			if (last_status = xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1))
+				xcursor_barrier.compare_exchange_strong(status_barrier_lowered,last_status);
+			else
+				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
+
+			this->queryGlobalPosition(localx, localy);
+			global_pos pos;
+			pos.x=localx;
+			pos.y=localy;
+			pos.timestamp=get_time_in_nanos();
+			if ( AbsCursorPoints.try_push(pos) ) {
+				#ifdef ASYNC_CURSOR_DEBUG
+				xwm_log.infof("AsyncCursorThread() pushed a position time:%lu \n", pos.timestamp);
+				#endif
+			}
 			std::this_thread::yield();
 		}
+		
+		
 		
 	}
 	#ifdef ASYNC_CURSOR_DEBUG
@@ -2040,7 +2075,6 @@ void MouseCursor::move(int x, int y)
 
 void MouseCursor::updatePosition()
 {
-	cursor_event_notifier++;
 	int x,y;
 	if (!nonBlockingQueryGlobalPosition(x,y))
 		queryGlobalPosition(x, y);
@@ -7601,7 +7635,6 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 
 	XFlush(ctx->dpy);
-	ctx->cursor->async_cursor_latch.count_down();
 }
 
 void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
@@ -7874,6 +7907,7 @@ steamcompmgr_main(int argc, char **argv)
 		gamescope_xwayland_server_t *server = NULL;
 		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			init_xwayland_ctx(i, server);
+		async_cursor_latch.count_down();
 	}
 
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
@@ -7946,7 +7980,14 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		g_SteamCompMgrWaiter.PollEvents();
-		cursor_event_notifier++;
+		
+		
+		
+		xcursor_barrier=0;
+		xcursor_barrier.notify_one();
+		if (cursor_event_notifier < 2)
+			cursor_event_notifier++;
+		
 		cursor_event_notifier.notify_one();
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = g_VBlankTimer.ProcessVBlank() )
 		{
@@ -8090,6 +8131,15 @@ steamcompmgr_main(int argc, char **argv)
 				}
 			}
 		}
+		
+		if (cursor_event_notifier < 2)
+			cursor_event_notifier++;
+		
+		xcursor_barrier=0;
+		xcursor_barrier.notify_one();
+		cursor_event_notifier.notify_one();
+		
+		std::atomic_thread_fence(std::memory_order_acq_rel);
 
 		{
 			gamescope_xwayland_server_t *server = NULL;
@@ -8225,7 +8275,14 @@ steamcompmgr_main(int argc, char **argv)
 			g_upscaleScaler = g_wantedUpscaleScaler;
 			g_upscaleFilter = g_wantedUpscaleFilter;
 		}
-
+		
+		xcursor_barrier=0;
+		xcursor_barrier.notify_one();
+		cursor_event_notifier.notify_one();
+		
+		if (cursor_event_notifier < 2)
+			cursor_event_notifier+=2;
+		
 		// If we're in the middle of a fade, then keep us
 		// as needing a repaint.
 		if ( is_fading_out() )
@@ -8275,7 +8332,7 @@ steamcompmgr_main(int argc, char **argv)
 		if ( BIsVRSession() && !vrsession_visible() )
 			bShouldPaint = false;
 #endif
-
+		
 		if ( bShouldPaint )
 		{
 			paint_all( !vblank && !bVRR );
@@ -8284,6 +8341,7 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
 		}
+		xcursor_barrier=1;
 
 		if ( vblank )
 		{
@@ -8312,7 +8370,15 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			XFlush(root_ctx->dpy);
 		}
-
+		
+		
+		xcursor_barrier=0;
+		xcursor_barrier.notify_one();
+		
+		
+		cursor_event_notifier.notify_one();
+		
+		
 		vulkan_garbage_collect();
 
 		vblank = false;

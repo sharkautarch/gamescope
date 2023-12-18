@@ -5,6 +5,7 @@
 #include <thread>
 #include <atomic>
 #include <latch>
+#include <semaphore>
 extern "C" {
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
@@ -72,8 +73,13 @@ union global_pos {
 	uintmax_t val;
 };
 
-extern std::atomic<int64_t> cursor_event_notifier;
+extern std::atomic_signed_lock_free cursor_event_notifier;
 //#define ASYNC_CURSOR_DEBUG 1
+
+extern std::atomic_signed_lock_free xcursor_barrier; 
+extern rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
+
+extern std::latch async_cursor_latch; //only need to make sure async_thread isn't started before xwayland is initialized
 
 class MouseCursor
 {
@@ -116,11 +122,9 @@ public:
 
 	void GetDesiredSize( int& nWidth, int &nHeight );
 	
-	void LaunchAsyncCursorThread();
+	inline void LaunchAsyncCursorThread();
 	#pragma omp declare simd
 	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
-	const size_t maxCursorPoints = 4096;
-	std::latch async_cursor_latch{1}; //only need to make sure async_thread isn't started before xwayland is initialized
 	
 private:
 	std::atomic<bool> asyncThreadRunning = false;
@@ -141,7 +145,7 @@ private:
 	
 	
 	#pragma omp declare simd
-	void AsyncCursorThread();
+	inline void AsyncCursorThread();
 	 
 	int m_x = 0, m_y = 0;
 	int m_hotspotX = 0, m_hotspotY = 0;
@@ -163,7 +167,6 @@ private:
 	bool m_bCursorVisibleFeedback = false;
 	bool m_needs_server_flush = false;
 	
-	rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
 };
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;
