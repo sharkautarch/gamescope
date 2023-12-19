@@ -64,27 +64,14 @@ enum TakeScreenshotMode_t
 	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
 };
 
-#ifdef __clang__
-union global_pos {
-	struct [[gnu::packed]]  {
-		int32_t x;
-		int32_t y;
-		uint64_t timestamp;
-	};
-	__int128 val;
-};
-#else
-union global_pos {
-	 struct __attribute__((packed)) {
-		int32_t x;
-		int32_t y;
-		uint64_t timestamp;
-	};
-	__int128 val;
-};
-#endif
 
-typedef unsigned int button_mask;
+struct __attribute__((packed)) global_pos  {
+	uint32_t buttonMask;
+	int32_t x;
+	int32_t y;
+	uint64_t timestamp;
+};
+	
 
 
 
@@ -106,7 +93,7 @@ public:
 	int x() const;
 	int y() const;
 
-	void move(int x, int y);
+	bool move(int x, int y);
 	
 	inline void updatePosition();
 	inline void constrainPosition();
@@ -140,7 +127,7 @@ public:
 	void GetDesiredSize( int& nWidth, int &nHeight );
 	
 	#pragma omp declare simd
-	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
+	inline bool nonBlockingQueryGlobalPosition(int &x, int &y, uint32_t &buttonMask);
 	void LaunchAsyncCursorThread();
 protected:
 	void queryGlobalPosition(int &x, int &y);
@@ -151,11 +138,13 @@ protected:
 	xwayland_ctx_t *m_ctx;
 	friend void AsyncCursorThread(MouseCursor *m);
 	std::atomic<bool> asyncThreadRunning = false;
+	inline uint32_t queryPositionsAndMask(int &rootX, int &rootY, int &winX, int &winY);
+	inline void queryGlobalPositionAndMask(int &x, int &y, uint32_t &buttonMask);
 	
 private:
 	
 	void warp(int x, int y);
-	void checkSuspension();
+	void checkSuspension(unsigned int asyncMask=0, bool useAsyncMask=false);
 	
 
 

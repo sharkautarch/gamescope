@@ -1581,10 +1581,28 @@ inline void MouseCursor::queryGlobalPosition(int &x, int &y)
 	queryPositions(x, y, winX, winY);
 }
 
-inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
+inline uint32_t MouseCursor::queryPositionsAndMask(int &rootX, int &rootY, int &winX, int &winY)
 {
-	global_pos pos = {0,0,0};
-	const global_pos empty_pos = {0,0,0};
+	Window window, child;
+	unsigned int mask;
+	XQueryPointer(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy), &window, &child,
+				  &rootX, &rootY, &winX, &winY, &mask);
+	return mask;
+
+}
+
+inline void MouseCursor::queryGlobalPositionAndMask(int &x, int &y, uint32_t &buttonMask)
+{
+	Window window, child;
+	int winX, winY;
+	buttonMask = queryPositionsAndMask(x, y, winX, winY);
+	
+}
+
+inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y, uint32_t &buttonMask)
+{
+	global_pos pos = {0,0,0,0};
+	//const global_pos empty_pos = {0,0,0};
 	static std::vector<global_pos> buffer;
 	const size_t batch_size = 4;
 	{
@@ -1596,6 +1614,7 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 		{//can't be later than .2ms
 			x=pos.x;
 			y=pos.y;
+			buttonMask=pos.buttonMask;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 			#endif
@@ -1622,32 +1641,34 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 			pos = buffer.back();
 			
 		uint64_t t = get_time_in_nanos();
-		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+		if (pos.timestamp != 0ul && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
 			x=pos.x;
 			y=pos.y;
+			buttonMask=pos.buttonMask;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 			#endif
 			return true;
 		}
 		
-		pos.val=empty_pos.val;
+		pos.timestamp=0ul;
 		//buffer.clear();
 		
 	}
 	if (!buffer.empty()) {
 		pos = buffer.front();
 		uint64_t t = get_time_in_nanos();
-		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+		if (pos.timestamp != 0ul && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
 			x=pos.x;
 			y=pos.y;
+			buttonMask=pos.buttonMask;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 			#endif
 			return true;
 		}
 		buffer.clear();
-		pos.val=empty_pos.val;
+		pos.timestamp=0ul;
 	}
 	
 	while (!AbsCursorPoints.empty()) {
@@ -1668,9 +1689,10 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 			pos = buffer.back();
 			
 		uint64_t t = get_time_in_nanos();
-		if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+		if (pos.timestamp != 0ul && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
 			x=pos.x;
 			y=pos.y;
+			buttonMask=pos.buttonMask;
 			#ifdef ASYNC_CURSOR_DEBUG
 			xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 			#endif
@@ -1681,9 +1703,10 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 		if (!buffer.empty()) {
 			pos = buffer.front();
 			uint64_t t = get_time_in_nanos();
-			if (pos.val != empty_pos.val && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
+			if (pos.timestamp != 0ul && t-pos.timestamp < 500'000ul) {//can't be later than .5ms
 				x=pos.x;
 				y=pos.y;
+				buttonMask=pos.buttonMask;
 				#ifdef ASYNC_CURSOR_DEBUG
 				xwm_log.infof("nonBlockingQueryGlobalPosition() succeeded time:%lu\n", t);
 				#endif
@@ -1691,7 +1714,7 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y)
 			}
 		}
 		buffer.clear();
-		pos.val=empty_pos.val;
+		pos.timestamp=0ul;
 		
 	}
 	#ifdef ASYNC_CURSOR_DEBUG
@@ -1707,6 +1730,7 @@ inline void AsyncCursorThread(MouseCursor *m) {
 	
 	async_cursor_latch.wait();
 	int localx,localy;
+	uint32_t buttonMask;
 	
 	int64_t cursor_event_notifier_cached = cursor_event_notifier;
 	int64_t prev = 0;
@@ -1725,10 +1749,11 @@ inline void AsyncCursorThread(MouseCursor *m) {
 		int64_t amnt_incremented = std::max(prev-cursor_event_notifier_cached, 0l);
 		
 		
-		m->queryGlobalPosition(localx, localy);
+		m->queryGlobalPositionAndMask(localx, localy, buttonMask);
 		global_pos pos;
 		pos.x=localx;
 		pos.y=localy;
+		pos.buttonMask=buttonMask;
 		pos.timestamp=get_time_in_nanos();
 		if ( AbsCursorPoints.try_push(pos) ) {
 			if (amnt_incremented > 1)
@@ -1745,10 +1770,11 @@ inline void AsyncCursorThread(MouseCursor *m) {
 			else
 				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
 
-			m->queryGlobalPosition(localx, localy);
+			m->queryGlobalPositionAndMask(localx, localy, buttonMask);
 			global_pos pos;
 			pos.x=localx;
 			pos.y=localy;
+			pos.buttonMask=buttonMask;
 			pos.timestamp=get_time_in_nanos();
 			if ( AbsCursorPoints.try_push(pos) ) {
 				cursor_event_notifier--;
@@ -1764,10 +1790,11 @@ inline void AsyncCursorThread(MouseCursor *m) {
 			else
 				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
 
-			m->queryGlobalPosition(localx, localy);
+			m->queryGlobalPositionAndMask(localx, localy, buttonMask);
 			global_pos pos;
 			pos.x=localx;
 			pos.y=localy;
+			pos.buttonMask=buttonMask;
 			pos.timestamp=get_time_in_nanos();
 			if ( AbsCursorPoints.try_push(pos) ) {
 				#ifdef ASYNC_CURSOR_DEBUG
@@ -1806,10 +1833,14 @@ void MouseCursor::queryButtonMask(unsigned int &mask)
 				  &rootX, &rootY, &winX, &winY, &mask);
 }
 
-void MouseCursor::checkSuspension()
+void MouseCursor::checkSuspension(unsigned int asyncMask, bool useAsyncMask )
 {
 	unsigned int buttonMask;
-	queryButtonMask(buttonMask);
+	if (useAsyncMask)
+		buttonMask=asyncMask;
+	else
+		queryButtonMask(buttonMask);
+	
 
 	bool bWasHidden = m_hideForMovement;
 
@@ -2011,7 +2042,8 @@ void MouseCursor::constrainPosition()
 
 	// Make sure the cursor is somewhere in our jail
 	int rootX, rootY;
-	if (!nonBlockingQueryGlobalPosition(rootX, rootY))
+	uint32_t btnMsk;
+	if (!nonBlockingQueryGlobalPosition(rootX, rootY, btnMsk))
 		queryGlobalPosition(rootX, rootY);
 	
 
@@ -2026,12 +2058,12 @@ void MouseCursor::constrainPosition()
 	}
 }
 
-
-void MouseCursor::move(int x, int y)
+//returns false if cursor wasn't moved
+bool MouseCursor::move(int x, int y)
 {
 	// Some stuff likes to warp in-place
 	if (m_x == x && m_y == y) {
-		return;
+		return false;
 	}
 	m_x = x;
 	m_y = y;
@@ -2053,10 +2085,10 @@ void MouseCursor::move(int x, int y)
 
 	// Ignore the first events as it's likely to be non-user-initiated warps
 	if (!window )
-		return;
+		return false;
 
 	if ( ( window != global_focus.inputFocusWindow || !g_bPendingTouchMovement.exchange(false) ) && window->mouseMoved++ < 5 )
-		return;
+		return false;
 
 	m_lastMovedTime = get_time_in_milliseconds();
 	// Move the cursor back to centre if the window didn't want us to give
@@ -2067,16 +2099,19 @@ void MouseCursor::move(int x, int y)
 	}
 	m_hideForMovement = false;
 	updateCursorFeedback();
+	return true;
 }
 
 void MouseCursor::updatePosition()
 {
 	int x,y;
-	if (!nonBlockingQueryGlobalPosition(x,y))
+	uint32_t buttonMask;
+	bool use_async_fetched_buttonMask = false;
+	if (!(use_async_fetched_buttonMask = nonBlockingQueryGlobalPosition(x,y,buttonMask) ))
 		queryGlobalPosition(x, y);
 	
-	move(x, y);
-	checkSuspension();
+	use_async_fetched_buttonMask &= !move(x, y);
+	checkSuspension(buttonMask, use_async_fetched_buttonMask);
 }
 
 int MouseCursor::x() const
