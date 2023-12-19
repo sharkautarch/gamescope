@@ -7,6 +7,7 @@
 #include "../src/color_helpers.h"
 #include "../src/layer_defines.h"
 
+#include <charconv>
 #include <cstdio>
 #include <vector>
 #include <algorithm>
@@ -699,20 +700,41 @@ namespace GamescopeWSILayer {
       return s_isRunningUnderGamescope;
     }
 
+    template <typename T>
+    static std::optional<T> parseEnv(const char *envName) {
+      const char *str = std::getenv(envName);
+      if (!str || !*str)
+        return std::nullopt;
+
+      T value;
+      auto result = std::from_chars(str, str + strlen(str), value);
+      if (result.ec != std::errc{})
+        return std::nullopt;
+
+      return value;
+    }
+
     static uint32_t getMinImageCount() {
-      {
-        const char *overrideStr = std::getenv("GAMESCOPE_WSI_MIN_IMAGE_COUNT");
-        if (overrideStr && *overrideStr)
-          return uint32_t(std::atoi(overrideStr));
-      }
+      static uint32_t s_minImageCount = []() -> uint32_t {
+        if (auto minCount = parseEnv<uint32_t>("GAMESCOPE_WSI_MIN_IMAGE_COUNT")) {
+          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by GAMESCOPE_WSI_MIN_IMAGE_COUNT: %u\n", *minCount);
+          return *minCount;
+        }
 
-      {
-        const char *overrideStr = std::getenv("vk_x11_override_min_image_count");
-        if (overrideStr && *overrideStr)
-          return uint32_t(std::atoi(overrideStr));
-      }
+        if (auto minCount = parseEnv<uint32_t>("vk_wsi_override_min_image_count")) {
+          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_wsi_override_min_image_count: %u\n", *minCount);
+          return *minCount;
+        }
 
-      return 3;
+        if (auto minCount = parseEnv<uint32_t>("vk_x11_override_min_image_count")) {
+          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_x11_override_min_image_count: %u\n", *minCount);
+          return *minCount;
+        }
+
+        return 3u;
+      }();
+
+      return s_minImageCount;
     }
 
     static constexpr wl_registry_listener s_registryListener = {
