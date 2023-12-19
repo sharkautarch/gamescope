@@ -64,14 +64,29 @@ enum TakeScreenshotMode_t
 	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
 };
 
+#ifdef __clang__
 union global_pos {
-	struct {
-		int x;
-		int y;
+	struct [[gnu::packed]]  {
+		int32_t x;
+		int32_t y;
 		uint64_t timestamp;
 	};
-	uintmax_t val;
+	__int128 val;
 };
+#else
+union global_pos {
+	 struct __attribute__((packed)) {
+		int32_t x;
+		int32_t y;
+		uint64_t timestamp;
+	};
+	__int128 val;
+};
+#endif
+
+typedef unsigned int button_mask;
+
+
 
 extern std::atomic_signed_lock_free cursor_event_notifier;
 //#define ASYNC_CURSOR_DEBUG 1
@@ -80,6 +95,8 @@ extern std::atomic_signed_lock_free xcursor_barrier;
 extern rigtorp::SPSCQueue<global_pos> AbsCursorPoints;
 
 extern std::latch async_cursor_latch; //only need to make sure async_thread isn't started before xwayland is initialized
+
+
 
 class MouseCursor
 {
@@ -122,21 +139,26 @@ public:
 
 	void GetDesiredSize( int& nWidth, int &nHeight );
 	
-	inline void LaunchAsyncCursorThread();
 	#pragma omp declare simd
 	inline bool nonBlockingQueryGlobalPosition(int &x, int &y);
+	void LaunchAsyncCursorThread();
+protected:
+	void queryGlobalPosition(int &x, int &y);
+
+	void queryPositions(int &rootX, int &rootY, int &winX, int &winY);
+
+	void queryButtonMask(unsigned int &mask);
+	xwayland_ctx_t *m_ctx;
+	friend void AsyncCursorThread(MouseCursor *m);
+	std::atomic<bool> asyncThreadRunning = false;
 	
 private:
-	std::atomic<bool> asyncThreadRunning = false;
+	
 	void warp(int x, int y);
 	void checkSuspension();
 	
-	#pragma omp declare simd
-	void queryGlobalPosition(int &x, int &y);
-	#pragma omp declare simd
-	void queryPositions(int &rootX, int &rootY, int &winX, int &winY);
-	#pragma omp declare simd
-	void queryButtonMask(unsigned int &mask);
+
+
 
 	bool getTexture();
 
@@ -144,8 +166,7 @@ private:
 	
 	
 	
-	#pragma omp declare simd
-	inline void AsyncCursorThread();
+	
 	 
 	int m_x = 0, m_y = 0;
 	int m_hotspotX = 0, m_hotspotY = 0;
@@ -159,7 +180,7 @@ private:
 
 	PointerBarrier m_scaledFocusBarriers[4] = { None };
 
-	xwayland_ctx_t *m_ctx;
+	
 	
 	int m_lastX = 0;
 	int m_lastY = 0;
@@ -168,6 +189,7 @@ private:
 	bool m_needs_server_flush = false;
 	
 };
+
 
 extern std::vector< wlr_surface * > wayland_surfaces_deleted;
 
