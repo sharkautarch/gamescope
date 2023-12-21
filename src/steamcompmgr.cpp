@@ -6581,7 +6581,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
+inline bool handle_done_commit( steamcompmgr_win_t * __restrict__ w, xwayland_ctx_t * __restrict__ ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -6669,7 +6669,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 }
 
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
+void handle_done_commits_xwayland( xwayland_ctx_t * __restrict__ ctx, bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 

@@ -709,8 +709,9 @@ public:
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
-	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
-	uint64_t submitInternal( CVulkanCmdBuffer* cmdBuf );
+	inline uint64_t __attribute__((always_inline)) submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
+	inline uint64_t __attribute__((always_inline)) submitInternal( CVulkanCmdBuffer* cmdBuf );
+	uint64_t submitInternal_notInlined( CVulkanCmdBuffer* cmdBuffer );
 	void wait(uint64_t sequence, bool reset = true);
 	void waitIdle(bool reset = true);
 	void garbageCollect();
@@ -860,7 +861,7 @@ public:
 	void begin();
 	void end();
 	void bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture);
-	void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d);
+	inline __attribute__((always_inline)) void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d);
 	void setTextureStorage(bool storage);
 	void setTextureSrgb(uint32_t slot, bool srgb);
 	void setSamplerNearest(uint32_t slot, bool nearest);
@@ -870,7 +871,7 @@ public:
 	template<class PushData, class... Args>
 	void uploadConstants(Args&&... args);
 	void bindPipeline(VkPipeline pipeline);
-	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
+	inline void __attribute__((always_inline)) dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
 	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
 

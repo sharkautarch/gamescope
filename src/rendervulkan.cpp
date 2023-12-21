@@ -1147,7 +1147,7 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
+inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((always_inline)) CVulkanDevice::commandBuffer()
 {
 	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
 	if (m_unusedCmdBufs.empty())
@@ -1179,7 +1179,7 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 	return cmdBuffer;
 }
 
-uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
+inline uint64_t __attribute__((always_inline)) CVulkanDevice::submitInternal( CVulkanCmdBuffer* __restrict__ cmdBuffer )
 {
 	cmdBuffer->end();
 
@@ -1219,7 +1219,48 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 	return nextSeqNo;
 }
 
-uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
+//for some reason, inlining this into reshade_effect_manager.cpp doesn't work
+uint64_t CVulkanDevice::submitInternal_notInlined( CVulkanCmdBuffer* __restrict__ cmdBuffer )
+{
+	cmdBuffer->end();
+
+	// The seq no of the last submission.
+	const uint64_t lastSubmissionSeqNo = m_submissionSeqNo++;
+
+	// This is the seq no of the command buffer we are going to submit.
+	const uint64_t nextSeqNo = lastSubmissionSeqNo + 1;
+
+	VkTimelineSemaphoreSubmitInfo timelineInfo = {
+		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
+		// no need to ensure order of cmd buffer submission, we only have one queue
+		.waitSemaphoreValueCount = 0,
+		.pWaitSemaphoreValues = nullptr,
+		.signalSemaphoreValueCount = 1,
+		.pSignalSemaphoreValues = &nextSeqNo,
+	};
+
+	VkCommandBuffer rawCmdBuffer = cmdBuffer->rawBuffer();
+
+	VkSubmitInfo submitInfo = {
+		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+		.pNext = &timelineInfo,
+		.commandBufferCount = 1,
+		.pCommandBuffers = &rawCmdBuffer,
+		.signalSemaphoreCount = 1,
+		.pSignalSemaphores = &m_scratchTimelineSemaphore,
+	};
+
+	VkResult res = vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE );
+
+	if ( res != VK_SUCCESS )
+	{
+		assert( 0 );
+	}
+
+	return nextSeqNo;
+}
+
+inline __attribute__((always_inline)) uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 {
 	uint64_t nextSeqNo = submitInternal(cmdBuffer.get());
 	m_pendingCmdBufs.emplace(nextSeqNo, std::move(cmdBuffer));
@@ -1277,7 +1318,7 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
 }
 
-CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
+CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *__restrict__ parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
 {
 }
@@ -1322,7 +1363,7 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture
 		m_textureRefs.emplace(texture.get(), texture);
 }
 
-void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
+inline void __attribute__((always_inline)) CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
 {
 	m_shaperLut[slot] = lut1d.get();
 	m_lut3D[slot] = lut3d.get();
@@ -1382,7 +1423,7 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+inline __attribute__((always_inline)) void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 {
 	for (auto src : m_boundTextures)
 	{
@@ -3935,7 +3976,8 @@ bool vulkan_supports_modifiers(void)
 static void texture_destroy( struct wlr_texture *wlr_texture )
 {
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_texture;
-	wlr_buffer_unlock( tex->buf );
+	if (tex->buf != nullptr)
+		wlr_buffer_unlock( tex->buf );
 	delete tex;
 }
 

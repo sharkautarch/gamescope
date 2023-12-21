@@ -1,0 +1,32 @@
+From 1bb65e860cb904b01d3fadce74015fe7dd0b8e7b Mon Sep 17 00:00:00 2001
+From: sharkautarch <128002472+sharkautarch@users.noreply.github.com>
+Date: Thu, 21 Dec 2023 18:05:43 -0500
+Subject: [PATCH]  slight performance tweak to wlr_buffer_unlock
+
+---
+ types/buffer/buffer.c | 6 +++---
+ 1 file changed, 3 insertions(+), 3 deletions(-)
+
+diff --git a/types/buffer/buffer.c b/types/buffer/buffer.c
+index a8e9c54d..73fc1884 100644
+--- a/types/buffer/buffer.c
++++ b/types/buffer/buffer.c
+@@ -49,12 +49,12 @@ struct wlr_buffer *wlr_buffer_lock(struct wlr_buffer *buffer) {
+ 	return buffer;
+ }
+ 
+-void wlr_buffer_unlock(struct wlr_buffer *buffer) {
++inline __attribute__((always_inline)) void wlr_buffer_unlock(struct wlr_buffer * __restrict__ buffer) {
+ 	if (buffer == NULL) {
+ 		return;
+ 	}
+-
+-	assert(buffer->n_locks > 0);
++	
++	//assert(buffer->n_locks > 0);
+ 	buffer->n_locks--;
+ 
+ 	if (buffer->n_locks == 0) {
+-- 
+2.43.0
+
