@@ -1091,7 +1091,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
                 m_cmdBuffer->reset();
                 m_cmdBuffer->begin();
                 m_cmdBuffer->copyBufferToImage(scratchBuffer, 0, 0, texture);
-                device->submitInternal(&*m_cmdBuffer);
+                device->submitInternal_notInlined(&*m_cmdBuffer);
                 device->waitIdle(false);
 
                 free(data);
@@ -1116,7 +1116,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
             m_cmdBuffer->insertBarrier();
             device->vk.CmdClearColorImage(m_cmdBuffer->rawBuffer(), texture->vkImage(), VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
             m_cmdBuffer->markDirty(texture.get());
-            device->submitInternal(&*m_cmdBuffer);
+            device->submitInternal_notInlined(&*m_cmdBuffer);
             device->waitIdle(false);
         }
 
@@ -1789,7 +1789,7 @@ uint64_t ReshadeEffectPipeline::execute(std::shared_ptr<CVulkanTexture> inImage,
     if (lastRT)
         *outImage = lastRT;
 
-    return device->submitInternal(&*m_cmdBuffer);
+    return device->submitInternal_notInlined(&*m_cmdBuffer);
 }
 
 std::shared_ptr<CVulkanTexture> ReshadeEffectPipeline::findTexture(std::string_view name)
