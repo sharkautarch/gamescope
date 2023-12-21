@@ -24,7 +24,7 @@ namespace gamescope
         uint64_t ulWakeupTime = 0;
     };
 
-    class CVBlankTimer : public gamescope::IWaitable
+    class CVBlankTimer : public ITimerWaitable
     {
     public:
         static constexpr uint64_t kSecInNanoSecs = 1'000'000'000ul;
@@ -57,7 +57,7 @@ namespace gamescope
         void UpdateLastDrawTime( uint64_t ulNanos );
 
         void WaitToBeArmed();
-        void RearmTimer( bool bPreemptive );
+        void ArmNextVBlank( bool bPreemptive );
 
         bool UsingTimerFD() const;
         int GetFD() final;
@@ -80,7 +80,6 @@ namespace gamescope
         // Does not cover m_ulLastVBlank, this is just atomic.
         std::mutex m_ScheduleMutex;
         VBlankScheduleTime m_TimerFDSchedule{};
-        int m_nTimerFD = -1;
 
         std::thread m_NudgeThread;
         int m_nNudgePipe[2] = { -1, -1 };

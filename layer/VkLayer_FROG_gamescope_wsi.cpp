@@ -1013,9 +1013,14 @@ namespace GamescopeWSILayer {
           nits_to_u16(metadata.maxContentLightLevel),
           nits_to_u16(metadata.maxFrameAverageLightLevel));
 
-          fprintf(stderr, "[Gamescope WSI] VkHdrMetadataEXT: mastering luminance min %f nits, max %f nits\n", metadata.minLuminance, metadata.maxLuminance);
-          fprintf(stderr, "[Gamescope WSI] VkHdrMetadataEXT: maxContentLightLevel %f nits\n", metadata.maxContentLightLevel);
-          fprintf(stderr, "[Gamescope WSI] VkHdrMetadataEXT: maxFrameAverageLightLevel %f nits\n", metadata.maxFrameAverageLightLevel);
+          fprintf(stderr, "[Gamescope WSI] VkHdrMetadataEXT: display primaries:\n");
+          fprintf(stderr, "                                      r: %.4g %.4g\n", metadata.displayPrimaryRed.x, metadata.displayPrimaryRed.y);
+          fprintf(stderr, "                                      g: %.4g %.4g\n", metadata.displayPrimaryGreen.x, metadata.displayPrimaryGreen.y);
+          fprintf(stderr, "                                      b: %.4g %.4g\n", metadata.displayPrimaryBlue.x, metadata.displayPrimaryBlue.y);
+          fprintf(stderr, "                                      w: %.4g %.4g\n", metadata.whitePoint.x, metadata.whitePoint.y);
+          fprintf(stderr, "                                  mastering luminance: min %g nits, max %g nits\n", metadata.minLuminance, metadata.maxLuminance);
+          fprintf(stderr, "                                  maxContentLightLevel: %g nits\n", metadata.maxContentLightLevel);
+          fprintf(stderr, "                                  maxFrameAverageLightLevel: %g nits\n", metadata.maxFrameAverageLightLevel);
       }
     }
 

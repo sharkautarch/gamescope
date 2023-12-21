@@ -4,12 +4,15 @@
 #include <stdint.h>
 #include <fcntl.h>
 #include <sys/epoll.h>
+#include <sys/timerfd.h>
 
 #include <functional>
 
 #include "log.hpp"
 
 extern LogScope g_WaitableLog;
+
+timespec nanos_to_timespec( uint64_t ulNanos );
 
 namespace gamescope
 {
@@ -75,7 +78,10 @@ namespace gamescope
             for ( int i = 0; i < 2; i++ )
             {
                 if ( m_nFDs[i] >= 0 )
+                {
                     close( m_nFDs[i] );
+                    m_nFDs[i] = -1;
+                }
             }
         }
 
@@ -125,6 +131,75 @@ namespace gamescope
         }
     private:
         int m_nFD;
+        std::function<void()> m_fnPollFunc;
+    };
+
+    class ITimerWaitable : public IWaitable
+    {
+    public:
+        ITimerWaitable()
+        {
+            m_nFD = timerfd_create( CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC );
+			if ( m_nFD < 0 )
+			{
+				g_WaitableLog.errorf_errno( "Failed to create timerfd." );
+				abort();
+			}
+        }
+
+        ~ITimerWaitable()
+        {
+            Shutdown();
+        }
+
+        void Shutdown()
+        {
+            if ( m_nFD >= 0 )
+            {
+                close( m_nFD );
+                m_nFD = -1;
+            }
+        }
+
+        void ArmTimer( uint64_t ulScheduledWakeupTime, bool bRepeatingRelative = false )
+        {
+            timespec wakeupTimeSpec = nanos_to_timespec( ulScheduledWakeupTime );
+
+			itimerspec timerspec =
+			{
+				.it_interval = bRepeatingRelative ? wakeupTimeSpec : timespec{},
+				.it_value = bRepeatingRelative ? timespec{} : wakeupTimeSpec,
+			};
+			if ( timerfd_settime( m_nFD, TFD_TIMER_ABSTIME, &timerspec, NULL ) < 0 )
+				g_WaitableLog.errorf_errno( "timerfd_settime failed!" );
+        }
+
+        void DisarmTimer()
+        {
+            ArmTimer( 0ul, false );
+        }
+
+        int GetFD()
+        {
+            return m_nFD;
+        }
+    private:
+        int m_nFD = -1;
+    };
+
+    class CTimerFunction final : public ITimerWaitable
+    {
+    public:
+        CTimerFunction( std::function<void()> fnPollFunc )
+            : m_fnPollFunc{ fnPollFunc }
+        {
+        }
+
+        void OnPollIn() final
+        {
+            m_fnPollFunc();
+        }
+    private:
         std::function<void()> m_fnPollFunc;
     };
 

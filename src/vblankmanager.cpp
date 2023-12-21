@@ -11,7 +11,6 @@
 #include <assert.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <sys/timerfd.h>
 
 #include "gpuvis_trace_utils.h"
 
@@ -43,12 +42,6 @@ namespace gamescope
 		if ( bShouldUseTimerFD )
 		{
 			g_VBlankLog.infof( "Using timerfd." );
-			m_nTimerFD = timerfd_create( CLOCK_MONOTONIC, TFD_NONBLOCK | TFD_CLOEXEC );
-			if ( m_nTimerFD < 0 )
-			{
-				g_VBlankLog.errorf_errno( "Failed to create VBlankTimer timerfd." );
-				abort();
-			}
 		}
 		else
 		{
@@ -84,18 +77,12 @@ namespace gamescope
 		m_bArmed = true;
 		m_bArmed.notify_all();
 
-		if ( m_nTimerFD >= 0 )
-		{
-			close( m_nTimerFD );
-			m_nTimerFD = 0;
-		}
-
 		for ( int i = 0; i < 2; i++ )
 		{
 			if ( m_nNudgePipe[ i ] >= 0 )
 			{
 				close ( m_nNudgePipe[ i ] );
-				m_nNudgePipe[ i ] = 0;
+				m_nNudgePipe[ i ] = -1;
 			}
 		}
 	}
@@ -226,7 +213,7 @@ namespace gamescope
 		if ( bReArmTimer )
 		{
 			// Force timer re-arm with the new vblank timings.
-			RearmTimer( false );
+			ArmNextVBlank( false );
 		}
 	}
 
@@ -251,7 +238,7 @@ namespace gamescope
 		m_bArmed.wait( false );
 	}
 
-	void CVBlankTimer::RearmTimer( bool bPreemptive )
+	void CVBlankTimer::ArmNextVBlank( bool bPreemptive )
 	{
 		std::unique_lock lock( m_ScheduleMutex );
 
@@ -267,24 +254,18 @@ namespace gamescope
 		{
 			m_TimerFDSchedule = CalcNextWakeupTime( bPreemptive );
 
-			itimerspec timerspec =
-			{
-				.it_interval = timespec{},
-				.it_value = nanos_to_timespec( m_TimerFDSchedule.ulScheduledWakeupPoint ),
-			};
-			if ( timerfd_settime( m_nTimerFD, TFD_TIMER_ABSTIME, &timerspec, NULL ) < 0 )
-				g_VBlankLog.errorf_errno( "timerfd_settime failed!" );
+			ITimerWaitable::ArmTimer( m_TimerFDSchedule.ulScheduledWakeupPoint );
 		}
 	}
 
 	bool CVBlankTimer::UsingTimerFD() const
 	{
-		return m_nTimerFD >= 0;
+		return m_nNudgePipe[ 0 ] < 0;
 	}
 
 	int CVBlankTimer::GetFD()
 	{
-		return UsingTimerFD() ? m_nTimerFD : m_nNudgePipe[ 0 ];
+		return UsingTimerFD() ? ITimerWaitable::GetFD() : m_nNudgePipe[ 0 ];
 	}
 
 	void CVBlankTimer::OnPollIn()
@@ -317,10 +298,7 @@ namespace gamescope
 
 			gpuvis_trace_printf( "vblank timerfd wakeup" );
 
-			// Disarm timer.
-			itimerspec timerspec{};
-			if ( timerfd_settime( m_nTimerFD, TFD_TIMER_ABSTIME, &timerspec, NULL ) < 0 )
-				g_VBlankLog.errorf_errno( "timerfd_settime failed!" );
+			ITimerWaitable::DisarmTimer();
 		}
 		else
 		{
@@ -335,13 +313,13 @@ namespace gamescope
 						continue;
 
 					g_VBlankLog.errorf_errno( "Failed to read nudge pipe. Pre-emptively re-arming." );
-					RearmTimer( true );
+					ArmNextVBlank( true );
 					return;
 				}
 				else if ( ret != sizeof( VBlankTime ) )
 				{
 					g_VBlankLog.errorf( "Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming." );
-					RearmTimer( true );
+					ArmNextVBlank( true );
 					return;
 				}
 				else
@@ -354,7 +332,7 @@ namespace gamescope
 			if ( ulDiff > 1'000'000ul )
 			{
 				gpuvis_trace_printf( "Ignoring stale vblank... Pre-emptively re-arming." );
-				RearmTimer( true );
+				ArmNextVBlank( true );
 				return;
 			}
 
