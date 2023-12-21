@@ -1727,7 +1727,7 @@ void wlserver_run(void)
 	if ( pipe2( g_wlserverNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 	{
 		wl_log.errorf_errno( "wlserver: pipe2 failed" );
-		cursor_event_notifier = -1;
+		cursor_event_notifier = -1000;
 		exit( 1 );
 	}
 
@@ -1809,7 +1809,7 @@ void wlserver_run(void)
 void wlserver_force_shutdown()
 {
     assert( wlserver_is_lock_held() );
-    cursor_event_notifier = -1;
+    cursor_event_notifier = -1000;
     if (wlserver.display)
     {
         if ( write( g_wlserverNudgePipe[ 1 ], "\n", 1 ) < 0 )

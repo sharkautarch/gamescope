@@ -8112,13 +8112,12 @@ steamcompmgr_main(int argc, char **argv)
 				vulkan_remake_output_images();
 			}
 			
-			if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0)) {
+			if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0, std::memory_order_seq_cst, std::memory_order_relaxed)) {
 				xcursor_barrier.notify_one();
-				std::atomic_thread_fence(std::memory_order_acq_rel);
+				std::atomic_thread_fence(std::memory_order_consume);
 			}
 			
-			if (cursor_event_notifier < 2) 
-				cursor_event_notifier++;
+			cursor_event_notifier.fetch_or(1, std::memory_order_relaxed);
 			cursor_event_notifier.notify_one();
 
 			{
@@ -8179,12 +8178,12 @@ steamcompmgr_main(int argc, char **argv)
 		
 		
 		
-		if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0)) {
+		if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0, std::memory_order_seq_cst, std::memory_order_relaxed)) {
 			xcursor_barrier.notify_one();
-			std::atomic_thread_fence(std::memory_order_acq_rel);
+			std::atomic_thread_fence(std::memory_order_consume);
 		}
 		
-		if (cursor_event_notifier < 2) 
+		if (cursor_event_notifier < 2)
 			cursor_event_notifier++;
 		cursor_event_notifier.notify_one();
 
@@ -8322,7 +8321,7 @@ steamcompmgr_main(int argc, char **argv)
 			g_upscaleFilter = g_wantedUpscaleFilter;
 		}
 		
-		if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0)) {
+		if (xcursor_barrier.compare_exchange_strong(status_barrier_passed, 0, std::memory_order_seq_cst, std::memory_order_relaxed)) {
 			xcursor_barrier.notify_one();
 			cursor_event_notifier.notify_one();
 		}
