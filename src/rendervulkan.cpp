@@ -1179,7 +1179,7 @@ inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((always_inline)) CVulkanD
 	return cmdBuffer;
 }
 
-uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
+inline uint64_t __attribute__((always_inline)) CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 {
 	cmdBuffer->end();
 

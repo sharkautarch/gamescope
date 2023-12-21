@@ -710,7 +710,7 @@ public:
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	inline uint64_t __attribute__((always_inline)) submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
-	uint64_t submitInternal( CVulkanCmdBuffer* cmdBuf );
+	inline uint64_t __attribute__((always_inline)) submitInternal( CVulkanCmdBuffer* cmdBuf );
 	void wait(uint64_t sequence, bool reset = true);
 	void waitIdle(bool reset = true);
 	void garbageCollect();
