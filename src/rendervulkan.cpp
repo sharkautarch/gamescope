@@ -1179,7 +1179,7 @@ inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((always_inline)) CVulkanD
 	return cmdBuffer;
 }
 
-inline uint64_t __attribute__((always_inline)) CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
+inline uint64_t __attribute__((always_inline)) CVulkanDevice::submitInternal( CVulkanCmdBuffer* __restrict__ cmdBuffer )
 {
 	cmdBuffer->end();
 
@@ -1220,7 +1220,7 @@ inline uint64_t __attribute__((always_inline)) CVulkanDevice::submitInternal( CV
 }
 
 //for some reason, inlining this into reshade_effect_manager.cpp doesn't work
-uint64_t CVulkanDevice::submitInternal_notInlined( CVulkanCmdBuffer* cmdBuffer )
+uint64_t CVulkanDevice::submitInternal_notInlined( CVulkanCmdBuffer* __restrict__ cmdBuffer )
 {
 	cmdBuffer->end();
 
@@ -1318,7 +1318,7 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
 }
 
-CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
+CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *__restrict__ parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
 {
 }
@@ -3976,7 +3976,8 @@ bool vulkan_supports_modifiers(void)
 static void texture_destroy( struct wlr_texture *wlr_texture )
 {
 	VulkanWlrTexture_t *tex = (VulkanWlrTexture_t *)wlr_texture;
-	wlr_buffer_unlock( tex->buf );
+	if (tex->buf != nullptr)
+		wlr_buffer_unlock( tex->buf );
 	delete tex;
 }
 
