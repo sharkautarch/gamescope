@@ -1147,7 +1147,7 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
+inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((always_inline)) CVulkanDevice::commandBuffer()
 {
 	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
 	if (m_unusedCmdBufs.empty())
@@ -1219,7 +1219,7 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 	return nextSeqNo;
 }
 
-uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
+inline __attribute__((always_inline)) uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 {
 	uint64_t nextSeqNo = submitInternal(cmdBuffer.get());
 	m_pendingCmdBufs.emplace(nextSeqNo, std::move(cmdBuffer));
@@ -1322,7 +1322,7 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture
 		m_textureRefs.emplace(texture.get(), texture);
 }
 
-void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
+inline void __attribute__((always_inline)) CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
 {
 	m_shaperLut[slot] = lut1d.get();
 	m_lut3D[slot] = lut3d.get();
@@ -1382,7 +1382,7 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+inline __attribute__((always_inline)) void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 {
 	for (auto src : m_boundTextures)
 	{
