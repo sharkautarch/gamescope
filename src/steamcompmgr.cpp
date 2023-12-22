@@ -1565,7 +1565,7 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	updateCursorFeedback( true );
 }
 
-inline void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
+inline void MouseCursor::queryPositions(int & __restrict__ rootX, int & __restrict__ rootY, int & __restrict__ winX, int & __restrict__ winY)
 {
 	Window window, child;
 	unsigned int mask;
@@ -1575,13 +1575,13 @@ inline void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &
 
 }
 
-inline void MouseCursor::queryGlobalPosition(int &x, int &y)
+inline void MouseCursor::queryGlobalPosition(int & __restrict__ x, int & __restrict__ y)
 {
 	int winX, winY;
 	queryPositions(x, y, winX, winY);
 }
 
-inline uint32_t MouseCursor::queryPositionsAndMask(int &rootX, int &rootY, int &winX, int &winY)
+inline uint32_t MouseCursor::queryPositionsAndMask(int & __restrict__ rootX, int & __restrict__ rootY, int & __restrict__ winX, int & __restrict__ winY)
 {
 	Window window, child;
 	unsigned int mask;
@@ -1591,7 +1591,7 @@ inline uint32_t MouseCursor::queryPositionsAndMask(int &rootX, int &rootY, int &
 
 }
 
-inline void MouseCursor::queryGlobalPositionAndMask(int &x, int &y, uint32_t &buttonMask)
+inline void MouseCursor::queryGlobalPositionAndMask(int & __restrict__ x, int & __restrict__ y, uint32_t &buttonMask)
 {
 	Window window, child;
 	int winX, winY;
@@ -1599,7 +1599,7 @@ inline void MouseCursor::queryGlobalPositionAndMask(int &x, int &y, uint32_t &bu
 	
 }
 
-inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y, uint32_t &buttonMask)
+inline bool MouseCursor::nonBlockingQueryGlobalPosition(int & __restrict__ x, int & __restrict__ y, uint32_t & __restrict__ buttonMask)
 {
 	global_pos pos = {0,0,0,0};
 	//const global_pos empty_pos = {0,0,0};
@@ -1818,7 +1818,7 @@ void MouseCursor::LaunchAsyncCursorThread() {
 }
 
 
-void MouseCursor::queryButtonMask(unsigned int &mask)
+void MouseCursor::queryButtonMask(unsigned int & __restrict__ mask)
 {
 	Window window, child;
 	int rootX, rootY, winX, winY;
@@ -1838,7 +1838,7 @@ void MouseCursor::checkSuspension(unsigned int asyncMask, bool useAsyncMask )
 
 	bool bWasHidden = m_hideForMovement;
 
-	steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
+	steamcompmgr_win_t * __restrict__ window = m_ctx->focus.inputFocusWindow;
 	if (window && window->ignoreNextClickForVisibility)
 	{
 		window->ignoreNextClickForVisibility--;
@@ -2124,7 +2124,7 @@ bool MouseCursor::getTexture()
 		return !m_imageEmpty;
 	}
 
-	auto *image = XFixesGetCursorImage(m_ctx->dpy);
+	auto * __restrict__ image = XFixesGetCursorImage(m_ctx->dpy);
 
 	if (!image) {
 		return false;
@@ -2244,7 +2244,7 @@ bool MouseCursor::getTexture()
 	return true;
 }
 
-void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
+void MouseCursor::GetDesiredSize( int& __restrict__ nWidth, int & __restrict__ nHeight )
 {
 	int nSize = g_nBaseCursorScale;
 	if ( g_nCursorScaleHeight > 0 )
@@ -2257,7 +2257,7 @@ void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
 	nHeight = nSize;
 }
 
-void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, struct FrameInfo_t *frameInfo)
+void MouseCursor::paint(steamcompmgr_win_t * __restrict__ window, steamcompmgr_win_t * __restrict__ fit, struct FrameInfo_t * __restrict__ frameInfo)
 {
 	if ( m_hideForMovement || m_imageEmpty ) {
 		return;
@@ -2415,8 +2415,8 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 }
 
 static void
-paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
-			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+paint_window(steamcompmgr_win_t * __restrict__ w, steamcompmgr_win_t * __restrict__ scaleW, struct FrameInfo_t * __restrict__ frameInfo,
+			  MouseCursor * __restrict__ cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t * __restrict__ fit = nullptr )
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
