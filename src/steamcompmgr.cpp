@@ -1724,7 +1724,7 @@ inline bool MouseCursor::nonBlockingQueryGlobalPosition(int &x, int &y, uint32_t
 	return false;
 }
 
-inline void AsyncCursorThread(MouseCursor *m) {
+inline void AsyncCursorThread(MouseCursor * __restrict__ m) {
 	pthread_setname_np( pthread_self(), "gamescope-cursor" );
 	
 	
@@ -1765,9 +1765,7 @@ inline void AsyncCursorThread(MouseCursor *m) {
 		std::this_thread::yield();
 		std::atomic_thread_fence(std::memory_order_seq_cst);
 		for (int i = 0; i < amnt_incremented-1; i++) {
-			if ( xcursor_barrier.load(std::memory_order_consume) != -1 && xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1) )
-				xcursor_barrier.compare_exchange_strong(status_barrier_lowered,last_status);
-			else
+			if ( xcursor_barrier.load(std::memory_order_consume) == -1 || !xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1) )
 				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
 
 			m->queryGlobalPositionAndMask(localx, localy, buttonMask);
@@ -1785,9 +1783,7 @@ inline void AsyncCursorThread(MouseCursor *m) {
 		}
 		
 		for (int i = 0; i < (amnt_incremented-1)/2; i++) {
-			if ( xcursor_barrier.load(std::memory_order_consume) != -1 && xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1) )
-				xcursor_barrier.compare_exchange_strong(status_barrier_lowered,last_status);
-			else
+			if ( xcursor_barrier.load(std::memory_order_consume) == -1 || !xcursor_barrier.compare_exchange_strong(status_barrier_lowered,-1) )
 				break; //always check that gamescope-xwm isn't already doing a query to prevent us from contending with it for access to xlib
 
 			m->queryGlobalPositionAndMask(localx, localy, buttonMask);
@@ -1803,8 +1799,6 @@ inline void AsyncCursorThread(MouseCursor *m) {
 			}
 			std::this_thread::yield();
 		}
-		
-		
 		
 	}
 	//XUnlockDisplay(m_ctx->dpy);
@@ -8385,9 +8379,9 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
 		}
-		
-		
-		xcursor_barrier=1;
+		 
+		xcursor_barrier = 1;
+			
 		
 		if ( vblank )
 		{
@@ -8398,9 +8392,11 @@ steamcompmgr_main(int argc, char **argv)
 			// so we don't stop vblanking forever.
 			g_VBlankTimer.ArmNextVBlank( true );
 		}
-
+		
+		
 		update_vrr_atoms(root_ctx, false, &flush_root);
 
+		
 		if (global_focus.cursor)
 		{
 			global_focus.cursor->updatePosition();

@@ -1318,7 +1318,7 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
 }
 
-CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *__restrict__ parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
+CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice * __restrict__ parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
 {
 }
@@ -1363,7 +1363,7 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture
 		m_textureRefs.emplace(texture.get(), texture);
 }
 
-inline void __attribute__((always_inline)) CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
+inline void __attribute__((always_inline)) CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& __restrict__ lut1d, const std::shared_ptr<CVulkanTexture>& __restrict__ lut3d)
 {
 	m_shaperLut[slot] = lut1d.get();
 	m_lut3D[slot] = lut3d.get();
@@ -1398,10 +1398,10 @@ void CVulkanCmdBuffer::bindTarget(std::shared_ptr<CVulkanTexture> target)
 
 void CVulkanCmdBuffer::clearState()
 {
-	for (auto& texture : m_boundTextures)
+	for (auto& __restrict__ texture : m_boundTextures)
 		texture = nullptr;
 
-	for (auto& sampler : m_samplerState)
+	for (auto& __restrict__ sampler : m_samplerState)
 		sampler = {};
 
 	m_target = nullptr;
@@ -1632,7 +1632,7 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	markDirty(dst.get());
 }
 
-void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
+void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture * image)
 {
 	auto result = m_textureState.emplace(image, TextureState());
 	// no need to reimport if the image didn't change
@@ -1644,7 +1644,7 @@ void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
 	result.first->second.needsExport = image->externalImage();
 }
 
-void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
+void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture * image)
 {
 	auto result = m_textureState.emplace(image, TextureState());
 	// no need to discard if the image is already image/in the correct layout
@@ -1655,7 +1655,7 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 	result.first->second.needsPresentLayout = image->swapchainImage();
 }
 
-void CVulkanCmdBuffer::discardImage(CVulkanTexture *image)
+void CVulkanCmdBuffer::discardImage(CVulkanTexture * image)
 {
 	auto result = m_textureState.emplace(image, TextureState());
 	if (!result.second)
@@ -1663,7 +1663,7 @@ void CVulkanCmdBuffer::discardImage(CVulkanTexture *image)
 	result.first->second.discarded = true;
 }
 
-void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
+void CVulkanCmdBuffer::markDirty(CVulkanTexture * image)
 {
 	auto result = m_textureState.find(image);
 	// image should have been prepared already
@@ -1684,9 +1684,9 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		.layerCount = 1
 	};
 
-	for (auto& pair : m_textureState)
+	for (auto& __restrict__ pair : m_textureState)
 	{
-		CVulkanTexture *image = pair.first;
+		CVulkanTexture * __restrict__ image = pair.first;
 		TextureState& state = pair.second;
 		assert(!flush || !state.needsImport);
 
@@ -1731,7 +1731,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 
 static CVulkanDevice g_device;
 
-static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
+static bool allDMABUFsEqual( wlr_dmabuf_attributes * __restrict__ pDMA )
 {
 	if ( pDMA->n_planes == 1 )
 		return true;
@@ -3656,7 +3656,7 @@ struct NisPushData_t
 };
 #pragma pack(pop)
 
-void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *frameInfo)
+void bind_all_layers(CVulkanCmdBuffer* __restrict__ cmdBuffer, const struct FrameInfo_t * __restrict__ frameInfo)
 {
 	for ( int i = 0; i < frameInfo->layerCount; i++ )
 	{
@@ -3700,7 +3700,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t * __restrict__ frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
 	EOTF outputTF = g_ColorMgmt.current.outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)

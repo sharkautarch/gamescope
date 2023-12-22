@@ -373,7 +373,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t * __restrict__ frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
@@ -849,7 +849,7 @@ struct TextureState
 class CVulkanCmdBuffer
 {
 public:
-	CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily);
+	CVulkanCmdBuffer(CVulkanDevice * __restrict__ parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily);
 	~CVulkanCmdBuffer();
 	CVulkanCmdBuffer(const CVulkanCmdBuffer& other) = delete;
 	CVulkanCmdBuffer(CVulkanCmdBuffer&& other) = delete;
@@ -861,7 +861,7 @@ public:
 	void begin();
 	void end();
 	void bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture);
-	inline __attribute__((always_inline)) void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d);
+	inline __attribute__((always_inline)) void bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& __restrict__ lut1d, const std::shared_ptr<CVulkanTexture>& __restrict__ lut3d);
 	void setTextureStorage(bool storage);
 	void setTextureSrgb(uint32_t slot, bool srgb);
 	void setSamplerNearest(uint32_t slot, bool nearest);
@@ -876,10 +876,10 @@ public:
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
 
 
-	void prepareSrcImage(CVulkanTexture *image);
-	void prepareDestImage(CVulkanTexture *image);
-	void discardImage(CVulkanTexture *image);
-	void markDirty(CVulkanTexture *image);
+	void prepareSrcImage(CVulkanTexture * image);
+	void prepareDestImage(CVulkanTexture * image);
+	void discardImage(CVulkanTexture * image);
+	void markDirty(CVulkanTexture * image);
 	void insertBarrier(bool flush = false);
 
 	VkQueue queue() { return m_queue; }
@@ -887,7 +887,7 @@ public:
 
 private:
 	VkCommandBuffer m_cmdBuffer;
-	CVulkanDevice *m_device;
+	CVulkanDevice * __restrict__ m_device;
 
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
