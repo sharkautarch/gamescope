@@ -2765,7 +2765,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
 
 	auto texture = std::make_shared<CVulkanTexture>();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
-	assert( texture->BInit( size, 1u, 1u, drmFormat, flags ) );
+	bool bRes = texture->BInit( size, 1u, 1u, drmFormat, flags );
+	assert( bRes );
 
 	return texture;
 }
@@ -2779,7 +2780,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t he
 
 	auto texture = std::make_shared<CVulkanTexture>();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
-	assert( texture->BInit( width, height, depth, drmFormat, flags ) );
+	bool bRes = texture->BInit( width, height, depth, drmFormat, flags );
+	assert( bRes );
 
 	return texture;
 }
@@ -2820,7 +2822,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 	int height = std::min<int>( g_nOutputHeight, 1080 );
 
 	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
+	assert( bRes );
 
 	void* dst = g_device.uploadBufferData( width * height * 4 );
 	memset( dst, 0x0, width * height * 4 );
@@ -2843,7 +2846,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_white_texture()
 	flags.bLinear = true;
 
 	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+	bool bRes = texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags);
+	assert( bRes );
 
 	memset( texture->mappedData(), 0xFF, texture->width() * texture->height() * 4 );
 
