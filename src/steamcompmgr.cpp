@@ -2540,35 +2540,6 @@ paint_all(bool async)
 		if ( overlay == global_focus.inputFocusWindow )
 			update_touch_scaling( &frameInfo );
 	}
-	else
-	{
-		auto tex = vulkan_get_hacky_blank_texture();
-		if ( !BIsNested() && tex != nullptr )
-		{
-			// HACK! HACK HACK HACK
-			// To avoid stutter when toggling the overlay on 
-			int curLayer = frameInfo.layerCount++;
-
-			FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
-
-
-			layer->scale.x = g_nOutputWidth == tex->width() ? 1.0f : tex->width() / (float)g_nOutputWidth;
-			layer->scale.y = g_nOutputHeight == tex->height() ? 1.0f : tex->height() / (float)g_nOutputHeight;
-			layer->offset.x = 0.0f;
-			layer->offset.y = 0.0f;
-			layer->opacity = 1.0f; // BLAH
-			layer->zpos = g_zposOverlay;
-			layer->applyColorMgmt = g_ColorMgmt.pending.enabled;
-
-			layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
-			layer->ctm = nullptr;
-			layer->tex = tex;
-			layer->fbid = tex->fbid();
-
-			layer->filter = GamescopeUpscaleFilter::NEAREST;
-			layer->blackBorder = true;
-		}
-	}
 
 	if (notification)
 	{
