@@ -773,7 +773,7 @@ public:
 
 	void resetCmdBuffers(uint64_t sequence);
 	
-	std::optional<VkResult> __attribute__((nothrow, no_stack_protector, visibility("protected"))) _SetName(uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
+	std::optional<VkResult> __attribute__((nothrow, no_stack_protector, visibility("protected"))) _SetName(uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
 	{
 		VkDebugUtilsObjectNameInfoEXT pNameInfo = {
 			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
@@ -785,7 +785,7 @@ public:
 		return vk.SetDebugUtilsObjectNameEXT(device(), &pNameInfo);
 	}
 	
-	inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
+	inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 
 	#define CONCAT_IMPL( x, y ) x##y
@@ -881,7 +881,7 @@ protected:
 	};
 };
 
-inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
+inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 struct TextureState
 {
