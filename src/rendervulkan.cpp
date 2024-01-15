@@ -1624,8 +1624,8 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 	
 	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
-	MARK(src->vkImage())
-	MARK(dst->vkImage())
+	MARK_TYPED(src->vkImage(), VK_OBJECT_TYPE_IMAGE)
+	MARK_TYPED(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
 	
 	markDirty(dst.get());
 }
@@ -1651,7 +1651,7 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
-	MARK(dst->vkImage())
+	MARK_TYPED(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
 	
 	markDirty(dst.get());
 }
