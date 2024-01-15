@@ -874,10 +874,10 @@ protected:
 		{ (reinterpret_cast<void*>(m_pipelineLayout)), VK_OBJECT_TYPE_PIPELINE_LAYOUT},
 		{ (reinterpret_cast<void*>(m_descriptorPool)), VK_OBJECT_TYPE_DESCRIPTOR_POOL},
 		{ (reinterpret_cast<void*>(m_commandPool)), VK_OBJECT_TYPE_COMMAND_POOL},
-		{ (reinterpret_cast<void*>(m_generalCommandPool)), VK_OBJECT_TYPE_COMMAND_POOL},
-		{ (reinterpret_cast<void*>(m_uploadBuffer)), VK_OBJECT_TYPE_BUFFER},
-		{ (reinterpret_cast<void*>(m_uploadBufferMemory)), VK_OBJECT_TYPE_DEVICE_MEMORY},
-		{ (reinterpret_cast<void*>(m_scratchTimelineSemaphore)), VK_OBJECT_TYPE_SEMAPHORE}
+		{ (reinterpret_cast<void*>(m_generalCommandPool)), VK_OBJECT_TYPE_COMMAND_POOL}
+		//{ (reinterpret_cast<void*>(m_uploadBuffer)), VK_OBJECT_TYPE_BUFFER},
+		//{ (reinterpret_cast<void*>(m_uploadBufferMemory)), VK_OBJECT_TYPE_DEVICE_MEMORY},
+		//{ (reinterpret_cast<void*>(m_scratchTimelineSemaphore)), VK_OBJECT_TYPE_SEMAPHORE}
 	};
 };
 
