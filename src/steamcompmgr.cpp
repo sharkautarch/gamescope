@@ -3307,7 +3307,10 @@ paint_all(bool async)
 				}
 
 				if ( oScreenshotInfo->bX11PropertyRequested )
+				{
 					XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+					XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDebugScreenShotAtom );
+				}
 
 				if ( bScreenshotSuccess )
 				{
@@ -3326,7 +3329,10 @@ paint_all(bool async)
 		{
 			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
 			if ( oScreenshotInfo->bX11PropertyRequested )
+			{
 				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDebugScreenShotAtom );
+			}
 		}
 	}
 
@@ -5609,6 +5615,19 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			} );
 		}
 	}
+	if ( ev->atom == ctx->atoms.gamescopeDebugScreenShotAtom )
+	{
+		if ( ev->state == PropertyNewValue )
+		{
+			gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+			{
+				.szScreenshotPath = "/tmp/gamescope.png",
+				.eScreenshotType = (gamescope_control_screenshot_type) get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugScreenShotAtom, None ),
+				.uScreenshotFlags = 0,
+				.bX11PropertyRequested = true,
+			} );
+		}
+	}
 	if (ev->atom == ctx->atoms.gameAtom)
 	{
 		steamcompmgr_win_t * w = find_win(ctx, ev->window);
@@ -7412,6 +7431,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.WMChangeStateAtom = XInternAtom(ctx->dpy, "WM_CHANGE_STATE", false);
 	ctx->atoms.gamescopeInputCounterAtom = XInternAtom(ctx->dpy, "GAMESCOPE_INPUT_COUNTER", false);
 	ctx->atoms.gamescopeScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_REQUEST_SCREENSHOT", false );
+	ctx->atoms.gamescopeDebugScreenShotAtom = XInternAtom( ctx->dpy, "GAMESCOPECTRL_DEBUG_REQUEST_SCREENSHOT", false );
 
 	ctx->atoms.gamescopeFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_FOCUS_DISPLAY", false);
 	ctx->atoms.gamescopeMouseFocusDisplay = XInternAtom(ctx->dpy, "GAMESCOPE_MOUSE_FOCUS_DISPLAY", false);

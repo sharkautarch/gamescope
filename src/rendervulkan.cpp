@@ -116,6 +116,18 @@ static void vk_errorf(VkResult result, const char *fmt, ...) {
 	vk_log.errorf("%s (VkResult: %d)", buf, result);
 }
 
+// For when device is up and it would be totally fatal to fail
+#define vk_check( x ) \
+	do \
+	{ \
+		VkResult check_res = VK_SUCCESS; \
+		if ( ( check_res = ( x ) ) != VK_SUCCESS ) \
+		{ \
+			vk_errorf( check_res, #x " failed!" ); \
+			abort(); \
+		} \
+	} while ( 0 )
+
 template<typename Target, typename Base>
 Target *pNextFind(const Base *base, VkStructureType sType)
 {
@@ -1228,12 +1240,7 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 		.pSignalSemaphores = &m_scratchTimelineSemaphore,
 	};
 
-	VkResult res = vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE );
-
-	if ( res != VK_SUCCESS )
-	{
-		assert( 0 );
-	}
+	vk_check( vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE ) );
 
 	return nextSeqNo;
 }
@@ -1248,8 +1255,7 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 void CVulkanDevice::garbageCollect( void )
 {
 	uint64_t currentSeqNo;
-	VkResult res = vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo);
-	assert( res == VK_SUCCESS );
+	vk_check( vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo) );
 
 	resetCmdBuffers(currentSeqNo);
 }
@@ -1266,9 +1272,7 @@ void CVulkanDevice::wait(uint64_t sequence, bool reset)
 		.pValues = &sequence,
 	} ;
 
-	VkResult res = vk.WaitSemaphores(device(), &waitInfo, ~0ull);
-	if (res != VK_SUCCESS)
-		assert( 0 );
+	vk_check( vk.WaitSemaphores( device(), &waitInfo, ~0ull ) );
 
 	if (reset)
 		resetCmdBuffers(sequence);
@@ -1308,8 +1312,7 @@ CVulkanCmdBuffer::~CVulkanCmdBuffer()
 
 void CVulkanCmdBuffer::reset()
 {
-	VkResult res = m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
 	m_textureState.clear();
 }
@@ -1321,8 +1324,7 @@ void CVulkanCmdBuffer::begin()
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	VkResult res = m_device->vk.BeginCommandBuffer(m_cmdBuffer, &commandBufferBeginInfo);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.BeginCommandBuffer(m_cmdBuffer, &commandBufferBeginInfo) );
 
 	clearState();
 }
@@ -1330,8 +1332,7 @@ void CVulkanCmdBuffer::begin()
 void CVulkanCmdBuffer::end()
 {
 	insertBarrier(true);
-	VkResult res = m_device->vk.EndCommandBuffer(m_cmdBuffer);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
 void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture)

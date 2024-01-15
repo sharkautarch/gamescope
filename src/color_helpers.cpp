@@ -866,24 +866,12 @@ void buildPQColorimetry( displaycolorimetry_t * pColorimetry, colormapping_t *pM
 {
     *pColorimetry = displaycolorimetry_2020;
 
-    if ( BIsWideGamut( nativeDisplayOutput) )
-    {
-        colormapping_t smoothRemap;
-        smoothRemap.blendEnableMinSat = 0.7f;
-        smoothRemap.blendEnableMaxSat = 1.0f;
-        smoothRemap.blendAmountMin = 0.0f;
-        smoothRemap.blendAmountMax = 1.f;
-        *pMapping = smoothRemap;
-    }
-    else
-    {
-        colormapping_t noRemap;
-        noRemap.blendEnableMinSat = 0.7f;
-        noRemap.blendEnableMaxSat = 1.0f;
-        noRemap.blendAmountMin = 0.0f;
-        noRemap.blendAmountMax = 0.0f;
-        *pMapping = noRemap;
-    }
+    colormapping_t noRemap;
+    noRemap.blendEnableMinSat = 0.0f;
+    noRemap.blendEnableMaxSat = 1.0f;
+    noRemap.blendAmountMin = 0.0f;
+    noRemap.blendAmountMax = 0.0f;
+    *pMapping = noRemap;
 }
 
 bool approxEqual( const glm::vec3 & a, const glm::vec3 & b, float flTolerance = 1e-5f )
