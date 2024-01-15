@@ -11,6 +11,7 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
+#include <vulkan/utility/vk_struct_helper.hpp>
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -46,6 +47,10 @@
 #include "shaders/ffx_fsr1.h"
 
 #include "reshade_effect_manager.hpp"
+
+static CVulkanDevice g_device;
+
+CVulkanDevice * m_device = nullptr;
 
 extern bool g_bWasPartialComposite;
 
@@ -138,6 +143,35 @@ Target *pNextFind(const Base *base, VkStructureType sType)
 	}
 	return nullptr;
 }
+
+inline std::optional<VkResult> SetName_impl(const bool cond, void * ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
+{
+	if (cond) {
+		if (m_device != nullptr) {
+			return m_device->_SetName(objectHandle, name, objectType, pNext); 
+		} else { 
+			return g_device._SetName(objectHandle, name, objectType, pNext);
+		}
+	}
+	
+	return {};
+}
+
+inline std::optional<VkResult> CVulkanDevice::SetName_impl(const bool cond, void * ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
+{
+	if (cond && (objectType != VK_OBJECT_TYPE_UNKNOWN || ptr != nullptr))
+	{
+		auto search = typeLookupTable.find(ptr);
+		if ( ptr != nullptr && search != typeLookupTable.end())
+			objectType = search->second;
+		else if (objectType == VK_OBJECT_TYPE_UNKNOWN) {
+			vk_log.errorf( "couldn't find objectType for obj: %s", name);
+		}
+		_SetName(objectHandle, name, objectType, pNext);
+	}
+	return {};
+}
+
 
 #define VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA (VkStructureType)1000001002
 #define VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA (VkStructureType)1000001003
@@ -697,7 +731,7 @@ bool CVulkanDevice::createLayouts()
 	};
 
 	vk.CreateSamplerYcbcrConversion( device(), &ycbcrSamplerConversionCreateInfo, nullptr, &m_ycbcrConversion );
-
+	MARK(m_ycbcrConversion)
 	VkSamplerYcbcrConversionInfo ycbcrSamplerConversionInfo = {
 		.sType = VK_STRUCTURE_TYPE_SAMPLER_YCBCR_CONVERSION_INFO,
 		.conversion = m_ycbcrConversion,
@@ -715,7 +749,7 @@ bool CVulkanDevice::createLayouts()
 	};
 	
 	vk.CreateSampler( device(), &ycbcrSamplerInfo, nullptr, &m_ycbcrSampler );
-
+	MARK(m_ycbcrSampler)
 	// Create an array of our ycbcrSampler to fill up
 	std::array<VkSampler, VKR_SAMPLER_SLOTS> ycbcrSamplers;
 	for (auto& sampler : ycbcrSamplers)
@@ -775,6 +809,7 @@ bool CVulkanDevice::createLayouts()
 	};
 
 	VkResult res = vk.CreateDescriptorSetLayout(device(), &descriptorSetLayoutCreateInfo, 0, &m_descriptorSetLayout);
+	MARK(m_descriptorSetLayout)
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateDescriptorSetLayout failed" );
@@ -788,6 +823,7 @@ bool CVulkanDevice::createLayouts()
 	};
 	
 	res = vk.CreatePipelineLayout(device(), &pipelineLayoutCreateInfo, nullptr, &m_pipelineLayout);
+	MARK(m_pipelineLayout)
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreatePipelineLayout failed" );
@@ -931,6 +967,7 @@ bool CVulkanDevice::createScratchResources()
 	};
 
 	res = vk.CreateBuffer( device(), &bufferCreateInfo, nullptr, &m_uploadBuffer );
+	MARK(m_uploadBuffer)
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateBuffer failed" );
@@ -975,6 +1012,7 @@ bool CVulkanDevice::createScratchResources()
 	};
 
 	res = vk.CreateSemaphore( device(), &semCreateInfo, NULL, &m_scratchTimelineSemaphore );
+	MARK(m_scratchTimelineSemaphore)
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateSemaphore failed" );
@@ -1003,7 +1041,7 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
 	};
 
 	vk.CreateSampler( device(), &samplerCreateInfo, nullptr, &ret );
-
+	MARK_TYPED(ret, VK_OBJECT_TYPE_SAMPLER)
 	m_samplerCache[key] = ret;
 
 	return ret;
@@ -1091,6 +1129,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 	VkPipeline result;
 
 	VkResult res = vk.CreateComputePipelines(device(), VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &result);
+	MARK_TYPED(result, VK_OBJECT_TYPE_PIPELINE)
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateComputePipelines failed" );
 		return VK_NULL_HANDLE;
@@ -1192,6 +1231,7 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 		};
 
 		VkResult res = vk.AllocateCommandBuffers( device(), &commandBufferAllocateInfo, &rawCmdBuffer );
+		MARK(rawCmdBuffer)
 		if ( res != VK_SUCCESS )
 		{
 			vk_errorf( res, "vkAllocateCommandBuffers failed" );
@@ -1581,9 +1621,12 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 			.depth = 1
 		},
 	};
-
+	
 	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
+	MARK(src->vkImage())
+	MARK(dst->vkImage())
+	
 	markDirty(dst.get());
 }
 
@@ -1605,9 +1648,11 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 			.depth = dst->depth(),
 		},
 	};
-
+	
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
+	MARK(dst->vkImage())
+	
 	markDirty(dst.get());
 }
 
@@ -1673,7 +1718,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		bool isPresent = flush && state.needsPresentLayout;
 
 		VkImageLayout presentLayout = BIsVRSession() ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
+		
 		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
 			continue;
 
@@ -1695,7 +1740,9 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.image = image->vkImage(),
 			.subresourceRange = subResRange
 		};
-
+		
+		MARK_TYPED(memoryBarrier.image, VK_OBJECT_TYPE_IMAGE)
+		
 		barriers.push_back(memoryBarrier);
 
 		state.discarded = false;
@@ -1705,10 +1752,10 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 
 	// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
 	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+								0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+	MARK(m_cmdBuffer);
 }
 
-static CVulkanDevice g_device;
 
 static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
 {
@@ -2016,6 +2063,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	m_format = imageInfo.format;
 
 	res = g_device.vk.CreateImage(g_device.device(), &imageInfo, nullptr, &m_vkImage);
+	MARK(m_vkImage)
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateImage failed" );
 		return false;
@@ -4115,6 +4163,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	};
 	VkBuffer buffer;
 	result = g_device.vk.CreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
+	MARK(buffer)
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );

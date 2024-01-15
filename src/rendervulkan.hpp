@@ -11,7 +11,7 @@
 #include <bitset>
 #include <mutex>
 #include <optional>
-
+#include <type_traits>
 #include "main.hpp"
 
 #include "shaders/descriptor_set_constants.h"
@@ -773,26 +773,32 @@ public:
 
 	void resetCmdBuffers(uint64_t sequence);
 	
-	std::optional<VkResult> _SetName(const bool cond=false, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr)
+	std::optional<VkResult> __attribute__((nothrow, no_stack_protector, visibility("protected"))) _SetName(uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
 	{
-		if (cond)
-		{
-			VkDebugUtilsObjectNameInfoEXT pNameInfo = {
-				.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
-				.pNext = pNext,
-				.objectType = objectType,
-				.objectHandle = objectHandle,
-				.pObjectName = name 
-			};
-			return vk.SetDebugUtilsObjectNameEXT(device(), &pNameInfo);
-		}
+		VkDebugUtilsObjectNameInfoEXT pNameInfo = {
+			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+			.pNext = pNext,
+			.objectType = objectType,
+			.objectHandle = objectHandle,
+			.pObjectName = name 
+		};
+		return vk.SetDebugUtilsObjectNameEXT(device(), &pNameInfo);
 	}
+	
+	inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
-	#define SetName(...) g_device._SetName(g_vulkanDebugEXT == true && vulkanDebugExtSupported == true, __VA_ARGS__)
 
-	#define smark(name) #name
-	#define lineit(line) line
-	#define MARK(name, ...) SetName(name, smark(name lineit((line __LINE__))), __VA_ARGS__)
+	#define CONCAT_IMPL( x, y ) x##y
+	#define MACRO_CONCAT( x, y ) CONCAT_IMPL( x, y )
+
+	#define SetName(...) SetName_impl(g_vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
+	
+	#define _smark(name) #name
+	#define smark(name) _smark(name)
+	#define lineit_impl(line) line
+	#define lineit(line) lineit_impl(line)
+	#define MARK(name, ...) SetName( reinterpret_cast<void *>(name), reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
+	#define MARK_TYPED(name, ...) SetName( reinterpret_cast<void *>(name), reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
 
 protected:
 	friend class CVulkanCmdBuffer;
@@ -818,6 +824,7 @@ protected:
 	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 	VkCommandPool m_commandPool = VK_NULL_HANDLE;
 	VkCommandPool m_generalCommandPool = VK_NULL_HANDLE;
+	
 
 	uint32_t m_queueFamily = -1;
 	uint32_t m_generalQueueFamily = -1;
@@ -853,7 +860,28 @@ protected:
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+	
+	const std::unordered_map<void *, VkObjectType> typeLookupTable = 
+	{
+		{ (reinterpret_cast<void*>(m_device)), VK_OBJECT_TYPE_DEVICE},
+		{ (reinterpret_cast<void*>(m_physDev)), VK_OBJECT_TYPE_PHYSICAL_DEVICE},
+		{ (reinterpret_cast<void*>(m_instance)), VK_OBJECT_TYPE_INSTANCE},
+		{ (reinterpret_cast<void*>(m_queue)), VK_OBJECT_TYPE_QUEUE},
+		{ (reinterpret_cast<void*>(m_generalQueue)), VK_OBJECT_TYPE_QUEUE},
+		{ (reinterpret_cast<void*>(m_ycbcrConversion)), VK_OBJECT_TYPE_SAMPLER_YCBCR_CONVERSION},
+		{ (reinterpret_cast<void*>(m_ycbcrSampler)), VK_OBJECT_TYPE_SAMPLER},
+		{ (reinterpret_cast<void*>(m_descriptorSetLayout)), VK_OBJECT_TYPE_DESCRIPTOR_SET_LAYOUT},
+		{ (reinterpret_cast<void*>(m_pipelineLayout)), VK_OBJECT_TYPE_PIPELINE_LAYOUT},
+		{ (reinterpret_cast<void*>(m_descriptorPool)), VK_OBJECT_TYPE_DESCRIPTOR_POOL},
+		{ (reinterpret_cast<void*>(m_commandPool)), VK_OBJECT_TYPE_COMMAND_POOL},
+		{ (reinterpret_cast<void*>(m_generalCommandPool)), VK_OBJECT_TYPE_COMMAND_POOL},
+		{ (reinterpret_cast<void*>(m_uploadBuffer)), VK_OBJECT_TYPE_BUFFER},
+		{ (reinterpret_cast<void*>(m_uploadBufferMemory)), VK_OBJECT_TYPE_DEVICE_MEMORY},
+		{ (reinterpret_cast<void*>(m_scratchTimelineSemaphore)), VK_OBJECT_TYPE_SEMAPHORE}
+	};
 };
+
+inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 struct TextureState
 {
