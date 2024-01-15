@@ -95,7 +95,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
 	const char*                                 pName);
 }
 
-
+bool vulkanDebugExtSupported=false;
 VulkanOutput_t g_output;
 
 uint32_t g_uCompositeDebug = 0u;
@@ -609,6 +609,15 @@ bool CVulkanDevice::createDevice()
 	#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
 	VULKAN_DEVICE_FUNCTIONS
 	#undef VK_FUNC
+	
+	
+	if (vulkanDebugExtSupported)
+	{
+		#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
+		VULKAN_DEVICE_FUNCTIONS_DEBUGGING
+		#undef VK_FUNC
+	}
+
 
 	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
 	if ( m_queueFamily == m_generalQueueFamily )
@@ -618,6 +627,8 @@ bool CVulkanDevice::createDevice()
 
 	return true;
 }
+
+VkDebugUtilsMessengerEXT debug_utils_messenger{VK_NULL_HANDLE};
 
 static VkSamplerYcbcrModelConversion colorspaceToYCBCRModel( EStreamColorspace colorspace )
 {
@@ -3255,11 +3266,37 @@ static bool init_nis_data()
 	return true;
 }
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
+(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity
+ , VkDebugUtilsMessageTypeFlagsEXT message_type
+ , const VkDebugUtilsMessengerCallbackDataEXT *callback_data
+ , void *user_data)  {
+	std::string s;
+	for (uint32_t i = 0; i < callback_data->objectCount; i++) {
+		const char * objname = callback_data->pObjects[i].pObjectName;
+		if (objname == nullptr)
+			s.append("NULL");
+		else
+			s.append(callback_data->pObjects[i].pObjectName);
+		s.append("\n");
+	}
+	if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
+	{
+		vk_log.infof("%i - %s: %s\nobject name(s): %s", callback_data->messageIdNumber, callback_data->pMessageIdName, callback_data->pMessage, s.c_str());
+	}
+	else if (message_severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT)
+	{
+		vk_log.errorf("%i - %s: %s\nobject name(s): %s", callback_data->messageIdNumber, callback_data->pMessageIdName, callback_data->pMessage, s.c_str());
+	}
+	return VK_FALSE;
+}
+
 VkInstance vulkan_create_instance( void )
 {
 	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
 	std::vector< const char * > sdlExtensions;
+	unsigned int extCount = 0;
 	if ( BIsVRSession() )
 	{
 #if HAVE_OPENVR
@@ -3274,12 +3311,30 @@ VkInstance vulkan_create_instance( void )
 			return nullptr;
 		}
 
-		unsigned int extCount = 0;
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
 		sdlExtensions.resize( extCount );
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, sdlExtensions.data() );
 	}
+	
+	uint32_t instance_extension_count;
+	vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, nullptr);
 
+	std::vector<VkExtensionProperties> available_instance_extensions(instance_extension_count);
+
+	vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, available_instance_extensions.data());
+	
+	for (auto &available_extension : available_instance_extensions) {
+		if (g_vulkanDebugEXT == true 
+		     && strcmp(available_extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
+			vulkanDebugExtSupported = true;
+			sdlExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+		}
+	}
+
+	if (g_vulkanDebugEXT == true && vulkanDebugExtSupported == false)
+	{
+		vk_log.errorf("VK_EXT_DEBUG_UTILS_EXTENSION_NAME is not supported, continuing without vulkan debug extension(s)");
+	}
 	const VkApplicationInfo appInfo = {
 		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 		.pApplicationName = "gamescope",
@@ -3289,7 +3344,7 @@ VkInstance vulkan_create_instance( void )
 		.apiVersion = VK_API_VERSION_1_3,
 	};
 
-	const VkInstanceCreateInfo createInfo = {
+	VkInstanceCreateInfo createInfo = {
 		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 		.pApplicationInfo = &appInfo,
 		.enabledExtensionCount = (uint32_t)sdlExtensions.size(),
@@ -3297,7 +3352,25 @@ VkInstance vulkan_create_instance( void )
 	};
 
 	VkInstance instance = nullptr;
-	result = vkCreateInstance(&createInfo, 0, &instance);
+	if ( g_vulkanDebugEXT && vulkanDebugExtSupported)
+	{
+		VkDebugUtilsMessengerCreateInfoEXT debug_utils_create_info = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
+
+		debug_utils_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
+		debug_utils_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+		debug_utils_create_info.pfnUserCallback = debug_utils_messenger_callback;
+		createInfo.pNext = &debug_utils_create_info;
+		
+		result = vkCreateInstance(&createInfo, 0, &instance);
+
+		auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
+		result = func(instance, &debug_utils_create_info, nullptr, &debug_utils_messenger);
+	}
+	else
+	{
+		result = vkCreateInstance(&createInfo, 0, &instance);
+	}
+	
 	if ( result != VK_SUCCESS )
 	{
 		vk_errorf( result, "vkCreateInstance failed" );

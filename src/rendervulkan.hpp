@@ -16,6 +16,8 @@
 
 #include "shaders/descriptor_set_constants.h"
 
+extern bool g_vulkanDebugEXT;
+
 class CVulkanCmdBuffer;
 
 // 1: Fade Plane (Fade outs between switching focus)
@@ -628,6 +630,9 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(GetPhysicalDeviceSurfacePresentModesKHR) \
 	VK_FUNC(GetPhysicalDeviceSurfaceSupportKHR)
 
+#define VULKAN_DEVICE_FUNCTIONS_DEBUGGING \
+	VK_FUNC(SetDebugUtilsObjectNameEXT)
+
 #define VULKAN_DEVICE_FUNCTIONS \
 	VK_FUNC(AcquireNextImageKHR) \
 	VK_FUNC(AllocateCommandBuffers) \
@@ -762,10 +767,32 @@ public:
 	{
 		VULKAN_INSTANCE_FUNCTIONS
 		VULKAN_DEVICE_FUNCTIONS
+		VULKAN_DEVICE_FUNCTIONS_DEBUGGING
 	} vk;
 	#undef VK_FUNC
 
 	void resetCmdBuffers(uint64_t sequence);
+	
+	std::optional<VkResult> _SetName(const bool cond=false, uint64_t objectHandle = NULL, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr)
+	{
+		if (cond)
+		{
+			VkDebugUtilsObjectNameInfoEXT pNameInfo = {
+				.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
+				.pNext = pNext,
+				.objectType = objectType,
+				.objectHandle = objectHandle,
+				.pObjectName = name 
+			};
+			return vk.SetDebugUtilsObjectNameEXT(device(), &pNameInfo);
+		}
+	}
+
+	#define SetName(...) g_device._SetName(g_vulkanDebugEXT == true && vulkanDebugExtSupported == true, __VA_ARGS__)
+
+	#define smark(name) #name
+	#define lineit(line) line
+	#define MARK(name, ...) SetName(name, smark(name lineit((line __LINE__))), __VA_ARGS__)
 
 protected:
 	friend class CVulkanCmdBuffer;

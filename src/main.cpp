@@ -62,6 +62,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
+	{ "vulkan-debug-extension", no_argument, 0},
 
 	{ "headless", no_argument, 0 },
 
@@ -227,7 +228,8 @@ const char usage[] =
 	"  --disable-xres                 disable XRes for PID lookup\n"
 	"  --hdr-debug-force-support      forces support for HDR, etc even if the display doesn't support it. HDR clients will be outputted as SDR still in that case.\n"
 	"  --hdr-debug-force-output       forces support and output to HDR10 PQ even if the output does not support it (will look very wrong if it doesn't)\n"
-	"  --hdr-debug-heatmap            displays a heatmap-style debug view of HDR luminence across the scene in nits."
+	"  --hdr-debug-heatmap            displays a heatmap-style debug view of HDR luminence across the scene in nits.\n"
+	"  --vulkan-debug-extension	  loads vulkan debug extension(s). Supplies object names to validation layer messages." 
 	"\n"
 	"Reshade shader options:\n"
 	"  --reshade-effect               sets the name of a reshade shader to use in either /usr/share/gamescope/reshade/Shaders or ~/.local/share/gamescope/reshade/Shaders\n"
@@ -542,6 +544,7 @@ static bool CheckWaylandPresentationTime()
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
+bool g_vulkanDebugEXT = false;
 
 int main(int argc, char **argv)
 {
@@ -605,6 +608,8 @@ int main(int argc, char **argv)
 					g_bDebugLayers = true;
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
 					g_bForceDisableColorMgmt = true;
+				} else if (strcmp(opt_name, "vulkan-debug-extension") == 0) {
+					g_vulkanDebugEXT = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
