@@ -11,7 +11,6 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
-#include <vulkan/utility/vk_struct_helper.hpp>
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -4163,7 +4162,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	};
 	VkBuffer buffer;
 	result = g_device.vk.CreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
-	MARK(buffer)
+	MARK_TYPED(buffer, VK_OBJECT_TYPE_BUFFER)
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
