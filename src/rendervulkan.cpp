@@ -143,7 +143,7 @@ Target *pNextFind(const Base *base, VkStructureType sType)
 	return nullptr;
 }
 
-inline std::optional<VkResult> SetName_impl(const bool cond, void * ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
+inline std::optional<VkResult> SetName_impl(const bool cond, void ** ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
 {
 	if (cond) {
 		if (m_device != nullptr) {
@@ -156,7 +156,7 @@ inline std::optional<VkResult> SetName_impl(const bool cond, void * ptr, uint64_
 	return {};
 }
 
-inline std::optional<VkResult> CVulkanDevice::SetName_impl(const bool cond, void * ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
+inline std::optional<VkResult> CVulkanDevice::SetName_impl(const bool cond, void ** ptr, uint64_t objectHandle, const char * name, VkObjectType objectType, const void * pNext) noexcept
 {
 	if (cond && (objectType != VK_OBJECT_TYPE_UNKNOWN || ptr != nullptr))
 	{
@@ -1040,7 +1040,7 @@ VkSampler CVulkanDevice::sampler( SamplerState key )
 	};
 
 	vk.CreateSampler( device(), &samplerCreateInfo, nullptr, &ret );
-	MARK(ret, VK_OBJECT_TYPE_SAMPLER)
+	MARK_TYPED(ret, VK_OBJECT_TYPE_SAMPLER)
 	m_samplerCache[key] = ret;
 
 	return ret;
@@ -1128,7 +1128,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 	VkPipeline result;
 
 	VkResult res = vk.CreateComputePipelines(device(), VK_NULL_HANDLE, 1, &computePipelineCreateInfo, nullptr, &result);
-	MARK(result, VK_OBJECT_TYPE_PIPELINE)
+	MARK_TYPED(result, VK_OBJECT_TYPE_PIPELINE)
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateComputePipelines failed" );
 		return VK_NULL_HANDLE;
@@ -1230,7 +1230,7 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 		};
 
 		VkResult res = vk.AllocateCommandBuffers( device(), &commandBufferAllocateInfo, &rawCmdBuffer );
-		MARK(rawCmdBuffer)
+		MARK_TYPED(rawCmdBuffer, VK_OBJECT_TYPE_BUFFER)
 		if ( res != VK_SUCCESS )
 		{
 			vk_errorf( res, "vkAllocateCommandBuffers failed" );
@@ -1623,8 +1623,8 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 
 	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
-	MARK(src->vkImage(), VK_OBJECT_TYPE_IMAGE)
-	MARK(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
+	MARK_TYPED(src->vkImage(), VK_OBJECT_TYPE_IMAGE)
+	MARK_TYPED(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
 	
 	markDirty(dst.get());
 }
@@ -1650,7 +1650,7 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
-	MARK(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
+	MARK_TYPED(dst->vkImage(), VK_OBJECT_TYPE_IMAGE)
 	
 	markDirty(dst.get());
 }
@@ -1740,7 +1740,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.subresourceRange = subResRange
 		};
 		
-		MARK(memoryBarrier.image, VK_OBJECT_TYPE_IMAGE)
+		MARK_TYPED(memoryBarrier.image, VK_OBJECT_TYPE_IMAGE)
 		
 		barriers.push_back(memoryBarrier);
 
@@ -1752,7 +1752,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 	// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
 	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
 									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
-	MARK(m_cmdBuffer, VK_OBJECT_TYPE_COMMAND_BUFFER);
+	MARK_TYPED(m_cmdBuffer, VK_OBJECT_TYPE_COMMAND_BUFFER);
 }
 
 
@@ -2062,7 +2062,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	m_format = imageInfo.format;
 
 	res = g_device.vk.CreateImage(g_device.device(), &imageInfo, nullptr, &m_vkImage);
-	MARK(m_vkImage, VK_OBJECT_TYPE_IMAGE)
+	MARK_TYPED(m_vkImage, VK_OBJECT_TYPE_IMAGE)
 	if (res != VK_SUCCESS) {
 		vk_errorf( res, "vkCreateImage failed" );
 		return false;
@@ -3404,8 +3404,8 @@ VkInstance vulkan_create_instance( void )
 	{
 		VkDebugUtilsMessengerCreateInfoEXT debug_utils_create_info = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
 
-		debug_utils_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
-		debug_utils_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+		debug_utils_create_info.messageSeverity = VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT;
+		debug_utils_create_info.messageType     = VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT | VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT;
 		debug_utils_create_info.pfnUserCallback = debug_utils_messenger_callback;
 		createInfo.pNext = &debug_utils_create_info;
 		
@@ -4162,7 +4162,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	};
 	VkBuffer buffer;
 	result = g_device.vk.CreateBuffer( g_device.device(), &bufferCreateInfo, nullptr, &buffer );
-	MARK(buffer, VK_OBJECT_TYPE_BUFFER)
+	MARK_TYPED(buffer, VK_OBJECT_TYPE_BUFFER)
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
