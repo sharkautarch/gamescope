@@ -11,7 +11,7 @@
 #include <bitset>
 #include <mutex>
 #include <optional>
-#include <type_traits>
+
 #include "main.hpp"
 
 #include "shaders/descriptor_set_constants.h"
@@ -773,7 +773,7 @@ public:
 
 	void resetCmdBuffers(uint64_t sequence);
 	
-	std::optional<VkResult> __attribute__((nothrow, no_stack_protector, visibility("protected"))) _SetName(uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
+	std::optional<VkResult> __attribute__((nothrow, visibility("protected"))) _SetName(uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
 	{
 		VkDebugUtilsObjectNameInfoEXT pNameInfo = {
 			.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_OBJECT_NAME_INFO_EXT,
@@ -788,9 +788,6 @@ public:
 	inline std::optional<VkResult> SetName_impl(const bool cond=false, void * ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 
-	#define CONCAT_IMPL( x, y ) x##y
-	#define MACRO_CONCAT( x, y ) CONCAT_IMPL( x, y )
-
 	#define SetName(...) SetName_impl(g_vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
 	
 	#define _smark(name) #name
@@ -798,7 +795,6 @@ public:
 	#define lineit_impl(line) line
 	#define lineit(line) lineit_impl(line)
 	#define MARK(name, ...) SetName( reinterpret_cast<void *>(name), reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
-	#define MARK_TYPED(name, ...) SetName( reinterpret_cast<void *>(name), reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
 
 protected:
 	friend class CVulkanCmdBuffer;
@@ -824,7 +820,6 @@ protected:
 	VkDescriptorPool m_descriptorPool = VK_NULL_HANDLE;
 	VkCommandPool m_commandPool = VK_NULL_HANDLE;
 	VkCommandPool m_generalCommandPool = VK_NULL_HANDLE;
-	
 
 	uint32_t m_queueFamily = -1;
 	uint32_t m_generalQueueFamily = -1;
