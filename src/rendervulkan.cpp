@@ -100,6 +100,7 @@ VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
 }
 
 bool vulkanDebugExtSupported=false;
+static bool vulkanDebugEXT;
 VulkanOutput_t g_output;
 
 uint32_t g_uCompositeDebug = 0u;
@@ -3339,8 +3340,9 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
 	return VK_FALSE;
 }
 
-VkInstance vulkan_create_instance( void )
+VkInstance vulkan_create_instance(const bool bShouldDebug )
 {
+	vulkanDebugEXT=bShouldDebug;
 	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
 	std::vector< const char * > sdlExtensions;
@@ -3372,14 +3374,14 @@ VkInstance vulkan_create_instance( void )
 	vkEnumerateInstanceExtensionProperties(nullptr, &instance_extension_count, available_instance_extensions.data());
 	
 	for (auto &available_extension : available_instance_extensions) {
-		if (g_vulkanDebugEXT == true 
+		if (vulkanDebugEXT == true 
 		     && strcmp(available_extension.extensionName, VK_EXT_DEBUG_UTILS_EXTENSION_NAME) == 0) {
 			vulkanDebugExtSupported = true;
 			sdlExtensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
 		}
 	}
 
-	if (g_vulkanDebugEXT == true && vulkanDebugExtSupported == false)
+	if (vulkanDebugEXT == true && vulkanDebugExtSupported == false)
 	{
 		vk_log.errorf("VK_EXT_DEBUG_UTILS_EXTENSION_NAME is not supported, continuing without vulkan debug extension(s)");
 	}
@@ -3400,7 +3402,7 @@ VkInstance vulkan_create_instance( void )
 	};
 
 	VkInstance instance = nullptr;
-	if ( g_vulkanDebugEXT && vulkanDebugExtSupported)
+	if ( vulkanDebugEXT && vulkanDebugExtSupported)
 	{
 		VkDebugUtilsMessengerCreateInfoEXT debug_utils_create_info = {VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT};
 

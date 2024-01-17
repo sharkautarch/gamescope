@@ -16,8 +16,6 @@
 
 #include "shaders/descriptor_set_constants.h"
 
-extern bool g_vulkanDebugEXT;
-
 class CVulkanCmdBuffer;
 
 // 1: Fade Plane (Fade outs between switching focus)
@@ -367,7 +365,7 @@ namespace CompositeDebugFlag
 	static constexpr uint32_t Tonemap_Reinhard = 1u << 7;
 };
 
-VkInstance vulkan_create_instance(void);
+VkInstance vulkan_create_instance(bool bShouldDebug);
 bool vulkan_init(VkInstance instance, VkSurfaceKHR surface);
 bool vulkan_init_formats(void);
 bool vulkan_make_output(VkSurfaceKHR surface);
@@ -788,7 +786,7 @@ public:
 	inline std::optional<VkResult> SetName_impl(const bool cond=false, void ** ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 
-	#define SetName(...) SetName_impl(g_vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
+	#define SetName(...) SetName_impl(vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
 	
 	#define _smark(name) #name
 	#define smark(name) _smark(name)
@@ -859,7 +857,6 @@ protected:
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
-	
 	const std::unordered_map<void **, VkObjectType> typeLookupTable = 
 	{
 		{ (reinterpret_cast<void**>(&m_device)), VK_OBJECT_TYPE_DEVICE},

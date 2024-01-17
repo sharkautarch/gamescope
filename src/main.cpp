@@ -544,7 +544,6 @@ static bool CheckWaylandPresentationTime()
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
-bool g_vulkanDebugEXT = false;
 
 int main(int argc, char **argv)
 {
@@ -553,7 +552,7 @@ int main(int argc, char **argv)
 
 	static std::string optstring = build_optstring(gamescope_options);
 	gamescope_optstring = optstring.c_str();
-
+        bool vulkanDebugEXT = false;
 	int o;
 	int opt_index = -1;
 	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
@@ -609,7 +608,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "vulkan-debug-extension") == 0) {
-					g_vulkanDebugEXT = true;
+					vulkanDebugEXT = true;
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
@@ -763,7 +762,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-	VkInstance instance = vulkan_create_instance();
+	VkInstance instance = vulkan_create_instance(vulkanDebugEXT);
 	VkSurfaceKHR surface = VK_NULL_HANDLE;
 
 	if ( !BIsNested() )
