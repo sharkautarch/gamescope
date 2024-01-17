@@ -434,6 +434,10 @@ static void handle_signal( int sig )
 		}
 
 		fprintf( stderr, "gamescope: Received %s signal, attempting shutdown!\n", strsignal(sig) );
+		
+		if (vulkan_run_at_exit != nullptr)
+			(*vulkan_run_at_exit)();
+		
 		g_bRun = false;
 		break;
 	case SIGUSR1:

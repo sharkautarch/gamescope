@@ -6368,6 +6368,9 @@ error(Display *dpy, XErrorEvent *ev)
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
+	if ( vulkan_run_at_exit != nullptr )
+    		(*vulkan_run_at_exit)();
+
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -6388,7 +6391,7 @@ steamcompmgr_exit(void)
 		statsThreadRun = false;
 		statsThreadSem.signal();
 	}
-
+    
     sdlwindow_shutdown();
 
     wlserver_lock();

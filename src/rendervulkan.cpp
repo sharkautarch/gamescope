@@ -11,6 +11,7 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
+#include <stdlib.h>
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -673,8 +674,6 @@ bool CVulkanDevice::createDevice()
 
 	return true;
 }
-
-VkDebugUtilsMessengerEXT debug_utils_messenger{VK_NULL_HANDLE};
 
 static VkSamplerYcbcrModelConversion colorspaceToYCBCRModel( EStreamColorspace colorspace )
 {
@@ -3315,11 +3314,16 @@ static bool init_nis_data()
 	return true;
 }
 
-static VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
+VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
 (VkDebugUtilsMessageSeverityFlagBitsEXT message_severity
  , VkDebugUtilsMessageTypeFlagsEXT message_type
  , const VkDebugUtilsMessengerCallbackDataEXT *callback_data
  , void *user_data)  {
+ 	if ( g_device.bWantToClearDebug.load(std::memory_order_relaxed) || g_device.debugEXT_clearFlag.test_and_set(std::memory_order_acquire)) {
+ 		g_device.debugEXT_clearFlag.notify_all();
+ 		return VK_FALSE;
+ 	}
+ 	
 	std::string s;
 	for (uint32_t i = 0; i < callback_data->objectCount; i++) {
 		const char * objname = callback_data->pObjects[i].pObjectName;
@@ -3337,7 +3341,22 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
 	{
 		vk_log.errorf("%i - %s: %s\nobject name(s): %s", callback_data->messageIdNumber, callback_data->pMessageIdName, callback_data->pMessage, s.c_str());
 	}
+	
+	g_device.debugEXT_clearFlag.clear();
+	g_device.debugEXT_clearFlag.notify_all();
 	return VK_FALSE;
+}
+
+VkDebugUtilsMessengerEXT debug_utils_messenger{VK_NULL_HANDLE};
+void (*vulkan_run_at_exit)(void) = nullptr;
+
+void vulkan_clear_debugEXT()
+{
+	g_device.bWantToClearDebug.store(true, std::memory_order_relaxed);
+	if (g_device.debugEXT_clearFlag.test_and_set(std::memory_order_acquire))
+		g_device.debugEXT_clearFlag.wait(true);
+	auto func = (PFN_vkDestroyDebugUtilsMessengerEXT) vkGetInstanceProcAddr(g_device.m_instance, "vkDestroyDebugUtilsMessengerEXT");
+	func(g_device.m_instance, debug_utils_messenger, nullptr);
 }
 
 VkInstance vulkan_create_instance(const bool bShouldDebug )
@@ -3415,6 +3434,9 @@ VkInstance vulkan_create_instance(const bool bShouldDebug )
 
 		auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
 		result = func(instance, &debug_utils_create_info, nullptr, &debug_utils_messenger);
+		if (result == VK_SUCCESS)
+			 vulkan_run_at_exit = vulkan_clear_debugEXT;
+		
 	}
 	else
 	{

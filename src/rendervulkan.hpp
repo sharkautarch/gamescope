@@ -704,6 +704,8 @@ constexpr T align(T what, U to) {
 return (what + to - 1) & ~(to - 1);
 }
 
+extern void (*vulkan_run_at_exit)(void);
+
 class CVulkanDevice
 {
 public:
@@ -771,6 +773,8 @@ public:
 
 	void resetCmdBuffers(uint64_t sequence);
 	
+	std::atomic<bool> bWantToClearDebug = false;
+	
 	std::optional<VkResult> __attribute__((nothrow, visibility("protected"))) _SetName(uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept
 	{
 		VkDebugUtilsObjectNameInfoEXT pNameInfo = {
@@ -786,7 +790,7 @@ public:
 	inline std::optional<VkResult> SetName_impl(const bool cond=false, void ** ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 
-	#define SetName(...)if (__builtin_expect(vulkanDebugEXT, 0)) {} else SetName_impl(vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
+	#define SetName(...) SetName_impl(vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
 	
 	#define _smark(name) #name
 	#define smark(name) _smark(name)
@@ -805,7 +809,12 @@ public:
 	
 protected:
 	friend class CVulkanCmdBuffer;
-
+	friend void vulkan_clear_debugEXT();
+	friend VKAPI_ATTR VkBool32 VKAPI_CALL debug_utils_messenger_callback
+(VkDebugUtilsMessageSeverityFlagBitsEXT message_severity
+ , VkDebugUtilsMessageTypeFlagsEXT message_type
+ , const VkDebugUtilsMessengerCallbackDataEXT *callback_data
+ , void *user_data);
 	bool selectPhysDev(VkSurfaceKHR surface);
 	bool createDevice();
 	bool createLayouts();
@@ -838,6 +847,8 @@ protected:
 	bool m_bHasDrmPrimaryDevId = false;
 	bool m_bSupportsModifiers = false;
 	bool m_bInitialized = false;
+	
+	std::atomic_flag debugEXT_clearFlag = ATOMIC_FLAG_INIT;
 
 
 	VkPhysicalDeviceMemoryProperties m_memoryProperties;
