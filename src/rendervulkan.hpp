@@ -786,7 +786,7 @@ public:
 	inline std::optional<VkResult> SetName_impl(const bool cond=false, void ** ptr = nullptr, uint64_t objectHandle = 0, const char * name = nullptr, VkObjectType objectType = VK_OBJECT_TYPE_UNKNOWN, const void * pNext = nullptr) noexcept;
 
 
-	#define SetName(...) SetName_impl(vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
+	#define SetName(...)if (__builtin_expect(vulkanDebugEXT, 0)) {} else SetName_impl(vulkanDebugEXT == true && vulkanDebugExtSupported == true, ## __VA_ARGS__);
 	
 	#define _smark(name) #name
 	#define smark(name) _smark(name)
@@ -795,8 +795,13 @@ public:
 	#define _MARK_w_addr(name, ...) SetName( reinterpret_cast<void **>((&(name))), reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
 	#define _MARK(name, ...) SetName( nullptr, reinterpret_cast<uint64_t>(name), smark(name lineit((line __LINE__))), ## __VA_ARGS__)
 	
+#ifndef NDEBUG
 	#define MARK(name, ...) _MARK_w_addr(name, ## __VA_ARGS__)
 	#define MARK_TYPED(name, typeinfo, ...) _MARK(name, typeinfo, ## __VA_ARGS__)
+#else
+	#define MARK(...)
+	#define MARK_TYPED(...)
+#endif
 	
 protected:
 	friend class CVulkanCmdBuffer;

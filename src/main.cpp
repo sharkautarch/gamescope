@@ -608,7 +608,14 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
 					g_bForceDisableColorMgmt = true;
 				} else if (strcmp(opt_name, "vulkan-debug-extension") == 0) {
+				#ifndef NDEBUG
 					vulkanDebugEXT = true;
+				#else
+					fprintf(stderr, "gamescope is not compiled with --vulkan-debug-extension supported\n"
+							"to enable it, recompile gamescope after reconfiguring it with:\n"
+							"meson --reconfigure build -Db_ndebug=false\n");
+					exit(1);
+				#endif
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
