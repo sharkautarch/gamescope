@@ -3359,7 +3359,7 @@ VkInstance vulkan_create_instance(const bool bShouldDebug )
 			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
 			return nullptr;
 		}
-		
+
 		unsigned int extCount = 0;
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
 		sdlExtensions.resize( extCount );
