@@ -3346,7 +3346,6 @@ VkInstance vulkan_create_instance(const bool bShouldDebug )
 	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
 	std::vector< const char * > sdlExtensions;
-	unsigned int extCount = 0;
 	if ( BIsVRSession() )
 	{
 #if HAVE_OPENVR
@@ -3360,7 +3359,8 @@ VkInstance vulkan_create_instance(const bool bShouldDebug )
 			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
 			return nullptr;
 		}
-
+		
+		unsigned int extCount = 0;
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
 		sdlExtensions.resize( extCount );
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, sdlExtensions.data() );
