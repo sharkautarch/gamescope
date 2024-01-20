@@ -846,6 +846,26 @@ struct TextureState
 	}
 };
 
+typedef enum class pipeline_task {
+	shader,
+	copy,
+	end
+} pipeline_task_t;
+
+typedef struct {
+	unsigned int curr_sync_point;
+	unsigned int total_sync_points; 
+} shader_sync_info_t;
+
+typedef struct {
+	pipeline_task_t task_type;
+
+	shader_sync_info_t shader_sync_info;
+} barrier_info_t;
+
+//#define DEBUG_BARRIER 1
+
+
 class CVulkanCmdBuffer
 {
 public:
@@ -871,21 +891,23 @@ public:
 	template<class PushData, class... Args>
 	void uploadConstants(Args&&... args);
 	void bindPipeline(VkPipeline pipeline);
-	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
+	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1, unsigned int total_dispatches = 1, unsigned int curr_dispatch_no = 1);
 	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
 
 
 	void prepareSrcImage(CVulkanTexture *image);
-	void prepareDestImage(CVulkanTexture *image);
+	void prepareDestImage(CVulkanTexture *image, bool markDiscarded = true);
 	void discardImage(CVulkanTexture *image);
 	void markDirty(CVulkanTexture *image);
-	void insertBarrier(bool flush = false);
+	void insertBarrier(const barrier_info_t * const barrier_info = nullptr);
 
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
 
 private:
+	bool m_previousCopy = false;
+
 	VkCommandBuffer m_cmdBuffer;
 	CVulkanDevice *m_device;
 
