@@ -1605,7 +1605,13 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 {
 	m_textureRefs.emplace(dst.get(), dst);
 	prepareDestImage(dst.get());
-	insertBarrier();
+	
+	const barrier_info_t barrier_info = {
+		.task_type = pipeline_task::copy,
+	};
+
+	insertBarrier(&barrier_info);
+
 	VkBufferImageCopy region = {
 		.bufferOffset = offset,
 		.bufferRowLength = stride,
@@ -1702,18 +1708,19 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 	switch (barrier_info->task_type) {
 		case (pipeline_task::shader): {
 			bShader=true;
+			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
+			const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
 
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::shader\n");
+			printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
 #endif
-			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
-			const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
 
 			src_read_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0) | ( !isFirst ? VK_ACCESS_SHADER_READ_BIT : 0);
 			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) | (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
-			dst_read_bits = !isLast ? VK_ACCESS_SHADER_READ_BIT : 0;
-			dst_write_bits = (!isLast || barrier_info->shader_sync_info.total_sync_points > 1u) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
+			dst_read_bits = (barrier_info->shader_sync_info.total_sync_points > 1u) ? VK_ACCESS_SHADER_READ_BIT : 0;
+			dst_write_bits = (!isLast) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
 			srcStageMask = ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0) | (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
