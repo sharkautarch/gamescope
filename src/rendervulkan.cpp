@@ -1646,7 +1646,6 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 	// no need to discard if the image is already image/in the correct layout
 	if (!result.second)
 		return;
-	
 	result.first->second.discarded = true;
 	result.first->second.needsExport = image->externalImage();
 	result.first->second.needsPresentLayout = image->swapchainImage();
@@ -1712,8 +1711,8 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) 
 					| (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
-			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
-			dst_write_bits = (!isLast) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
+			dst_read_bits = !isLast ? VK_ACCESS_SHADER_READ_BIT : 0;
+			dst_write_bits = (multipleShaders) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
 			srcStageMask = ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0) 
