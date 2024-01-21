@@ -897,7 +897,7 @@ public:
 
 
 	void prepareSrcImage(CVulkanTexture *image);
-	void prepareDestImage(CVulkanTexture *image, bool markDiscarded = true);
+	void prepareDestImage(CVulkanTexture *image);
 	void discardImage(CVulkanTexture *image);
 	void markDirty(CVulkanTexture *image);
 	void insertBarrier(const barrier_info_t * const barrier_info = nullptr);

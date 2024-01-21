@@ -1407,10 +1407,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 			prepareSrcImage(src);
 	}
 	assert(m_target != nullptr);
-	prepareDestImage(m_target, false); /*don't mark images as discarded here,
-					    *'discarded' can lead to image being treated w/ (old) layout VK_IMAGE_LAYOUT_UNDEFINED
-					    *the way VK_IMAGE_LAYOUT_UNDEFINED layout handling around shaders from ::dispatch() seems to introduce 
-					    *RAW and WAW syncronization issues according to VVL*/
+	prepareDestImage(m_target);
 
 	const barrier_info_t barrier_info = {
 		.task_type = pipeline_task::shader,
@@ -1643,14 +1640,14 @@ void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
 	result.first->second.needsExport = image->externalImage();
 }
 
-void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image, bool markDiscarded)
+void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 {
 	auto result = m_textureState.emplace(image, TextureState());
 	// no need to discard if the image is already image/in the correct layout
 	if (!result.second)
 		return;
-	if (markDiscarded)
-		result.first->second.discarded = true;
+	
+	result.first->second.discarded = true;
 	result.first->second.needsExport = image->externalImage();
 	result.first->second.needsPresentLayout = image->swapchainImage();
 }
@@ -1696,40 +1693,35 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 	bool flush = false;
 	bool bShader = false;
-	if ( barrier_info == nullptr) {
-		srcStageMask = VK_PIPELINE_STAGE_ALL_GRAPHICS_BIT;
-		dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-
-		src_read_bits = dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-		src_write_bits = dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
-
-
-	} else {
+	assert( barrier_info != nullptr);
+	
 	switch (barrier_info->task_type) {
 		case (pipeline_task::shader): {
 			bShader=true;
 			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
 			const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
+			const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
 
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::shader\n");
 			printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
 #endif
 
-			src_read_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0) | ( !isFirst ? VK_ACCESS_SHADER_READ_BIT : 0);
-			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) | (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
+			src_read_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0) 
+					| ( !isFirst ? VK_ACCESS_SHADER_READ_BIT : 0);
+			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) 
+					| (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
-			dst_read_bits = (barrier_info->shader_sync_info.total_sync_points > 1u) ? VK_ACCESS_SHADER_READ_BIT : 0;
+			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
 			dst_write_bits = (!isLast) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
-			srcStageMask = ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0) | (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+			srcStageMask = ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0) 
+					| (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 			srcStageMask = (srcStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) : srcStageMask;
 
-			dstStageMask = (
-					( (!isLast || barrier_info->shader_sync_info.total_sync_points > 1u) ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0)
-					| ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0)
-				       );
+			dstStageMask = (m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0)
+					| ( multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 
 			dstStageMask = (dstStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT) : dstStageMask;
 			break;
@@ -1754,7 +1746,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::end\n");
 #endif
-			src_read_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0);
+			src_read_bits = m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 			src_write_bits = dst_read_bits = dst_write_bits = 0;
 
 			srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -1766,7 +1758,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			__builtin_unreachable();
 			break;
 		}
-	}}
+	}
 
 	for (auto& pair : m_textureState)
 	{
@@ -1789,9 +1781,14 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 		VkImageMemoryBarrier memoryBarrier =
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = ((state.dirty) ? (src_write_bits | src_read_bits) : 0u) | ((isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
+			.srcAccessMask = ( state.dirty ? (src_write_bits | src_read_bits) : 0u)
+					| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
+
 			.dstAccessMask = flush ? 0u : dst_read_bits | dst_write_bits,
-			.oldLayout = ( (state.discarded || state.needsImport) && !bShader) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.oldLayout = ( !bShader && (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+					//^ need to force .oldLayout to be VK_IMAGE_LAYOUT_GENERAL for shaders, because otherwise,
+					//with the less-conservative barriers being used, Validation Layers (when sync-checking is on) would report
+					//RAW/WAW hazards due to layout transitions
 			.newLayout = isPresent ? presentLayout : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
