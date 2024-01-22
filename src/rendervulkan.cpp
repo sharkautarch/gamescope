@@ -1685,7 +1685,6 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 	
 
 	VkAccessFlags src_write_bits;
-	VkAccessFlags src_read_bits;
 
 	VkAccessFlags dst_write_bits;
 	VkAccessFlags dst_read_bits;
@@ -1706,8 +1705,6 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
 #endif
 
-			src_read_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0) 
-					| ( !isFirst ? VK_ACCESS_SHADER_READ_BIT : 0);
 			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) 
 					| (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
@@ -1729,7 +1726,6 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::copy\n");
 #endif
-			src_read_bits = m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 			src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 
 			dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
@@ -1745,7 +1741,6 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::end\n");
 #endif
-			src_read_bits = m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 			src_write_bits = dst_read_bits = dst_write_bits = 0;
 
 			srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
@@ -1776,7 +1771,9 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 		if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
 			image->queueFamily = m_queueFamily;
-
+			
+		const VkAccessFlags src_read_bits = 0u; //*_READ on .srcAccessMask for CmdPipelineBarrier is always the same as a no-op
+							//https://github.com/KhronosGroup/Vulkan-Docs/issues/131 
 		VkImageMemoryBarrier memoryBarrier =
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
