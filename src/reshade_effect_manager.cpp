@@ -198,72 +198,30 @@ void ReshadeUniform::copy(void* mappedBuffer, const T* thing)
     assert(m_info.type.array_length == 0 || m_info.type.array_length == 1);
 
     uint32_t zero_data[16] = {};
+    const auto copy_ = [&](const auto constantDatatype){
+        T array_stuff[16] = {};
+        const auto thingBuffer = [&](){
+            for (uint32_t i = 0; i < m_info.type.components(); i++)
+                array_stuff[i] = (m_info.type.base == reshadefx::type::t_bool) ? !!(thing[i]) : thing[i];
+            return array_stuff;
+        };
+        const auto defaultOrZeroBuffer = (m_info.has_initializer_value) ? static_cast<const void*>(std::begin((m_info.initializer_value).*constantDatatype)) : zero_data;
+        copy(mappedBuffer, (thing) ? thingBuffer() : defaultOrZeroBuffer, sizeof(T) * m_info.type.components());
+    };
 
     switch (m_info.type.base)
     {
-    case reshadefx::type::t_bool:
-        if (thing)
-        {
-            VkBool32 VkBool32_stuff[16];
-            for (uint32_t i = 0; i < m_info.type.components(); i++)
-                VkBool32_stuff[i] = !!thing[i];
-            copy(mappedBuffer, VkBool32_stuff, sizeof(VkBool32) * m_info.type.components());
-        }
-        else
-        {
-            if (m_info.has_initializer_value)
-                copy(mappedBuffer, (const void*)&m_info.initializer_value.as_uint[0], sizeof(VkBool32) * m_info.type.components() );
-            else
-                copy(mappedBuffer, (const void*)zero_data, sizeof(VkBool32) * m_info.type.components() );
-        }
+    case reshadefx::type::t_bool:   // VkBool32 = uint32_t;
+        copy_(&reshadefx::constant::as_uint);
         break;
     case reshadefx::type::t_int:
-        if (thing)
-        {
-            int32_t int32_t_stuff[16];
-            for (uint32_t i = 0; i < m_info.type.components(); i++)
-                int32_t_stuff[i] = thing[i];
-            copy(mappedBuffer, int32_t_stuff, sizeof(int32_t) * m_info.type.components());
-        }
-        else
-        {
-            if (m_info.has_initializer_value)
-                copy(mappedBuffer, (const void*)&m_info.initializer_value.as_int[0], sizeof(int32_t) * m_info.type.components() );
-            else
-                copy(mappedBuffer, (const void*)zero_data, sizeof(int32_t) * m_info.type.components() );
-        }
+        copy_(&reshadefx::constant::as_int);
         break;
     case reshadefx::type::t_uint:
-        if (thing)
-        {
-            uint32_t uint32_t_stuff[16];
-            for (uint32_t i = 0; i < m_info.type.components(); i++)
-                uint32_t_stuff[i] = thing[i];
-            copy(mappedBuffer, uint32_t_stuff, sizeof(uint32_t) * m_info.type.components());
-        }
-        else
-        {
-            if (m_info.has_initializer_value)
-                copy(mappedBuffer, (const void*)&m_info.initializer_value.as_uint[0], sizeof(uint32_t) * m_info.type.components() );
-            else
-                copy(mappedBuffer, (const void*)zero_data, sizeof(uint32_t) * m_info.type.components() );
-        }
+        copy_(&reshadefx::constant::as_uint);
         break;
     case reshadefx::type::t_float:
-        if (thing)
-        {
-            float float_stuff[16];
-            for (uint32_t i = 0; i < m_info.type.components(); i++)
-                float_stuff[i] = thing[i];
-            copy(mappedBuffer, float_stuff, sizeof(float) * m_info.type.components());
-        }
-        else
-        {
-            if (m_info.has_initializer_value)
-                copy(mappedBuffer, (const void*)&m_info.initializer_value.as_float[0], sizeof(float) * m_info.type.components() );
-            else
-                copy(mappedBuffer, (const void*)zero_data, sizeof(float) * m_info.type.components() );
-        }
+        copy_(&reshadefx::constant::as_float);
         break;
     default:
         reshade_log.errorf("Unknown uniform type!");

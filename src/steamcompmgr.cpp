@@ -1991,6 +1991,12 @@ void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
 		nSize = std::clamp( nSize, g_nBaseCursorScale, 256 );
 	}
 
+	if ( BIsNested() == false && alwaysComposite == false )
+	{
+		nSize = std::min<int>( nSize, g_DRM.cursor_width );
+		nSize = std::min<int>( nSize, g_DRM.cursor_height );
+	}
+
 	nWidth = nSize;
 	nHeight = nSize;
 }
@@ -6673,6 +6679,8 @@ void handle_done_commits_xdg()
 
 void handle_presented_for_window( steamcompmgr_win_t* w )
 {
+	// wlserver_lock is held.
+
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	uint64_t refresh_cycle = g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w )
@@ -6684,8 +6692,6 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 	{
 		if (!lastCommit->presentation_feedbacks.empty() || lastCommit->present_id)
 		{
-			wlserver_lock();
-
 			if (!lastCommit->presentation_feedbacks.empty())
 			{
 				wlserver_presentation_feedback_presented(
@@ -6706,17 +6712,14 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 					lastCommit->present_margin);
 				lastCommit->present_id = std::nullopt;
 			}
-
-			wlserver_unlock();
 		}
 	}
 
 	if (struct wlr_surface *surface = w->current_surface())
 	{
 		auto info = get_wl_surface_info(surface);
-		if  (info->gamescope_swapchain != nullptr && info->last_refresh_cycle != refresh_cycle)
+		if (info != nullptr && info->gamescope_swapchain != nullptr && info->last_refresh_cycle != refresh_cycle)
 		{
-			wlserver_lock();
 			if (info->gamescope_swapchain != nullptr)
 			{
 				// Could have got the override set in this bubble.s
@@ -6728,7 +6731,6 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 					wlserver_refresh_cycle(surface, refresh_cycle);
 				}
 			}
-			wlserver_unlock();
 		}
 	}
 }
@@ -8150,9 +8152,11 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( vblank )
 		{
+			wlserver_lock();
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				handle_presented_xwayland( server->ctx.get() );
+			wlserver_unlock();
 		}
 
 		//

@@ -62,7 +62,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
-	{ "vulkan-debug-extension", no_argument, 0},
+	{ "mouse-sensitivity", required_argument, nullptr, 's' },
 
 	{ "headless", no_argument, 0 },
 
@@ -115,6 +115,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "synchronous-x11", no_argument, nullptr, 0 },
 	{ "debug-hud", no_argument, nullptr, 'v' },
 	{ "debug-events", no_argument, nullptr, 0 },
+  { "vulkan-debug-extension", no_argument, 0},
 	{ "steam", no_argument, nullptr, 'e' },
 	{ "force-composition", no_argument, nullptr, 'c' },
 	{ "composite-debug", no_argument, nullptr, 0 },
@@ -160,6 +161,7 @@ const char usage[] =
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
+	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
 	"  --headless                     use headless backend (no window, no DRM output)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
@@ -268,6 +270,8 @@ bool g_bIsNested = false;
 bool g_bHeadless = false;
 
 bool g_bGrabbed = false;
+
+float g_mouseSensitivity = 1.0;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
@@ -602,6 +606,9 @@ int main(int argc, char **argv)
 			case 'g':
 				g_bGrabbed = true;
 				break;
+			case 's':
+				g_mouseSensitivity = atof( optarg );
+				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
@@ -775,7 +782,6 @@ int main(int argc, char **argv)
 
 	VkInstance instance = vulkan_create_instance(vulkanDebugEXT);
 	VkSurfaceKHR surface = VK_NULL_HANDLE;
-
 	if ( !BIsNested() )
 	{
 		g_bForceRelativeMouse = false;
@@ -798,22 +804,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if ( BIsSDLSession() )
-	{
-		if ( !SDL_Vulkan_CreateSurface( g_SDLWindow, instance, &surface ) )
-		{
-			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
-			return 1;
-		}
-	}
-
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
-
-	if ( !vulkan_init(instance, surface) )
-	{
-		fprintf( stderr, "Failed to initialize Vulkan\n" );
-		return 1;
-	}
 
 	if ( !vulkan_init_formats() )
 	{
@@ -821,7 +812,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if ( !vulkan_make_output(surface) )
+	if ( !vulkan_make_output() )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
 		return 1;
@@ -933,6 +924,8 @@ static void steamCompMgrThreadRun(int argc, char **argv)
 
 static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh )
 {
+	VkInstance instance = vulkan_create_instance();
+
 	if ( BIsNested() )
 	{
 		g_nOutputWidth = preferredWidth;
@@ -944,7 +937,7 @@ static bool initOutput( int preferredWidth, int preferredHeight, int preferredRe
 			if ( g_nOutputWidth != 0 )
 			{
 				fprintf( stderr, "Cannot specify -W without -H\n" );
-				return 1;
+				return false;
 			}
 			g_nOutputHeight = 720;
 		}
@@ -956,16 +949,45 @@ static bool initOutput( int preferredWidth, int preferredHeight, int preferredRe
 		if ( BIsVRSession() )
 		{
 #if HAVE_OPENVR
-			return vrsession_init();
+			if ( !vrsession_init() )
+				return false;
 #else
 			return false;
 #endif
 		}
 		else if ( BIsSDLSession() )
 		{
-			return sdlwindow_init();
+			if ( !sdlwindow_init() )
+				return false;
 		}
+
+		VkSurfaceKHR surface = VK_NULL_HANDLE;
+
+		if ( BIsSDLSession() )
+		{
+			if ( !SDL_Vulkan_CreateSurface( g_SDLWindow, instance, &surface ) )
+			{
+				fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
+				return false;
+			}
+		}
+
+		if ( !vulkan_init( instance, surface ) )
+		{
+			fprintf( stderr, "Failed to initialize Vulkan\n" );
+			return false;
+		}
+
 		return true;
 	}
-	return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
+	else
+	{
+		if ( !vulkan_init( instance, VK_NULL_HANDLE ) )
+		{
+			fprintf( stderr, "Failed to initialize Vulkan\n" );
+			return false;
+		}
+
+		return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
+	}
 }
