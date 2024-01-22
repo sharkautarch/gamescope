@@ -11,7 +11,7 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
-#include <vulkan/vk_enum_string_helper.h>
+//#include <vulkan/vk_enum_string_helper.h>
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -1795,7 +1795,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			.subresourceRange = subResRange
 		};
 
-#ifdef DEBUG_BARRIER
+/*#ifdef DEBUG_BARRIER
 		char buf[256] = ".oldLayout = ";
 		strcat(buf, string_VkImageLayout(memoryBarrier.oldLayout));
 		const char * next = "\n.newLayout = ";
@@ -1804,7 +1804,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 		const char * next2 = "\n";
 		strcat(buf, next2);
 		printf(buf);
-#endif
+#endif*/
 
 
 
