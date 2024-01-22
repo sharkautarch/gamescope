@@ -115,7 +115,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "synchronous-x11", no_argument, nullptr, 0 },
 	{ "debug-hud", no_argument, nullptr, 'v' },
 	{ "debug-events", no_argument, nullptr, 0 },
-  { "vulkan-debug-extension", no_argument, 0},
+	{ "vulkan-debug-extension", no_argument, 0},
 	{ "steam", no_argument, nullptr, 'e' },
 	{ "force-composition", no_argument, nullptr, 'c' },
 	{ "composite-debug", no_argument, nullptr, 0 },
@@ -328,7 +328,7 @@ bool BIsSDLSession( void )
 }
 
 
-static bool initOutput(int preferredWidth, int preferredHeight, int preferredRefresh);
+static bool initOutput(int preferredWidth, int preferredHeight, int preferredRefresh, bool vulkanDebugEXT = false);
 static void steamCompMgrThreadRun(int argc, char **argv);
 
 static std::string build_optstring(const struct option *options)
@@ -780,8 +780,6 @@ int main(int argc, char **argv)
 		}
 	}
 
-	VkInstance instance = vulkan_create_instance(vulkanDebugEXT);
-	VkSurfaceKHR surface = VK_NULL_HANDLE;
 	if ( !BIsNested() )
 	{
 		g_bForceRelativeMouse = false;
@@ -798,7 +796,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh ) )
+	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh, vulkanDebugEXT ) )
 	{
 		fprintf( stderr, "Failed to initialize output\n" );
 		return 1;
@@ -922,9 +920,9 @@ static void steamCompMgrThreadRun(int argc, char **argv)
 	pthread_kill( g_mainThread, SIGINT );
 }
 
-static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh )
+static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh, bool vulkanDebugEXT )
 {
-	VkInstance instance = vulkan_create_instance();
+	VkInstance instance = vulkan_create_instance(vulkanDebugEXT);
 
 	if ( BIsNested() )
 	{
