@@ -1669,8 +1669,6 @@ void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
 
 void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 {
-	VkFlags srcStageMask = 0;
-	VkFlags dstStageMask = 0;
 	std::vector<VkImageMemoryBarrier> barriers;
 
 	uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
@@ -1683,9 +1681,10 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 	};
 
 	
+	VkFlags srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0;
+	VkAccessFlags src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
 
-	VkAccessFlags src_write_bits;
-
+	VkFlags dstStageMask = 0;
 	VkAccessFlags dst_write_bits;
 	VkAccessFlags dst_read_bits;
 
@@ -1705,15 +1704,13 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
 #endif
 
-			src_write_bits = (m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0) 
-					| (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
+			src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
 			dst_read_bits = !isLast ? VK_ACCESS_SHADER_READ_BIT : 0;
 			dst_write_bits = (multipleShaders) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
-			srcStageMask = ( m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0) 
-					| (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+			srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 			srcStageMask = (srcStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) : srcStageMask;
 
 			dstStageMask = (m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0)
@@ -1726,12 +1723,11 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::copy\n");
 #endif
-			src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_READ_BIT : 0;
 
 			dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
 			dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-			srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+			srcStageMask = (srcStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) : srcStageMask;
 			dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 			break;
 
@@ -1741,9 +1737,9 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #ifdef DEBUG_BARRIER
 			printf("\n pipeline_task::end\n");
 #endif
-			src_write_bits = dst_read_bits = dst_write_bits = 0;
+			dst_read_bits = dst_write_bits = 0;
 
-			srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 			dstStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 			break;
 		}
