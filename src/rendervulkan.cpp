@@ -1711,12 +1711,9 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 
 			srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
-			srcStageMask = (srcStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) : srcStageMask;
 
-			dstStageMask = (m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0)
-					| ( multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+			dstStageMask = ( multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 
-			dstStageMask = (dstStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT) : dstStageMask;
 			break;
 
 		} case (pipeline_task::copy): {
@@ -1727,7 +1724,6 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
 			dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
 
-			srcStageMask = (srcStageMask == 0) ? static_cast<int>(VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT) : srcStageMask;
 			dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 			break;
 
@@ -1738,9 +1734,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			printf("\n pipeline_task::end\n");
 #endif
 			dst_read_bits = dst_write_bits = 0;
-
 			srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-			dstStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 			break;
 		}
 		default:
@@ -1749,6 +1743,12 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			break;
 		}
 	}
+	
+	if (srcStageMask == 0)
+		srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	if (dstStageMask == 0)
+		dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
 
 	for (auto& pair : m_textureState)
 	{
@@ -1776,7 +1776,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			.srcAccessMask = ( state.dirty ? (src_write_bits | src_read_bits) : 0u)
 					| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
 
-			.dstAccessMask = flush ? 0u : dst_read_bits | dst_write_bits,
+			.dstAccessMask = dst_read_bits | dst_write_bits,
 			.oldLayout = ( !bShader && (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 					//^ need to force .oldLayout to be VK_IMAGE_LAYOUT_GENERAL for shaders, because otherwise,
 					//with the less-conservative barriers being used, Validation Layers (when sync-checking is on) would report
@@ -3842,12 +3842,17 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	unsigned int total_dispatches = ( pPipewireTexture != nullptr ) ? 1 : 0;
-	total_dispatches += (
-	 ( frameInfo->useFSRLayer0 || frameInfo->useNISLayer0 || frameInfo->blurLayer0 ) ? 2 : 1
-	);
+
+
+	unsigned int total_dispatches = 1;
+	if ( frameInfo->useFSRLayer0 || frameInfo->useNISLayer0 || frameInfo->blurLayer0 )
+		total_dispatches = 2;
+	
+	if ( pPipewireTexture != nullptr )
+		total_dispatches++;
 
 	unsigned int curr_dispatch_no = 1;
+
 
 	if ( frameInfo->useFSRLayer0 )
 	{
