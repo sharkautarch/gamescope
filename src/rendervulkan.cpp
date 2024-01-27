@@ -1702,11 +1702,12 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 				srcStageMask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 				src_write_bits |= VK_ACCESS_SHADER_WRITE_BIT;
 			}
+			break;
 		}
 		case (pipeline_task::shader): {
 			bShader=true;
 			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
-			const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
+			//const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
 			const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
 
 #ifdef DEBUG_BARRIER
@@ -1718,8 +1719,8 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0; 
 			/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
-			/* shader sampler read, when multipleShaders == true && isLast == true
-			*/
+			 * shader sampler read, when multipleShaders == true && isLast == true
+			 */
 			dst_write_bits = multipleShaders ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
