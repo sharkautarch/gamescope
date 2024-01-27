@@ -1693,6 +1693,16 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 	assert( barrier_info != nullptr);
 	
 	switch (barrier_info->task_type) {
+		case (pipeline_task::reshade): {
+			if (barrier_info->reshade_target == reshade_target::init) {
+				srcStageMask = dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+				dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+				dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+			} else {
+				srcStageMask |= VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				src_write_bits |= VK_ACCESS_SHADER_WRITE_BIT;
+			}
+		}
 		case (pipeline_task::shader): {
 			bShader=true;
 			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);

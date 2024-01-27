@@ -847,6 +847,7 @@ struct TextureState
 };
 
 typedef enum class pipeline_task {
+	reshade,
 	shader,
 	copy,
 	end
@@ -857,10 +858,20 @@ typedef struct {
 	unsigned int total_sync_points; 
 } shader_sync_info_t;
 
+typedef enum class reshade_target {
+	init,
+	runtime
+} reshade_target_t;
+
+
 typedef struct {
 	pipeline_task_t task_type;
 
-	shader_sync_info_t shader_sync_info;
+	union {
+		shader_sync_info_t shader_sync_info;
+		reshade_target_t reshade_target;
+	};
+		
 } barrier_info_t;
 
 //#define DEBUG_BARRIER 1
