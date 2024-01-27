@@ -1686,7 +1686,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 	VkFlags dstStageMask = 0;
 	VkAccessFlags dst_write_bits;
-	VkAccessFlags dst_read_bits;
+	VkAccessFlags dst_read_bits = 0;
 
 	bool flush = false;
 	bool bShader = false;
@@ -1699,8 +1699,8 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 				dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
 				dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
 			} else {
-				srcStageMask |= VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-				src_write_bits |= VK_ACCESS_SHADER_WRITE_BIT;
+				dstStageMask |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				dst_read_bits |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
 			}
 			break;
 		}
