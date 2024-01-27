@@ -1685,11 +1685,10 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 	VkAccessFlags src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
 
 	VkFlags dstStageMask = 0;
-	VkAccessFlags dst_write_bits;
+	VkAccessFlags dst_write_bits = 0;
 	VkAccessFlags dst_read_bits = 0;
 
 	bool flush = false;
-	bool bShader = false;
 	assert( barrier_info != nullptr);
 	
 	switch (barrier_info->task_type) {
@@ -1705,7 +1704,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 			break;
 		}
 		case (pipeline_task::shader): {
-			bShader=true;
+
 			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
 			//const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
 			const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
@@ -1716,17 +1715,17 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 #endif
 
 			src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
-
-			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0; 
+ 
+			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
 			/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
 			 * shader sampler read, when multipleShaders == true && isLast == true
 			 */
-			dst_write_bits = multipleShaders ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
+			dst_write_bits = VK_ACCESS_SHADER_WRITE_BIT;
 
 			srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 
-			dstStageMask = multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0;
+			dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 
 			break;
 
@@ -1791,10 +1790,7 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 					| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
 
 			.dstAccessMask = dst_read_bits | dst_write_bits,
-			.oldLayout = ( !bShader && (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-					//^ need to force .oldLayout to be VK_IMAGE_LAYOUT_GENERAL for shaders, because otherwise,
-					//with the less-conservative barriers being used, Validation Layers (when sync-checking is on) would report
-					//RAW/WAW hazards due to layout transitions
+			.oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 			.newLayout = isPresent ? presentLayout : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
