@@ -1706,13 +1706,16 @@ void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 
 			src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
 
-			dst_read_bits = !isLast ? VK_ACCESS_SHADER_READ_BIT : 0;
-			dst_write_bits = (multipleShaders) ? VK_ACCESS_SHADER_WRITE_BIT : 0;
+			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0; 
+			/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
+			/* shader sampler read, when multipleShaders == true && isLast == true
+			*/
+			dst_write_bits = multipleShaders ? VK_ACCESS_SHADER_WRITE_BIT : 0;
 
 
 			srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
 
-			dstStageMask = ( multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+			dstStageMask = multipleShaders ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0;
 
 			break;
 
