@@ -13,10 +13,15 @@
 #include <optional>
 
 #include "main.hpp"
+#include "color_helpers.h"
+#include "gamescope_shared.h"
 
 #include "shaders/descriptor_set_constants.h"
 
 class CVulkanCmdBuffer;
+
+struct wlserver_ctm;
+struct wlserver_hdr_metadata;
 
 // 1: Fade Plane (Fade outs between switching focus)
 // 2: Video Underlay (The actual video)
@@ -55,8 +60,6 @@ enum EStreamColorspace : int
 	k_EStreamColorspace_BT709 = 3,
 	k_EStreamColorspace_BT709_Full = 4
 };
-
-#include "drm.hpp"
 
 #include <memory>
 #include <unordered_map>
@@ -267,6 +270,7 @@ struct FrameInfo_t
 	std::shared_ptr<CVulkanTexture> shaperLut[EOTF_Count];
 	std::shared_ptr<CVulkanTexture> lut3D[EOTF_Count];
 
+	bool allowVRR;
 	bool applyOutputColorMgmt; // drm only
 	EOTF outputEncodingEOTF;
 

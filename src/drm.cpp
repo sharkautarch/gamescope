@@ -971,13 +971,12 @@ bool env_to_bool(const char *env)
 	return !!atoi(env);
 }
 
-bool init_drm(struct drm_t *drm, int width, int height, int refresh, bool wants_adaptive_sync)
+bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
 
 	drm->bUseLiftoff = true;
 
-	drm->wants_vrr_enabled = wants_adaptive_sync;
 	drm->preferred_width = width;
 	drm->preferred_height = height;
 	drm->preferred_refresh = refresh;
@@ -2535,8 +2534,16 @@ bool g_bForceAsyncFlips = false;
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
 {
-	drm_update_vrr_state(drm);
 	drm_update_color_mgmt(drm);
+
+	const bool bVRRCapable = drm->pConnector && drm->pConnector->GetProperties().vrr_capable &&
+							 drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED;
+	const bool bVRREnabled = bVRRCapable && frameInfo->allowVRR;
+	if ( bVRRCapable )
+	{
+		if ( bVRREnabled != !!drm->pCRTC->GetProperties().VRR_ENABLED->GetCurrentValue() )
+			drm->needs_modeset = true;
+	}
 
 	drm->fbids_in_req.clear();
 
@@ -2664,7 +2671,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->pCRTC->GetProperties().MODE_ID->SetPendingValue( drm->req, drm->pending.mode_id ? drm->pending.mode_id->blob : 0lu, true );
 
 			if ( drm->pCRTC->GetProperties().VRR_ENABLED )
-				drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, drm->pending.vrr_enabled, true );
+				drm->pCRTC->GetProperties().VRR_ENABLED->SetPendingValue( drm->req, bVRREnabled, true );
 		}
 	}
 
@@ -2788,14 +2795,12 @@ static void drm_unset_connector( struct drm_t *drm )
 	drm->needs_modeset = true;
 }
 
-void drm_set_vrr_enabled(struct drm_t *drm, bool enabled)
-{
-	drm->wants_vrr_enabled = enabled;
-}
-
 bool drm_get_vrr_in_use(struct drm_t *drm)
 {
-	return drm->current.vrr_enabled;
+	if ( !drm->pCRTC || !drm->pCRTC->GetProperties().VRR_ENABLED )
+		return false;
+
+	return !!drm->pCRTC->GetProperties().VRR_ENABLED->GetCurrentValue();
 }
 
 gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm)
@@ -2841,22 +2846,6 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 		}
 		drm->pending.lut3d_id[ i ] = std::make_shared<drm_blob>( lut3d_blob_id );
 	}
-
-	return true;
-}
-
-bool drm_update_vrr_state(struct drm_t *drm)
-{
-	drm->pending.vrr_enabled = false;
-
-	if ( drm->pConnector && drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED )
-	{
-		if ( drm->wants_vrr_enabled && drm->pConnector->IsVRRCapable() )
-			drm->pending.vrr_enabled = true;
-	}
-
-	if (drm->pending.vrr_enabled != drm->current.vrr_enabled)
-		drm->needs_modeset = true;
 
 	return true;
 }

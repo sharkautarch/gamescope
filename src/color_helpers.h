@@ -1,5 +1,7 @@
 #pragma once
 
+#define GLM_ENABLE_EXPERIMENTAL 1
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>

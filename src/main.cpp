@@ -39,7 +39,7 @@
 using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
-static bool s_bInitialWantsVRREnabled = false;
+extern bool g_bAllowVRR;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
@@ -647,7 +647,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = atoi( optarg );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
-					s_bInitialWantsVRREnabled = true;
+					g_bAllowVRR = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "headless") == 0) {
@@ -976,6 +976,6 @@ static bool initOutput( int preferredWidth, int preferredHeight, int preferredRe
 			return false;
 		}
 
-		return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
+		return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh );
 	}
 }

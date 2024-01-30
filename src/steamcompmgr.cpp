@@ -172,6 +172,8 @@ timespec nanos_to_timespec( uint64_t ulNanos )
 static void
 update_runtime_info();
 
+bool g_bAllowVRR = false;
+
 static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
 
@@ -2463,6 +2465,7 @@ paint_all(bool async)
 	struct FrameInfo_t frameInfo = {};
 	frameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
 	frameInfo.outputEncodingEOTF = g_ColorMgmt.pending.outputEncodingEOTF;
+	frameInfo.allowVRR = g_bAllowVRR;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -5917,7 +5920,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeVRREnabled )
 	{
 		bool enabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeVRREnabled, 0 );
-		drm_set_vrr_enabled( &g_DRM, enabled );
+		g_bAllowVRR = enabled;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayForceInternal )
 	{
@@ -7656,7 +7659,7 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 	// Keep this as a preference, starting with off.
 	if ( force )
 	{
-        bool wants_vrr = g_DRM.wants_vrr_enabled;
+        bool wants_vrr = g_bAllowVRR;
 		uint32_t enabled_value = wants_vrr ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
