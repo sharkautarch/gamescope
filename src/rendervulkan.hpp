@@ -634,7 +634,6 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(BeginCommandBuffer) \
 	VK_FUNC(BindBufferMemory) \
 	VK_FUNC(BindImageMemory) \
-	VK_FUNC(CmdBeginRendering) \
 	VK_FUNC(CmdBindDescriptorSets) \
 	VK_FUNC(CmdBindPipeline) \
 	VK_FUNC(CmdClearColorImage) \
@@ -642,7 +641,6 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CmdCopyImage) \
 	VK_FUNC(CmdDispatch) \
 	VK_FUNC(CmdDraw) \
-	VK_FUNC(CmdEndRendering) \
 	VK_FUNC(CmdPipelineBarrier) \
 	VK_FUNC(CmdPushConstants) \
 	VK_FUNC(CreateBuffer) \
@@ -694,6 +692,10 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(WaitSemaphores) \
 	VK_FUNC(SetHdrMetadataEXT)
 
+#define VULKAN_1_3_DEVICE_FUNCTIONS \
+	VK_FUNC(CmdBeginRendering) \
+	VK_FUNC(CmdEndRendering)
+	
 template<typename T, typename U = T>
 constexpr T align(T what, U to) {
 return (what + to - 1) & ~(to - 1);
@@ -702,6 +704,7 @@ return (what + to - 1) & ~(to - 1);
 class CVulkanDevice
 {
 public:
+	bool m_supportsReshade = false;
 	bool BInit(VkInstance instance, VkSurfaceKHR surface);
 
 	VkSampler sampler(SamplerState key);
@@ -760,6 +763,7 @@ public:
 	{
 		VULKAN_INSTANCE_FUNCTIONS
 		VULKAN_DEVICE_FUNCTIONS
+		VULKAN_1_3_DEVICE_FUNCTIONS
 	} vk;
 	#undef VK_FUNC
 
@@ -824,6 +828,8 @@ protected:
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
 	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+	
+	uint32_t m_vkApiVer = 0;
 };
 
 struct TextureState
