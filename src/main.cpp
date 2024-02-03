@@ -326,7 +326,7 @@ bool BIsSDLSession( void )
 }
 
 
-static bool initOutput(int preferredWidth, int preferredHeight, int preferredRefresh);
+static bool initOutput(int preferredWidth, int preferredHeight, int preferredRefresh, bool bSupportsPresentWait);
 static void steamCompMgrThreadRun(int argc, char **argv);
 
 static std::string build_optstring(const struct option *options)
@@ -754,10 +754,13 @@ int main(int argc, char **argv)
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
 	g_bIsNested = g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL;
-
+	
+	const bool bSupportsPresentWait = checkForPresentWaitExt();
+	
 	if ( BIsSDLSession() && g_pOriginalWaylandDisplay != NULL )
 	{
-        if (CheckWaylandPresentationTime())
+	const bool bCompositor_supports_present_wait = CheckWaylandPresentationTime();
+        if (bCompositor_supports_present_wait && bSupportsPresentWait)
         {
             // Default to SDL_VIDEODRIVER wayland under Wayland and force enable vk_khr_present_wait
             // (not enabled by default in Mesa because instance does not know if Wayland
@@ -765,14 +768,30 @@ int main(int argc, char **argv)
             setenv("vk_khr_present_wait", "true", 0);
             setenv("SDL_VIDEODRIVER", "wayland", 0);
         }
-        else
+        else if (bSupportsPresentWait)
         {
             fprintf(stderr,
                 "Your Wayland compositor does NOT support wp_presentation/presentation-time which is required for VK_KHR_present_wait and VK_KHR_present_id.\n"
                 "Please complain to your compositor vendor for support. Falling back to X11 window with less accurate present wait.\n");
             setenv("SDL_VIDEODRIVER", "x11", 1);
         }
+        else if (!bSupportsPresentWait)
+        {
+        	fprintf(stderr,
+        		"Notice: GPU device does not support present_wait extension\n"
+        		"continuing with present_wait disabled.\n\n");
+        	 setenv("vk_khr_present_wait", "false", 1);
+        	 if (bCompositor_supports_present_wait)
+        	 	 setenv("SDL_VIDEODRIVER", "wayland", 0); //doing this for consistency, shouldn't cause any issues
+        }
 	}
+	else if (!bSupportsPresentWait)
+        {
+        	fprintf(stderr,
+        		"Notice: GPU device does not support present_wait extension\n"
+        		"continuing with present_wait disabled.\n\n");
+        	 setenv("vk_khr_present_wait", "false", 1);
+        }
 
 	if ( !wlsession_init() )
 	{
@@ -808,7 +827,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh ) )
+	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh, bSupportsPresentWait ) )
 	{
 		fprintf( stderr, "Failed to initialize output\n" );
 		return 1;
@@ -825,7 +844,7 @@ int main(int argc, char **argv)
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
 
-	if ( !vulkan_init(instance, surface) )
+	if ( !vulkan_init(instance, surface, bSupportsPresentWait) )
 	{
 		fprintf( stderr, "Failed to initialize Vulkan\n" );
 		return 1;
@@ -947,7 +966,7 @@ static void steamCompMgrThreadRun(int argc, char **argv)
 	pthread_kill( g_mainThread, SIGINT );
 }
 
-static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh )
+static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh, bool bSupportsPresentWait )
 {
 	if ( BIsNested() )
 	{
