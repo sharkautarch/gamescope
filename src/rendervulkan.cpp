@@ -11,6 +11,7 @@
 #include <bitset>
 #include <thread>
 #include <vulkan/vulkan_core.h>
+#include <dlfcn.h>
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -248,7 +249,7 @@ uint32_t DRMFormatGetBPP( uint32_t nDRMFormat )
 	return false;
 }
 
-bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
+bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface, bool bSupportsPresentWait)
 {
 	assert(instance);
 	assert(!m_bInitialized);
@@ -262,7 +263,7 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	if (!selectPhysDev(surface))
 		return false;
-	if (!createDevice())
+	if (!createDevice(bSupportsPresentWait))
 		return false;
 	if (!createLayouts())
 		return false;
@@ -375,8 +376,66 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 	return true;
 }
 
-bool CVulkanDevice::createDevice()
+void CVulkanDevice::prepare_tmp_dev(VkInstance tmp_instance)
 {
+	//g_output.surface = VK_NULL_HANDLE;
+	#define VK_FUNC(x) vk.x = (PFN_vk##x) vkGetInstanceProcAddr(tmp_instance, "vk"#x);
+	VULKAN_INSTANCE_FUNCTIONS
+	#undef VK_FUNC
+	
+	
+	m_instance = tmp_instance;
+	
+	selectPhysDev(VK_NULL_HANDLE);
+}
+
+bool CVulkanDevice::_checkForPresentWaitExt()
+{
+	
+	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
+
+	uint32_t supportedExtensionCount;
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, NULL );
+
+	std::vector<VkExtensionProperties> supportedExts(supportedExtensionCount);
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, supportedExts.data() );
+
+	bool bSupports_present_wait, bSupports_present_id = false;
+	
+	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
+	{
+		if ( strcmp(supportedExts[i].extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0 )
+			bSupports_present_id = true;
+		else if ( strcmp(supportedExts[i].extensionName, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0)
+			bSupports_present_wait = true;
+	}
+	
+	return bSupports_present_wait && bSupports_present_id;
+}
+
+bool checkForPresentWaitExt()
+{
+	const char * const prevLayerDisable_env = getenv("VK_LOADER_LAYERS_DISABLE");
+	setenv("VK_LOADER_LAYERS_DISABLE", "~all~", 1);
+	void * temp_vulkan_lib = dlopen("libvulkan.so.1", RTLD_LAZY | RTLD_LOCAL);
+	VkInstance tmp_instance = vulkan_create_instance(true);
+	CVulkanDevice tmp_dev;
+	tmp_dev.prepare_tmp_dev(tmp_instance);
+
+	const bool bSupportsPresentWait = tmp_dev._checkForPresentWaitExt();
+
+	dlclose(temp_vulkan_lib);
+	if ( prevLayerDisable_env != nullptr )
+		setenv("VK_LOADER_LAYERS_DISABLE", prevLayerDisable_env, 1);
+	else
+		unsetenv("VK_LOADER_LAYERS_DISABLE");
+
+	return bSupportsPresentWait;
+}
+
+bool CVulkanDevice::createDevice(bool bPresentWaitSupported)
+{
+	m_supports_present_wait = bPresentWaitSupported;
 	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
 
 	uint32_t supportedExtensionCount;
@@ -504,9 +563,10 @@ bool CVulkanDevice::createDevice()
 	{
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_EXTENSION_NAME );
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME );
-
-		enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
-		enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+		if (m_supports_present_wait) {
+			enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
+			enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+		}
 	}
 
 	if ( m_bSupportsModifiers )
@@ -572,11 +632,15 @@ bool CVulkanDevice::createDevice()
 
 	VkPhysicalDeviceFeatures2 features2 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-		.pNext = &presentIdFeatures,
 		.features = {
 			.shaderInt16 = m_bSupportsFp16,
 		},
 	};
+	
+	if (m_supports_present_wait)
+	{
+		features2.pNext = &presentIdFeatures;
+	}
 
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -2775,16 +2839,21 @@ void vulkan_present_to_window( void )
 
 	VkPresentInfoKHR presentInfo = {
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.pNext = &presentIdInfo,
 		.swapchainCount = 1,
 		.pSwapchains = &g_output.swapChain,
 		.pImageIndices = &g_output.nOutImage,
 	};
+	
+	if ( g_device.m_supports_present_wait)
+	{
+		presentInfo.pNext = &presentIdInfo;
+	}
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
 	{
 		g_currentPresentWaitId = presentId;
-		g_currentPresentWaitId.notify_all();
+		if ( g_device.m_supports_present_wait )
+			g_currentPresentWaitId.notify_all();
 	}
 	else
 		vulkan_remake_swapchain();
@@ -3032,26 +3101,40 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 	return true;
 }
 
+
 bool vulkan_remake_swapchain( void )
 {
-	std::unique_lock lock(present_wait_lock);
-	g_currentPresentWaitId = 0;
-	g_currentPresentWaitId.notify_all();
+	bool bRet;
+	
+	auto doit = [&](std::function<void(void)> f) {
+		VulkanOutput_t *pOutput = &g_output;
+		g_device.waitIdle();
+		f();
 
-	VulkanOutput_t *pOutput = &g_output;
-	g_device.waitIdle();
-	g_device.vk.QueueWaitIdle( g_device.queue() );
+		pOutput->outputImages.clear();
 
-	pOutput->outputImages.clear();
+		g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
 
-	g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
+		// Delete screenshot image to be remade if needed
+		for (auto& pScreenshotImage : pOutput->pScreenshotImages)
+			pScreenshotImage = nullptr;
 
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
-
-	bool bRet = vulkan_make_swapchain( pOutput );
-	assert( bRet ); // Something has gone horribly wrong!
+		bRet = vulkan_make_swapchain( pOutput );
+		assert( bRet ); // Something has gone horribly wrong!
+	};
+	
+	if (g_device.m_supports_present_wait)
+	{
+		std::unique_lock lock(present_wait_lock);
+		g_currentPresentWaitId = 0;
+		g_currentPresentWaitId.notify_all();
+		doit( [&](){g_device.vk.QueueWaitIdle( g_device.queue() );});
+	}
+	else
+	{
+		doit([&](){return;});
+	}
+	
 	return bRet;
 }
 
@@ -3281,18 +3364,18 @@ static bool init_nis_data()
 	return true;
 }
 
-VkInstance vulkan_create_instance( void )
+VkInstance vulkan_create_instance( bool is_temp_instance )
 {
 	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
 	std::vector< const char * > sdlExtensions;
-	if ( BIsVRSession() )
+	if ( !is_temp_instance && BIsVRSession() )
 	{
 #if HAVE_OPENVR
 		vrsession_append_instance_exts( sdlExtensions );
 #endif
 	}
-	else if ( BIsSDLSession() )
+	else if ( !is_temp_instance && BIsSDLSession() )
 	{
 		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
 		{
@@ -3346,15 +3429,15 @@ VkInstance vulkan_create_instance( void )
 	return instance;
 }
 
-bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
+bool vulkan_init( VkInstance instance, VkSurfaceKHR surface, bool bSupportsPresentWait )
 {
-	if (!g_device.BInit(instance, surface))
+	if (!g_device.BInit(instance, surface, bSupportsPresentWait))
 		return false;
 
 	if (!init_nis_data())
 		return false;
 
-	if (BIsNested() && !BIsVRSession())
+	if (bSupportsPresentWait && BIsNested() && !BIsVRSession())
 	{
 		std::thread present_wait_thread( present_wait_thread_func );
 		present_wait_thread.detach();
