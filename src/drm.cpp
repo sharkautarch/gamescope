@@ -55,6 +55,10 @@ const char *g_sOutputName = nullptr;
 #define DRM_CAP_ATOMIC_ASYNC_PAGE_FLIP 0x15
 #endif
 
+bool drm_update_color_mgmt(struct drm_t *drm);
+bool drm_supports_color_mgmt(struct drm_t *drm);
+bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
+
 struct drm_color_ctm2 {
 	/*
 	 * Conversion matrix in S31.32 sign-magnitude
@@ -2545,26 +2549,34 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->needs_modeset = true;
 	}
 
+	uint32_t uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
+
+	const bool bWantsHDR10 = g_bOutputHDREnabled && frameInfo->outputEncodingEOTF == EOTF_PQ;
+	wlserver_hdr_metadata *pHDRMetadata = nullptr;
+	if ( drm->pConnector && drm->pConnector->SupportsHDR10() )
+	{
+		if ( bWantsHDR10 )
+		{
+			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
+			pHDRMetadata = pFeedback ? pFeedback->hdr_metadata_blob.get() : drm->pConnector->GetHDRInfo().pDefaultMetadataBlob.get();
+			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
+		}
+		else
+		{
+			pHDRMetadata = drm->sdr_static_metadata.get();
+			uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
+		}
+
+		if ( uColorimetry != drm->pConnector->GetProperties().Colorspace->GetCurrentValue() )
+			drm->needs_modeset = true;
+	}
+
 	drm->fbids_in_req.clear();
 
 	bool needs_modeset = drm->needs_modeset.exchange(false);
 
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
-
-	wlserver_hdr_metadata *pHDRMetadata = nullptr;
-	if ( drm->pConnector && drm->pConnector->GetHDRInfo().IsHDR10() )
-	{
-		if ( g_bOutputHDREnabled )
-		{
-			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
-			pHDRMetadata = pFeedback ? pFeedback->hdr_metadata_blob.get() : drm->pConnector->GetHDRInfo().pDefaultMetadataBlob.get();
-		}
-		else
-		{
-			pHDRMetadata = drm->sdr_static_metadata.get();
-		}
-	}
 
 	bool bSinglePlane = frameInfo->layerCount < 2 && g_bSinglePlaneOptimizations;
 
@@ -2657,12 +2669,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->pConnector->GetProperties().CRTC_ID->SetPendingValue( drm->req, drm->pCRTC->GetObjectId(), bForceInRequest );
 
 			if ( drm->pConnector->GetProperties().Colorspace )
-			{
-				uint32_t uColorimetry = g_bOutputHDREnabled && drm->pConnector->GetHDRInfo().IsHDR10()
-					? DRM_MODE_COLORIMETRY_BT2020_RGB
-					: DRM_MODE_COLORIMETRY_DEFAULT;
 				drm->pConnector->GetProperties().Colorspace->SetPendingValue( drm->req, uColorimetry, bForceInRequest );
-			}
 		}
 
 		if ( drm->pCRTC )
@@ -3004,7 +3011,7 @@ bool drm_get_vrr_capable(struct drm_t *drm)
 
 bool drm_supports_hdr( struct drm_t *drm, uint16_t *maxCLL, uint16_t *maxFALL )
 {
-	if ( drm->pConnector && drm->pConnector->GetHDRInfo().SupportsHDR() )
+	if ( drm->pConnector && drm->pConnector->SupportsHDR() )
 	{
 		if ( maxCLL )
 			*maxCLL = drm->pConnector->GetHDRInfo().uMaxContentLightLevel;
@@ -3014,13 +3021,6 @@ bool drm_supports_hdr( struct drm_t *drm, uint16_t *maxCLL, uint16_t *maxFALL )
 	}
 
 	return false;
-}
-
-void drm_set_hdr_state(struct drm_t *drm, bool enabled) {
-	if (drm->enable_hdr != enabled) {
-		drm->needs_modeset = true;
-		drm->enable_hdr = enabled;
-	}
 }
 
 const char *drm_get_connector_name(struct drm_t *drm)

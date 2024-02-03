@@ -269,23 +269,21 @@ namespace gamescope
 			uint16_t uMinContentLightLevel = 0;       // Nits / 10000
 			std::shared_ptr<wlserver_hdr_metadata> pDefaultMetadataBlob;
 
-			bool ShouldPatchEDID() const
+			bool IsHDRG22() const
 			{
 				return bExposeHDRSupport && eOutputEncodingEOTF == EOTF_Gamma22;
 			}
 
-			bool SupportsHDR() const
+			bool ShouldPatchEDID() const
 			{
-				// Note: Different to IsHDR10, as we can expose HDR10 on G2.2 displays
-				// using LUTs and CTMs.
-				return bExposeHDRSupport;
+				return IsHDRG22();
 			}
 
 			bool IsHDR10() const
 			{
 				// PQ output encoding is always HDR10 (PQ + 2020) for us.
 				// If that assumption changes, update me.
-				return eOutputEncodingEOTF == EOTF_PQ;
+				return bExposeHDRSupport && eOutputEncodingEOTF == EOTF_PQ;
 			}
 		};
 
@@ -317,6 +315,21 @@ namespace gamescope
 		// TODO: Remove
 		void SetBaseRefresh( int nRefresh ) { m_nBaseRefresh = nRefresh; }
 		int  GetBaseRefresh() const { return m_nBaseRefresh; }
+
+		bool SupportsHDR10() const
+		{
+			return !!GetProperties().Colorspace && !!GetProperties().HDR_OUTPUT_METADATA && GetHDRInfo().IsHDR10();
+		}
+
+		bool SupportsHDRG22() const
+		{
+			return GetHDRInfo().IsHDRG22();
+		}
+
+		bool SupportsHDR() const
+		{
+			return SupportsHDR10() || SupportsHDRG22();
+		}
 	private:
 		void ParseEDID();
 
@@ -433,7 +446,6 @@ struct drm_t {
 	std::unordered_map< std::string, int > connector_priorities;
 
 	bool force_internal = false;
-	bool enable_hdr = false;
 
 	char *device_name = nullptr;
 };
@@ -480,12 +492,9 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 void drm_lock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid );
 void drm_drop_fbid( struct drm_t *drm, uint32_t fbid );
-bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn );
 bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode );
 bool drm_set_refresh( struct drm_t *drm, int refresh );
 bool drm_set_resolution( struct drm_t *drm, int width, int height );
-bool drm_update_color_mgmt(struct drm_t *drm);
-bool drm_update_vrr_state(struct drm_t *drm);
 gamescope::GamescopeScreenType drm_get_screen_type(struct drm_t *drm);
 
 char *find_drm_node_by_devid(dev_t devid);
@@ -502,7 +511,6 @@ const char *drm_get_connector_name(struct drm_t *drm);
 const char *drm_get_device_name(struct drm_t *drm);
 
 std::pair<uint32_t, uint32_t> drm_get_connector_identifier(struct drm_t *drm);
-void drm_set_hdr_state(struct drm_t *drm, bool enabled);
 
 void drm_get_native_colorimetry( struct drm_t *drm,
 	displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
