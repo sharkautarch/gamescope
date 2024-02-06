@@ -303,8 +303,8 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	std::thread piplelineThread([this](){compileAllPipelines();});
 	piplelineThread.detach();
-
-	g_reshadeManager.init(this);
+	if (m_supportsReshade)
+		g_reshadeManager.init(this);
 
 	return true;
 }
@@ -582,9 +582,18 @@ bool CVulkanDevice::createDevice()
 
 	VkPhysicalDevicePresentWaitFeaturesKHR presentWaitFeatures = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_WAIT_FEATURES_KHR,
-		.pNext = &features13,
 		.presentWait = VK_TRUE,
 	};
+	
+	VkPhysicalDeviceProperties props;
+	vkGetPhysicalDeviceProperties(physDev(), &props);
+	m_vkApiVer = props.apiVersion;
+	if (VK_API_VERSION_MINOR(m_vkApiVer) >= 3)
+		presentWaitFeatures.pNext = &features13;
+	else if (VK_API_VERSION_MINOR(m_vkApiVer) < 2) {
+		vk_log.errorf("ERROR: gamescope requires device support for at least vulkan 1.2");
+		return false;
+	}
 
 	VkPhysicalDevicePresentIdFeaturesKHR presentIdFeatures = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PRESENT_ID_FEATURES_KHR,
@@ -655,6 +664,16 @@ bool CVulkanDevice::createDevice()
 	#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
 	VULKAN_DEVICE_FUNCTIONS
 	#undef VK_FUNC
+
+	if (VK_API_VERSION_MINOR(m_vkApiVer) >= 3)
+	{
+		#define VK_FUNC(x) vk.x = (PFN_vk##x) vk.GetDeviceProcAddr(device(), "vk"#x);
+		VULKAN_1_3_DEVICE_FUNCTIONS
+		#undef VK_FUNC
+		m_supportsReshade = true;
+	} else {
+		m_supportsReshade = false; //reshade effect manager uses vulkan 1.3 CmdBeginRendering/CmdEndRendering
+	}
 
 	vk.GetDeviceQueue(device(), m_queueFamily, 0, &m_queue);
 	if ( m_queueFamily == m_generalQueueFamily )
@@ -3254,14 +3273,27 @@ VkInstance vulkan_get_instance( void )
 		}
 
 		auto instanceExtensions = GetBackend()->GetInstanceExtensions();
+		
+		uint32_t pApiVersion = 0;
+		if (vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion") == NULL) {
+			vk_log.errorf("ERROR: gamescope requires vulkan >= 1.2, instance only supports vulkan 1.0");
+			return nullptr;
+		}
 
+		vkEnumerateInstanceVersion(&pApiVersion);
+
+		if (VK_API_VERSION_MINOR(pApiVersion) < 2) {
+			vk_log.errorf("ERROR: gamescope requires device support for at least vulkan 1.2");
+			return nullptr;
+		}
+		
 		const VkApplicationInfo appInfo = {
 			.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
 			.pApplicationName   = "gamescope",
 			.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
 			.pEngineName        = "hopefully not just some code",
 			.engineVersion      = VK_MAKE_VERSION(1, 0, 0),
-			.apiVersion         = VK_API_VERSION_1_3,
+			.apiVersion         = VK_API_VERSION_MINOR(pApiVersion) > 3 ? VK_API_VERSION_1_3 : pApiVersion, //limit version to 1.3 in case vulkan 1.4 ever comes out
 		};
 
 		const VkInstanceCreateInfo createInfo = {
@@ -3659,7 +3691,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
 
-	if (!g_reshade_effect.empty())
+	if (g_device.m_supportsReshade && !g_reshade_effect.empty())
 	{
 		if (frameInfo->layers[0].tex)
 		{
@@ -3681,7 +3713,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 			}
 		}
 	}
-	else
+	else if (g_device.m_supportsReshade)
 	{
 		g_reshadeManager.clear();
 	}
