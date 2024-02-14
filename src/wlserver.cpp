@@ -14,14 +14,12 @@
 #include <X11/extensions/XTest.h>
 #include <xkbcommon/xkbcommon.h>
 
-#include <wayland-server-core.h>
-
-extern "C" {
-#define static
-#define class class_
+#include "wlr_begin.hpp"
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
+#if HAVE_DRM
 #include <wlr/backend/libinput.h>
+#endif
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
@@ -33,9 +31,7 @@ extern "C" {
 #include <wlr/util/log.h>
 #include <wlr/xwayland/server.h>
 #include <wlr/types/wlr_xdg_shell.h>
-#undef static
-#undef class
-}
+#include "wlr_end.hpp"
 
 #include "gamescope-xwayland-protocol.h"
 #include "gamescope-pipewire-protocol.h"
@@ -46,13 +42,12 @@ extern "C" {
 #include "presentation-time-protocol.h"
 
 #include "wlserver.hpp"
-#include "drm.hpp"
+#include "hdmi.h"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "ime.hpp"
 #include "xwayland_ctx.hpp"
-#include "sdlwindow.hpp"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -234,11 +229,13 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 	xkb_keycode_t keycode = event->keycode + 8;
 	xkb_keysym_t keysym = xkb_state_key_get_one_sym(keyboard->wlr->xkb_state, keycode);
 
+#if HAVE_SESSION
 	if (wlserver.wlr.session && event->state == WL_KEYBOARD_KEY_STATE_PRESSED && keysym >= XKB_KEY_XF86Switch_VT_1 && keysym <= XKB_KEY_XF86Switch_VT_12) {
 		unsigned vt = keysym - XKB_KEY_XF86Switch_VT_1 + 1;
 		wlr_session_change_vt(wlserver.wlr.session, vt);
 		return;
 	}
+#endif
 
 	bool forbidden_key =
 		keysym == XKB_KEY_XF86AudioLowerVolume ||
@@ -270,6 +267,9 @@ static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unacce
 	auto server = steamcompmgr_get_focused_server();
 	if ( server != NULL )
 	{
+		unaccel_dx *= g_mouseSensitivity;
+		unaccel_dy *= g_mouseSensitivity;
+
 		server->ctx->accum_x += unaccel_dx;
 		server->ctx->accum_y += unaccel_dy;
 
@@ -542,6 +542,9 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_x11_
 	if (iter == content_overrides.end())
 		return;
 
+	if ( x11_surface->override_surface == surf )
+		x11_surface->override_surface = nullptr;
+
 	struct wlserver_content_override *co = iter->second;
 	if (co->surface == surf)
 		destroy_content_override(iter->second);
@@ -766,8 +769,7 @@ static void gamescope_swapchain_set_hdr_metadata( struct wl_client *client, stru
 		infoframe.max_cll = max_cll;
 		infoframe.max_fall = max_fall;
 
-		wl_info->swapchain_feedback->hdr_metadata_blob =
-			drm_create_hdr_metadata_blob( &g_DRM, &metadata );
+		wl_info->swapchain_feedback->hdr_metadata_blob = GetBackend()->CreateBackendBlob( metadata );
 	}
 }
 
@@ -872,9 +874,9 @@ static void create_gamescope_pipewire( void )
 
 static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *client, struct wl_resource *resource, uint32_t fps, uint32_t flags )
 {
-	auto display_type = DRM_SCREEN_TYPE_EXTERNAL;
+	auto display_type = gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL;
 	if ( flags & GAMESCOPE_CONTROL_TARGET_REFRESH_CYCLE_FLAG_INTERNAL_DISPLAY )
-		display_type = DRM_SCREEN_TYPE_INTERNAL;
+		display_type = gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
 
 	steamcompmgr_set_app_refresh_cycle_override( display_type, fps );
 }
@@ -889,6 +891,51 @@ static const struct gamescope_control_interface gamescope_control_impl = {
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
 };
 
+static uint32_t get_conn_display_info_flags()
+{
+	gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+
+	if ( !pConn )
+		return 0;
+
+	uint32_t flags = 0;
+	if ( pConn->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
+		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_INTERNAL_DISPLAY;
+	if ( pConn->SupportsVRR() )
+		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_VRR;
+	if ( pConn->GetHDRInfo().bExposeHDRSupport )
+		flags |= GAMESCOPE_CONTROL_DISPLAY_FLAG_SUPPORTS_HDR;
+
+	return flags;
+}
+
+void wlserver_send_gamescope_control( wl_resource *control )
+{
+	assert( wlserver_is_lock_held() );
+
+	gamescope::IBackendConnector *pConn = GetBackend()->GetCurrentConnector();
+	if ( !pConn )
+		return;
+
+	uint32_t flags = get_conn_display_info_flags();
+
+	struct wl_array display_rates;
+	wl_array_init(&display_rates);
+	if ( pConn->GetValidDynamicRefreshRates().size() )
+	{
+		size_t size = pConn->GetValidDynamicRefreshRates().size() * sizeof(uint32_t);
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
+		memcpy( ptr, pConn->GetValidDynamicRefreshRates().data(), size );
+	}
+	else if ( g_nOutputRefresh > 0 )
+	{
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, sizeof(uint32_t) );
+		*ptr = (uint32_t)g_nOutputRefresh;
+	}
+	gamescope_control_send_active_display_info( control, pConn->GetName(), pConn->GetMake(), pConn->GetModel(), flags, &display_rates );
+	wl_array_release(&display_rates);
+}
+
 static void gamescope_control_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_control_interface, version, id );
@@ -902,12 +949,10 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_RESHADE_SHADERS, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DISPLAY_INFO, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PIXEL_FILTER, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
-	if ( !BIsNested() )
-	{
-		drm_send_gamescope_control( resource, &g_DRM );
-	}
+	wlserver_send_gamescope_control( resource );
 
 	wlserver.gamescope_controls.push_back(resource);
 }
@@ -1249,15 +1294,19 @@ void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle
 
 ///////////////////////
 
+#if HAVE_SESSION
+bool wlsession_active()
+{
+	return wlserver.wlr.session->active;
+}
+
 static void handle_session_active( struct wl_listener *listener, void *data )
 {
-	if (wlserver.wlr.session->active) {
-		g_DRM.out_of_date = 1;
-		g_DRM.needs_modeset = 1;
-	}
-	g_DRM.paused = !wlserver.wlr.session->active;
-	wl_log.infof( "Session %s", g_DRM.paused ? "paused" : "resumed" );
+	if (wlserver.wlr.session->active)
+		GetBackend()->DirtyState( true, true );
+	wl_log.infof( "Session %s", wlserver.wlr.session->active ? "resumed" : "paused" );
 }
+#endif
 
 static void handle_wlr_log(enum wlr_log_importance importance, const char *fmt, va_list args)
 {
@@ -1336,7 +1385,8 @@ bool wlsession_init( void ) {
 	};
 	wlserver_set_output_info( &output_info );
 
-	if ( BIsNested() )
+#if HAVE_SESSION
+	if ( !GetBackend()->IsSessionBased() )
 		return true;
 
 	wlserver.wlr.session = wlr_session_create( wlserver.display );
@@ -1348,35 +1398,31 @@ bool wlsession_init( void ) {
 
 	wlserver.session_active.notify = handle_session_active;
 	wl_signal_add( &wlserver.wlr.session->events.active, &wlserver.session_active );
+#endif
 
 	return true;
 }
 
+#if HAVE_SESSION
+
 static void kms_device_handle_change( struct wl_listener *listener, void *data )
 {
-	g_DRM.out_of_date = 1;
+	GetBackend()->DirtyState();
 	wl_log.infof( "Got change event for KMS device" );
 
 	nudge_steamcompmgr();
 }
 
 int wlsession_open_kms( const char *device_name ) {
-	struct wlr_device *device = nullptr;
 	if ( device_name != nullptr )
 	{
-		device = wlr_session_open_file( wlserver.wlr.session, device_name );
-		if ( device == nullptr )
+		wlserver.wlr.device = wlr_session_open_file( wlserver.wlr.session, device_name );
+		if ( wlserver.wlr.device == nullptr )
 			return -1;
-		if ( !drmIsKMS( device->fd ) )
-		{
-			wl_log.errorf( "'%s' is not a KMS device", device_name );
-			wlr_session_close_file( wlserver.wlr.session, device );
-			return -1;
-		}
 	}
 	else
 	{
-		ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 1, &device );
+		ssize_t n = wlr_session_find_gpus( wlserver.wlr.session, 1, &wlserver.wlr.device );
 		if ( n < 0 )
 		{
 			wl_log.errorf( "Failed to list GPUs" );
@@ -1391,10 +1437,17 @@ int wlsession_open_kms( const char *device_name ) {
 
 	struct wl_listener *listener = new wl_listener();
 	listener->notify = kms_device_handle_change;
-	wl_signal_add( &device->events.change, listener );
+	wl_signal_add( &wlserver.wlr.device->events.change, listener );
 
-	return device->fd;
+	return wlserver.wlr.device->fd;
 }
+
+void wlsession_close_kms()
+{
+	wlr_session_close_file( wlserver.wlr.session, wlserver.wlr.device );
+}
+
+#endif
 
 gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 {
@@ -1570,8 +1623,6 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
-	bool bIsDRM = !BIsNested();
-
 	wl_list_init(&pending_surfaces);
 
 	wlserver.event_loop = wl_display_get_event_loop(wlserver.display);
@@ -1583,14 +1634,16 @@ bool wlserver_init( void ) {
 
 	wl_signal_add( &wlserver.wlr.multi_backend->events.new_input, &new_input_listener );
 
-	if ( bIsDRM == True )
+	if ( GetBackend()->IsSessionBased() )
 	{
+#if HAVE_DRM
 		wlserver.wlr.libinput_backend = wlr_libinput_backend_create( wlserver.display, wlserver.wlr.session );
 		if ( wlserver.wlr.libinput_backend == NULL)
 		{
 			return false;
 		}
 		wlr_multi_backend_add( wlserver.wlr.multi_backend, wlserver.wlr.libinput_backend );
+#endif
 	}
 
 	// Create a stub wlr_keyboard only used to set the keymap
@@ -1858,15 +1911,7 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 
 void wlserver_mousemotion( int x, int y, uint32_t time )
 {
-	assert( wlserver_is_lock_held() );
-
-	// TODO: Pick the xwayland_server with active focus
-	auto server = steamcompmgr_get_focused_server();
-	if ( server != NULL )
-	{
-		XTestFakeRelativeMotionEvent( server->get_xdisplay(), x, y, CurrentTime );
-		XFlush( server->get_xdisplay() );
-	}
+	wlserver_perform_rel_pointer_motion( x, y );
 }
 
 void wlserver_mousewarp( int x, int y, uint32_t time )
@@ -1953,22 +1998,23 @@ static void apply_touchscreen_orientation(double *x, double *y )
 	double ty = 0;
 
 	// Use internal screen always for orientation purposes.
-	switch ( g_drmEffectiveOrientation[DRM_SCREEN_TYPE_INTERNAL] )
+	switch ( GetBackend()->GetConnector( gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )->GetCurrentOrientation() )
 	{
 		default:
-		case DRM_MODE_ROTATE_0:
+		case GAMESCOPE_PANEL_ORIENTATION_AUTO:
+		case GAMESCOPE_PANEL_ORIENTATION_0:
 			tx = *x;
 			ty = *y;
 			break;
-		case DRM_MODE_ROTATE_90:
+		case GAMESCOPE_PANEL_ORIENTATION_90:
 			tx = 1.0 - *y;
 			ty = *x;
 			break;
-		case DRM_MODE_ROTATE_180:
+		case GAMESCOPE_PANEL_ORIENTATION_180:
 			tx = 1.0 - *x;
 			ty = 1.0 - *y;
 			break;
-		case DRM_MODE_ROTATE_270:
+		case GAMESCOPE_PANEL_ORIENTATION_270:
 			tx = *y;
 			ty = 1.0 - *x;
 			break;
@@ -1982,12 +2028,12 @@ bool g_bTrackpadTouchExternalDisplay = false;
 
 int get_effective_touch_mode()
 {
-	if (!BIsNested() && g_bTrackpadTouchExternalDisplay)
-	{
-		drm_screen_type screenType = drm_get_screen_type(&g_DRM);
-		if ( screenType == DRM_SCREEN_TYPE_EXTERNAL && g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
-			return WLSERVER_TOUCH_CLICK_TRACKPAD;
-	}
+	if ( !GetBackend() || !GetBackend()->GetCurrentConnector() )
+		return g_nTouchClickMode;
+
+	gamescope::GamescopeScreenType screenType = GetBackend()->GetCurrentConnector()->GetScreenType();
+	if ( screenType == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL && g_nTouchClickMode == WLSERVER_TOUCH_CLICK_PASSTHROUGH )
+		return WLSERVER_TOUCH_CLICK_TRACKPAD;
 
 	return g_nTouchClickMode;
 }

@@ -29,7 +29,7 @@
     it.
   </description>
 
-  <interface name="gamescope_control" version="2">
+  <interface name="gamescope_control" version="3">
     <request name="destroy" type="destructor"></request>
 
     <enum name="feature">
@@ -41,6 +41,7 @@
       <entry name="display_info" value="2"/>
       <entry name="pixel_filter" value="3"/>
       <entry name="refresh_cycle_only_change_refresh_rate" value="4"/>
+      <entry name="mura_correction" value="5"/>
     </enum>
 
     <event name="feature_support">
@@ -76,5 +77,27 @@
       <arg name="fps" type="uint" summary="application's target refresh cycle in frames-per-second. 0 = disabled/native"></arg>
       <arg name="flags" type="uint" enum="target_refresh_cycle_flag" summary="combination of 'target_refresh_cycle_flag' values"/>
     </request>
+
+    <enum name="screenshot_type" since="3">
+      <entry name="base_plane_only" value="1" summary="Just the game w/ no display color mgmt"/>
+      <entry name="all_real_layers" value="2" summary="Just the game + overlays w/ no display color mgmt"/>
+      <entry name="full_composition" value="3" summary="Every layer w/ no display color mgmt and no mura"/>
+      <entry name="screen_buffer" value="4" summary="The buffer displayed on-screen - 1:1"/>
+    </enum>
+
+    <enum name="screenshot_flags" bitfield="true" since="3">
+      <entry name="dummy" value="0x1"/>
+    </enum>
+
+    <request name="take_screenshot" since="3">
+      <arg name="path" type="string" summary="Path to write the screenshot. Extension of the file determines the format"></arg>
+      <arg name="type" type="uint" enum="screenshot_type" summary="Type of screenshot to save"></arg>
+      <arg name="flags" type="uint" enum="screenshot_flags" summary="combination of 'screenshot_flags' values"></arg>
+    </request>
+
+    <event name="screenshot_taken" since="3">
+      <arg name="path" type="string" summary="Path to written screenshot"></arg>
+    </event>
+
   </interface>
 </protocol>

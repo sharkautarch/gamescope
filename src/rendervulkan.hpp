@@ -13,6 +13,8 @@
 #include <optional>
 
 #include "main.hpp"
+#include "color_helpers.h"
+#include "gamescope_shared.h"
 
 #include "shaders/descriptor_set_constants.h"
 
@@ -56,20 +58,16 @@ enum EStreamColorspace : int
 	k_EStreamColorspace_BT709_Full = 4
 };
 
-#include "drm.hpp"
-
 #include <memory>
 #include <unordered_map>
 #include <vector>
 #include <atomic>
 #include <wayland-server-core.h>
 
-extern "C" {
-#define static
+#include "wlr_begin.hpp"
 #include <wlr/render/dmabuf.h>
 #include <wlr/render/interface.h>
-#undef static
-}
+#include "wlr_end.hpp"
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
@@ -140,7 +138,7 @@ public:
 			bTransferDst = false;
 			bLinear = false;
 			bExportable = false;
-			bSwapchain = false;
+			bOutputImage = false;
 			bColorAttachment = false;
 			imageType = VK_IMAGE_TYPE_2D;
 		}
@@ -153,7 +151,7 @@ public:
 		bool bTransferDst : 1;
 		bool bLinear : 1;
 		bool bExportable : 1;
-		bool bSwapchain : 1;
+		bool bOutputImage : 1;
 		bool bColorAttachment : 1;
 		VkImageType imageType;
 	};
@@ -177,9 +175,10 @@ public:
 	inline VkFormat format() const { return m_format; }
 	inline const struct wlr_dmabuf_attributes& dmabuf() { return m_dmabuf; }
 	inline VkImage vkImage() { return m_vkImage; }
-	inline bool swapchainImage() { return m_bSwapchain; }
+	inline bool outputImage() { return m_bOutputImage; }
 	inline bool externalImage() { return m_bExternal; }
 	inline VkDeviceSize totalSize() const { return m_size; }
+	inline uint32_t drmFormat() const { return m_drmFormat; }
 
 	inline uint32_t lumaOffset() const { return m_lumaOffset; }
 	inline uint32_t lumaRowPitch() const { return m_lumaPitch; }
@@ -204,7 +203,9 @@ public:
 private:
 	bool m_bInitialized = false;
 	bool m_bExternal = false;
-	bool m_bSwapchain = false;
+	bool m_bOutputImage = false;
+
+	uint32_t m_drmFormat = DRM_FORMAT_INVALID;
 
 	VkImage m_vkImage = VK_NULL_HANDLE;
 	VkDeviceMemory m_vkImageMemory = VK_NULL_HANDLE;
@@ -260,13 +261,16 @@ struct FrameInfo_t
 {
 	bool useFSRLayer0;
 	bool useNISLayer0;
+	bool bFadingOut;
 	BlurMode blurLayer0;
 	int blurRadius;
 
 	std::shared_ptr<CVulkanTexture> shaperLut[EOTF_Count];
 	std::shared_ptr<CVulkanTexture> lut3D[EOTF_Count];
 
+	bool allowVRR;
 	bool applyOutputColorMgmt; // drm only
+	EOTF outputEncodingEOTF;
 
 	int layerCount;
 	struct Layer_t
@@ -285,7 +289,7 @@ struct FrameInfo_t
 		bool blackBorder;
 		bool applyColorMgmt; // drm only
 
-		std::shared_ptr<wlserver_ctm> ctm;
+		std::shared_ptr<gamescope::BackendBlob> ctm;
 
 		GamescopeAppTextureColorspace colorspace;
 
@@ -361,23 +365,21 @@ namespace CompositeDebugFlag
 	static constexpr uint32_t Tonemap_Reinhard = 1u << 7;
 };
 
-VkInstance vulkan_create_instance(void);
+VkInstance vulkan_get_instance(void);
 bool vulkan_init(VkInstance instance, VkSurfaceKHR surface);
 bool vulkan_init_formats(void);
-bool vulkan_make_output(VkSurfaceKHR surface);
+bool vulkan_make_output();
 
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf );
 
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, bool deferred, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
 
 void vulkan_present_to_window( void );
-#if HAVE_OPENVR
-void vulkan_present_to_openvr( void );
-#endif
 
 void vulkan_garbage_collect( void );
 bool vulkan_remake_swapchain( void );
@@ -393,7 +395,7 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 
 std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
-bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
 
 struct wlr_renderer *vulkan_renderer_create( void );
 
@@ -431,7 +433,7 @@ struct gamescope_color_mgmt_t
 	glm::vec2 outputVirtualWhite = { 0.f, 0.f };
 	EChromaticAdaptationMethod chromaticAdaptationMode = k_EChromaticAdapatationMethod_Bradford;
 
-	std::shared_ptr<wlserver_hdr_metadata> appHDRMetadata = nullptr;
+	std::shared_ptr<gamescope::BackendBlob> appHDRMetadata;
 
 	bool operator == (const gamescope_color_mgmt_t&) const = default;
 	bool operator != (const gamescope_color_mgmt_t&) const = default;
@@ -480,7 +482,7 @@ struct VulkanOutput_t
 	std::vector< VkPresentModeKHR > presentModes;
 
 
-	std::shared_ptr<wlserver_hdr_metadata> swapchainHDRMetadata;
+	std::shared_ptr<gamescope::BackendBlob> swapchainHDRMetadata;
 	VkSwapchainKHR swapChain;
 	VkFence acquireFence;
 
@@ -492,7 +494,7 @@ struct VulkanOutput_t
 	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
 	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
 
-	std::array<std::shared_ptr<CVulkanTexture>, 9> pScreenshotImages;
+	std::array<std::shared_ptr<CVulkanTexture>, 2> pScreenshotImages;
 
 	// NIS and FSR
 	std::shared_ptr<CVulkanTexture> tmpOutput;
@@ -905,3 +907,5 @@ uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
 bool vulkan_supports_hdr10();
 
 void vulkan_wait_idle();
+
+extern CVulkanDevice g_device;

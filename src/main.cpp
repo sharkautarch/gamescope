@@ -20,15 +20,11 @@
 
 #include "main.hpp"
 #include "steamcompmgr.hpp"
-#include "drm.hpp"
 #include "rendervulkan.hpp"
-#include "sdlwindow.hpp"
 #include "wlserver.hpp"
 #include "gpuvis_trace_utils.h"
 
-#if HAVE_OPENVR
-#include "vr_session.hpp"
-#endif
+#include "backends.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -39,11 +35,13 @@
 using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
-static bool s_bInitialWantsVRREnabled = false;
+extern bool g_bAllowVRR;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
 const char *g_pOriginalWaylandDisplay = nullptr;
+
+int g_nCursorScaleHeight = -1;
 
 const struct option *gamescope_options = (struct option[]){
 	{ "help", no_argument, nullptr, 0 },
@@ -60,6 +58,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "rt", no_argument, nullptr, 0 },
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
+	{ "mouse-sensitivity", required_argument, nullptr, 's' },
 
 	{ "headless", no_argument, 0 },
 
@@ -69,6 +68,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "fullscreen", no_argument, nullptr, 'f' },
 	{ "grab", no_argument, nullptr, 'g' },
 	{ "force-grab-cursor", no_argument, nullptr, 0 },
+	{ "display-index", required_argument, nullptr, 0 },
 
 	// embedded mode options
 	{ "disable-layers", no_argument, nullptr, 0 },
@@ -157,6 +157,7 @@ const char usage[] =
 	"                                     nis => NVIDIA Image Scaling v1.0.3\n"
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
+	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
 	"  --headless                     use headless backend (no window, no DRM output)\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
@@ -186,6 +187,7 @@ const char usage[] =
 	"  -f, --fullscreen               make the window fullscreen\n"
 	"  -g, --grab                     grab the keyboard\n"
 	"  --force-grab-cursor            always use relative mouse mode instead of flipping dependent on cursor visibility.\n"
+	"  --display-index                forces gamescope to use a specific display in nested mode."
 	"\n"
 	"Embedded mode options:\n"
 	"  -O, --prefer-output            list of connectors in order of preference\n"
@@ -251,6 +253,7 @@ int g_nNestedWidth = 0;
 int g_nNestedHeight = 0;
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
+int g_nNestedDisplayIndex = 0;
 
 uint32_t g_nOutputWidth = 0;
 uint32_t g_nOutputHeight = 0;
@@ -260,10 +263,9 @@ bool g_bOutputHDREnabled = false;
 bool g_bFullscreen = false;
 bool g_bForceRelativeMouse = false;
 
-bool g_bIsNested = false;
-bool g_bHeadless = false;
-
 bool g_bGrabbed = false;
+
+float g_mouseSensitivity = 1.0;
 
 GamescopeUpscaleFilter g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
@@ -271,6 +273,8 @@ GamescopeUpscaleScaler g_upscaleScaler = GamescopeUpscaleScaler::AUTO;
 GamescopeUpscaleFilter g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
 GamescopeUpscaleScaler g_wantedUpscaleScaler = GamescopeUpscaleScaler::AUTO;
 int g_upscaleFilterSharpness = 2;
+
+gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration = gamescope::GAMESCOPE_MODE_GENERATE_CVT;
 
 bool g_bBorderlessOutputWindow = false;
 
@@ -291,36 +295,6 @@ uint32_t g_preferDeviceID = 0;
 
 pthread_t g_mainThread;
 
-bool BIsNested()
-{
-	return g_bIsNested;
-}
-
-bool BIsHeadless()
-{
-	return g_bHeadless;
-}
-
-#if HAVE_OPENVR
-bool g_bUseOpenVR = false;
-bool BIsVRSession( void )
-{
-	return g_bUseOpenVR;
-}
-#else
-bool BIsVRSession( void )
-{
-	return false;
-}
-#endif
-
-bool BIsSDLSession( void )
-{
-	return g_bIsNested && !g_bHeadless && !BIsVRSession();
-}
-
-
-static bool initOutput(int preferredWidth, int preferredHeight, int preferredRefresh);
 static void steamCompMgrThreadRun(int argc, char **argv);
 
 static std::string build_optstring(const struct option *options)
@@ -341,28 +315,34 @@ static std::string build_optstring(const struct option *options)
 	return optstring;
 }
 
-static enum drm_mode_generation parse_drm_mode_generation(const char *str)
+static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const char *str )
 {
-	if (strcmp(str, "cvt") == 0) {
-		return DRM_MODE_GENERATE_CVT;
-	} else if (strcmp(str, "fixed") == 0) {
-		return DRM_MODE_GENERATE_FIXED;
-	} else {
+	if ( str == "cvt"sv )
+	{
+		return gamescope::GAMESCOPE_MODE_GENERATE_CVT;
+	}
+	else if ( str == "fixed"sv )
+	{
+		return gamescope::GAMESCOPE_MODE_GENERATE_FIXED;
+	}
+	else
+	{
 		fprintf( stderr, "gamescope: invalid value for --generate-drm-mode\n" );
 		exit(1);
 	}
 }
 
-static enum g_panel_orientation force_orientation(const char *str)
+GamescopePanelOrientation g_DesiredInternalOrientation = GAMESCOPE_PANEL_ORIENTATION_AUTO;
+static GamescopePanelOrientation force_orientation(const char *str)
 {
 	if (strcmp(str, "normal") == 0) {
-		return PANEL_ORIENTATION_0;
+		return GAMESCOPE_PANEL_ORIENTATION_0;
 	} else if (strcmp(str, "right") == 0) {
-		return PANEL_ORIENTATION_270;
+		return GAMESCOPE_PANEL_ORIENTATION_270;
 	} else if (strcmp(str, "left") == 0) {
-		return PANEL_ORIENTATION_90;
+		return GAMESCOPE_PANEL_ORIENTATION_90;
 	} else if (strcmp(str, "upsidedown") == 0) {
-		return PANEL_ORIENTATION_180;
+		return GAMESCOPE_PANEL_ORIENTATION_180;
 	} else {
 		fprintf( stderr, "gamescope: invalid value for --force-orientation\n" );
 		exit(1);
@@ -412,7 +392,7 @@ static void handle_signal( int sig )
 {
 	switch ( sig ) {
 	case SIGUSR2:
-		take_screenshot( TAKE_SCREENSHOT_BASEPLANE_ONLY );
+		gamescope::CScreenshotManager::Get().TakeScreenshot( true );
 		break;
 	case SIGHUP:
 	case SIGQUIT:
@@ -531,18 +511,61 @@ static bool CheckWaylandPresentationTime()
     return g_bSupportsWaylandPresentationTime;
 }
 
+#if 0
+static bool IsInDebugSession()
+{
+	static FILE *fp;
+	if ( !fp )
+	{
+		fp = fopen( "/proc/self/status", "r" );
+	}
+
+	char rgchLine[256]; rgchLine[0] = '\0';
+	int nTracePid = 0;
+	if ( fp )
+	{
+		const char *pszSearchString = "TracerPid:";
+		const uint cchSearchString = strlen( pszSearchString );
+		rewind( fp );
+		fflush( fp );
+		while ( fgets( rgchLine, sizeof(rgchLine), fp ) )
+		{
+			if ( !strncasecmp( pszSearchString, rgchLine, cchSearchString ) )
+			{
+				char *pszVal = rgchLine+cchSearchString+1;
+				nTracePid = atoi( pszVal );
+				break;
+			}
+		}
+	}
+	return nTracePid != 0;
+}
+#endif
 
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
+const char *g_sOutputName = nullptr;
+bool g_bDebugLayers = false;
+bool g_bForceDisableColorMgmt = false;
+
+// This will go away when we remove the getopt stuff from vr session.
+// For now...
+int g_argc;
+char **g_argv;
 
 int main(int argc, char **argv)
 {
+	g_argc = argc;
+	g_argv = argv;
+
 	// Force disable this horrible broken layer.
 	setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 1);
 
 	static std::string optstring = build_optstring(gamescope_options);
 	gamescope_optstring = optstring.c_str();
+
+	gamescope::GamescopeBackend eCurrentBackend = gamescope::GamescopeBackend::Auto;
 
 	int o;
 	int opt_index = -1;
@@ -589,13 +612,14 @@ int main(int argc, char **argv)
 			case 'g':
 				g_bGrabbed = true;
 				break;
+			case 's':
+				g_mouseSensitivity = atof( optarg );
+				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
 					fprintf(stderr, "%s", usage);
 					return 0;
-				} else if (strcmp(opt_name, "disable-layers") == 0) {
-					g_bUseLayers = false;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
 				} else if (strcmp(opt_name, "disable-color-management") == 0) {
@@ -611,9 +635,9 @@ int main(int argc, char **argv)
 					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
 					g_nTouchClickMode = g_nDefaultTouchClickMode;
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
-					g_drmModeGeneration = parse_drm_mode_generation( optarg );
+					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
-					g_drmModeOrientation = force_orientation( optarg );
+					g_DesiredInternalOrientation = force_orientation( optarg );
 				} else if (strcmp(opt_name, "sharpness") == 0 ||
 						   strcmp(opt_name, "fsr-sharpness") == 0) {
 					g_upscaleFilterSharpness = atoi( optarg );
@@ -629,18 +653,20 @@ int main(int argc, char **argv)
 					g_nAsyncFlipsEnabled = 1;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
+				} else if (strcmp(opt_name, "display-index") == 0) {
+					g_nNestedDisplayIndex = atoi( optarg );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
-					s_bInitialWantsVRREnabled = true;
+					g_bAllowVRR = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "headless") == 0) {
-					g_bHeadless = true;
-					g_bIsNested = true;
+					eCurrentBackend = gamescope::GamescopeBackend::Headless;
+				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
+					g_nCursorScaleHeight = atoi(optarg);
 				}
 #if HAVE_OPENVR
 				else if (strcmp(opt_name, "openvr") == 0) {
-					g_bUseOpenVR = true;
-					g_bIsNested = true;
+					eCurrentBackend = gamescope::GamescopeBackend::OpenVR;
 				}
 #endif
 				break;
@@ -650,7 +676,7 @@ int main(int argc, char **argv)
 		}
 	}
 
-#if defined(__linux__)
+#if defined(__linux__) && HAVE_LIBCAP
 	cap_t caps = cap_get_proc();
 	if ( caps != nullptr )
 	{
@@ -697,7 +723,18 @@ int main(int argc, char **argv)
 #endif
 
 	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
-	setenv( "XCURSOR_SIZE", "256", 1 );
+
+	if ( g_nCursorScaleHeight > 0 )
+	{
+		setenv( "XCURSOR_SIZE", "256", 1 );
+	}
+
+#if 0
+	while( !IsInDebugSession() )
+	{
+		usleep( 100 );
+	}
+#endif
 
 	raise_fd_limit();
 
@@ -711,9 +748,16 @@ int main(int argc, char **argv)
 
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
-	g_bIsNested = g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL;
 
-	if ( BIsSDLSession() && g_pOriginalWaylandDisplay != NULL )
+	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
+	{
+		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
+			eCurrentBackend = gamescope::GamescopeBackend::SDL;
+		else
+			eCurrentBackend = gamescope::GamescopeBackend::DRM;
+	}
+
+	if ( g_pOriginalWaylandDisplay != NULL )
 	{
         if (CheckWaylandPresentationTime())
         {
@@ -732,62 +776,37 @@ int main(int argc, char **argv)
         }
 	}
 
-	if ( !wlsession_init() )
+	switch ( eCurrentBackend )
 	{
-		fprintf( stderr, "Failed to initialize Wayland session\n" );
-		return 1;
-	}
-
-	if ( BIsSDLSession() )
-	{
-		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
-		{
-			fprintf(stderr, "SDL_Init failed: %s\n", SDL_GetError());
-			return 1;
-		}
-	}
-
-	VkInstance instance = vulkan_create_instance();
-	VkSurfaceKHR surface = VK_NULL_HANDLE;
-
-	if ( !BIsNested() )
-	{
-		g_bForceRelativeMouse = false;
-	}
-
-#if HAVE_OPENVR
-	if ( BIsVRSession() )
-	{
-		if ( !vr_init( argc, argv ) )
-		{
-			fprintf( stderr, "Failed to initialize OpenVR runtime\n" );
-			return 1;
-		}
-	}
+#if HAVE_DRM
+		case gamescope::GamescopeBackend::DRM:
+			gamescope::IBackend::Set<gamescope::CDRMBackend>();
+			break;
 #endif
-
-	if ( !initOutput( g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh ) )
-	{
-		fprintf( stderr, "Failed to initialize output\n" );
-		return 1;
+#if HAVE_SDL2
+		case gamescope::GamescopeBackend::SDL:
+			gamescope::IBackend::Set<gamescope::CSDLBackend>();
+			break;
+#endif
+#if HAVE_OPENVR
+		case gamescope::GamescopeBackend::OpenVR:
+			gamescope::IBackend::Set<gamescope::COpenVRBackend>();
+			break;
+#endif
+		case gamescope::GamescopeBackend::Headless:
+			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+		default:
+			abort();
 	}
 
-	if ( BIsSDLSession() )
+	if ( !GetBackend() )
 	{
-		if ( !SDL_Vulkan_CreateSurface( g_SDLWindow, instance, &surface ) )
-		{
-			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
-			return 1;
-		}
+		fprintf( stderr, "Failed to create backend.\n" );
+		return 1;
 	}
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
-
-	if ( !vulkan_init(instance, surface) )
-	{
-		fprintf( stderr, "Failed to initialize Vulkan\n" );
-		return 1;
-	}
 
 	if ( !vulkan_init_formats() )
 	{
@@ -795,7 +814,7 @@ int main(int argc, char **argv)
 		return 1;
 	}
 
-	if ( !vulkan_make_output(surface) )
+	if ( !vulkan_make_output() )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
 		return 1;
@@ -840,13 +859,6 @@ int main(int argc, char **argv)
 		fprintf( stderr, "Failed to initialize wlserver\n" );
 		return 1;
 	}
-
-#if HAVE_OPENVR
-	if ( BIsVRSession() )
-	{
-		vrsession_ime_init();
-	}
-#endif
 
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
@@ -903,43 +915,4 @@ static void steamCompMgrThreadRun(int argc, char **argv)
 	steamcompmgr_main( argc, argv );
 
 	pthread_kill( g_mainThread, SIGINT );
-}
-
-static bool initOutput( int preferredWidth, int preferredHeight, int preferredRefresh )
-{
-	if ( BIsNested() )
-	{
-		g_nOutputWidth = preferredWidth;
-		g_nOutputHeight = preferredHeight;
-		g_nOutputRefresh = preferredRefresh;
-
-		if ( g_nOutputHeight == 0 )
-		{
-			if ( g_nOutputWidth != 0 )
-			{
-				fprintf( stderr, "Cannot specify -W without -H\n" );
-				return 1;
-			}
-			g_nOutputHeight = 720;
-		}
-		if ( g_nOutputWidth == 0 )
-			g_nOutputWidth = g_nOutputHeight * 16 / 9;
-		if ( g_nOutputRefresh == 0 )
-			g_nOutputRefresh = 60;
-
-		if ( BIsVRSession() )
-		{
-#if HAVE_OPENVR
-			return vrsession_init();
-#else
-			return false;
-#endif
-		}
-		else if ( BIsSDLSession() )
-		{
-			return sdlwindow_init();
-		}
-		return true;
-	}
-	return init_drm( &g_DRM, preferredWidth, preferredHeight, preferredRefresh, s_bInitialWantsVRREnabled );
 }

@@ -1,7 +1,11 @@
 #pragma once
 
-#include "xwayland_ctx.hpp"
 #include <variant>
+#include <string>
+#include <utility>
+
+#include "xwayland_ctx.hpp"
+#include "gamescope-control-protocol.h"
 
 struct commit_t;
 struct wlserver_vk_swapchain_feedback;
@@ -179,3 +183,50 @@ struct steamcompmgr_win_t {
 			return nullptr;
 	}
 };
+
+namespace gamescope
+{
+	struct GamescopeScreenshotInfo
+	{
+		std::string szScreenshotPath;
+		gamescope_control_screenshot_type eScreenshotType = GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY;
+		uint32_t uScreenshotFlags = 0;
+		bool bX11PropertyRequested = false;
+	};
+
+	class CScreenshotManager
+	{
+	public:
+		void TakeScreenshot( GamescopeScreenshotInfo info = GamescopeScreenshotInfo{} )
+		{
+			std::unique_lock lock{ m_ScreenshotInfoMutex };
+			m_ScreenshotInfo = std::move( info );
+		}
+
+		void TakeScreenshot( bool bAVIF )
+		{
+			char szTimeBuffer[ 1024 ];
+			time_t currentTime = time(0);
+			struct tm *pLocalTime = localtime( &currentTime );
+			strftime( szTimeBuffer, sizeof( szTimeBuffer ), bAVIF ? "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.avif" : "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", pLocalTime );
+
+			TakeScreenshot( GamescopeScreenshotInfo
+			{
+				.szScreenshotPath = szTimeBuffer,
+			} );
+		}
+
+		std::optional<GamescopeScreenshotInfo> ProcessPendingScreenshot()
+		{
+			std::unique_lock lock{ m_ScreenshotInfoMutex };
+			return std::exchange( m_ScreenshotInfo, std::nullopt );
+		}
+
+		static CScreenshotManager &Get();
+	private:
+		std::mutex m_ScreenshotInfoMutex;
+		std::optional<GamescopeScreenshotInfo> m_ScreenshotInfo;
+	};
+
+	extern CScreenshotManager g_ScreenshotMgr;
+}

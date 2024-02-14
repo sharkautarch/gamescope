@@ -13,18 +13,13 @@
 #include "SDL_events.h"
 #include "main.hpp"
 #include "wlserver.hpp"
-#include "sdlwindow.hpp"
+#include <SDL.h>
+#include <SDL_vulkan.h>
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
+#include "defer.hpp"
 
 #include "sdlscancodetable.hpp"
-
-#define DEFAULT_TITLE "gamescope"
-
-static bool g_bSDLInitOK = false;
-static std::mutex g_SDLInitLock;
-
-static bool g_bWindowShown = false;
 
 static int g_nOldNestedRefresh = 0;
 static bool g_bWindowFocused = true;
@@ -32,568 +27,949 @@ static bool g_bWindowFocused = true;
 static int g_nOutputWidthPts = 0;
 static int g_nOutputHeightPts = 0;
 
-
+extern const char *g_pOriginalDisplay;
+extern bool g_bForceHDR10OutputDebug;
 extern bool steamMode;
 extern bool g_bFirstFrame;
+extern int g_nPreferredOutputWidth;
+extern int g_nPreferredOutputHeight;
 
-SDL_Window *g_SDLWindow;
-
-enum UserEvents
+namespace gamescope
 {
-	USER_EVENT_TITLE,
-	USER_EVENT_VISIBLE,
-	USER_EVENT_GRAB,
-	USER_EVENT_CURSOR,
-
-	USER_EVENT_COUNT
-};
-
-static uint32_t g_unSDLUserEventID;
-
-static std::mutex g_SDLWindowTitleLock;
-static std::shared_ptr<std::string> g_SDLWindowTitle;
-static std::shared_ptr<std::vector<uint32_t>> g_SDLWindowIcon;
-static bool g_bUpdateSDLWindowTitle = false;
-static bool g_bUpdateSDLWindowIcon = false;
-
-struct SDLPendingCursor
-{
-	uint32_t width, height, xhot, yhot;
-	std::shared_ptr<std::vector<uint32_t>> data;
-};
-static std::mutex g_SDLCursorLock;
-static SDLPendingCursor g_SDLPendingCursorData;
-static bool g_bUpdateSDLCursor = false;
-
-static void set_gamescope_selections();
-
-//-----------------------------------------------------------------------------
-// Purpose: Convert from the remote scancode to a Linux event keycode
-//-----------------------------------------------------------------------------
-static inline uint32_t SDLScancodeToLinuxKey( uint32_t nScancode )
-{
-	if ( nScancode < sizeof( s_ScancodeTable ) / sizeof( s_ScancodeTable[0] ) )
+	enum class SDLInitState
 	{
-		return s_ScancodeTable[ nScancode ];
-	}
-	return KEY_RESERVED;
-}
+		SDLInit_Waiting,
+		SDLInit_Success,
+		SDLInit_Failure,
+	};
 
-static inline int SDLButtonToLinuxButton( int SDLButton )
-{
-	switch ( SDLButton )
+	enum SDLCustomEvents
 	{
-		case SDL_BUTTON_LEFT: return BTN_LEFT;
-		case SDL_BUTTON_MIDDLE: return BTN_MIDDLE;
-		case SDL_BUTTON_RIGHT: return BTN_RIGHT;
-		case SDL_BUTTON_X1: return BTN_SIDE;
-		case SDL_BUTTON_X2: return BTN_EXTRA;
-		default: return 0;
-	}
-}
+		GAMESCOPE_SDL_EVENT_TITLE,
+		GAMESCOPE_SDL_EVENT_ICON,
+		GAMESCOPE_SDL_EVENT_VISIBLE,
+		GAMESCOPE_SDL_EVENT_GRAB,
+		GAMESCOPE_SDL_EVENT_CURSOR,
 
-void updateOutputRefresh( void )
-{
-	int display_index = 0;
-	SDL_DisplayMode mode = { SDL_PIXELFORMAT_UNKNOWN, 0, 0, 0, 0 };
+		GAMESCOPE_SDL_EVENT_COUNT,
+	};
 
-	display_index = SDL_GetWindowDisplayIndex( g_SDLWindow );
-	if ( SDL_GetDesktopDisplayMode( display_index, &mode ) == 0 )
+	class CSDLConnector final : public IBackendConnector
 	{
-		g_nOutputRefresh = mode.refresh_rate;
-	}
-}
+	public:
+		CSDLConnector();
+		virtual bool Init();
 
-extern bool g_bForceRelativeMouse;
+		virtual ~CSDLConnector();
 
-static std::string gamescope_str = DEFAULT_TITLE;
+		/////////////////////
+		// IBackendConnector
+		/////////////////////
 
-void inputSDLThreadRun( void )
-{
-	pthread_setname_np( pthread_self(), "gamescope-sdl" );
+        virtual gamescope::GamescopeScreenType GetScreenType() const override;
+		virtual GamescopePanelOrientation GetCurrentOrientation() const override;
+        virtual bool SupportsHDR() const override;
+        virtual bool IsHDRActive() const override;
+        virtual const BackendConnectorHDRInfo &GetHDRInfo() const override;
+		virtual std::span<const BackendMode> GetModes() const override;
 
-	SDL_Event event;
-	uint32_t key;
-	bool bRelativeMouse = false;
+        virtual bool SupportsVRR() const override;
 
-	g_unSDLUserEventID = SDL_RegisterEvents( USER_EVENT_COUNT );
+        virtual std::span<const uint8_t> GetRawEDID() const override;
+        virtual std::span<const uint32_t> GetValidDynamicRefreshRates() const override;
 
-	uint32_t nSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
+        virtual void GetNativeColorimetry(
+            bool bHDR10,
+            displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
+            displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
 
-	if ( g_bBorderlessOutputWindow == true )
-	{
-		nSDLWindowFlags |= SDL_WINDOW_BORDERLESS;
-	}
-
-	if ( g_bFullscreen == true )
-	{
-		nSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
-	}
-
-	if ( g_bGrabbed == true )
-	{
-		nSDLWindowFlags |= SDL_WINDOW_KEYBOARD_GRABBED;
-	}
-
-	g_SDLWindow = SDL_CreateWindow( DEFAULT_TITLE,
-							   SDL_WINDOWPOS_UNDEFINED,
-							SDL_WINDOWPOS_UNDEFINED,
-							g_nOutputWidth,
-							g_nOutputHeight,
-							nSDLWindowFlags );
-
-	if ( g_SDLWindow == nullptr )
-	{
-		fprintf(stderr, "SDL_CreateWindow failed: %s\n", SDL_GetError());
-		g_SDLInitLock.unlock();
-		return;
-	}
-
-	// Update g_nOutputWidthPts.
-	{
-		int width, height;
-		SDL_GetWindowSize( g_SDLWindow, &width, &height );
-		g_nOutputWidthPts = width;
-		g_nOutputHeightPts = height;
-
-	#if SDL_VERSION_ATLEAST(2, 26, 0)
-		SDL_GetWindowSizeInPixels( g_SDLWindow, &width, &height );
-	#endif
-		g_nOutputWidth = width;
-		g_nOutputHeight = height;
-	}
-
-	if ( g_bForceRelativeMouse )
-	{
-		SDL_SetRelativeMouseMode( SDL_TRUE );
-		bRelativeMouse = true;
-	}
-
-	SDL_SetHint(SDL_HINT_TOUCH_MOUSE_EVENTS, "0");
-
-	g_nOldNestedRefresh = g_nNestedRefresh;
-
-	g_bSDLInitOK = true;
-	g_SDLInitLock.unlock();
-
-	static uint32_t fake_timestamp = 0;
-	SDL_Surface *cursor_surface = nullptr;
-	SDL_Surface *icon_surface = nullptr;
-	SDL_Cursor *cursor = nullptr;
-
-	while( SDL_WaitEvent( &event ) )
-	{
-		fake_timestamp++;
-
-		switch( event.type )
+        virtual const char *GetName() const override
 		{
-			case SDL_CLIPBOARDUPDATE:
-				set_gamescope_selections();
-				break;
-			case SDL_MOUSEMOTION:
-				if ( bRelativeMouse )
+			return "SDLWindow";
+		}
+        virtual const char *GetMake() const override
+		{
+			return "Gamescope";
+		}
+        virtual const char *GetModel() const override
+		{
+			return "Virtual Display";
+		}
+
+		//--
+
+		SDL_Window *GetSDLWindow() const { return m_pWindow; }
+		VkSurfaceKHR GetVulkanSurface() const { return m_pVkSurface; }
+	private:
+		SDL_Window *m_pWindow = nullptr;
+		VkSurfaceKHR m_pVkSurface = VK_NULL_HANDLE;
+		BackendConnectorHDRInfo m_HDRInfo{};
+	};
+
+	class CSDLBackend : public CBaseBackend, public INestedHints
+	{
+	public:
+		CSDLBackend();
+
+		/////////////
+		// IBackend
+		/////////////
+
+		virtual bool Init() override;
+		virtual bool PostInit() override;
+		virtual std::span<const char *const> GetInstanceExtensions() const override;
+		virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override;
+		virtual VkImageLayout GetPresentLayout() const override;
+		virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override;
+		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override;
+
+        virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
+        virtual void DirtyState( bool bForce = false, bool bForceModeset = false ) override;
+        virtual bool PollState() override;
+
+		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) override;
+
+        virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
+        virtual void LockBackendFb( uint32_t uFbId ) override;
+        virtual void UnlockBackendFb( uint32_t uFbId ) override;
+        virtual void DropBackendFb( uint32_t uFbId ) override;
+		virtual bool UsesModifiers() const override;
+		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
+
+        virtual IBackendConnector *GetCurrentConnector() override;
+		virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) override;
+
+        virtual bool IsVRRActive() const override;
+		virtual bool SupportsPlaneHardwareCursor() const override;
+
+        virtual bool SupportsTearing() const override;
+		virtual bool UsesVulkanSwapchain() const override;
+
+		virtual bool IsSessionBased() const override;
+
+		virtual bool IsVisible() const override;
+
+		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override;
+
+		virtual INestedHints *GetNestedHints() override;
+
+		///////////////////
+		// INestedHints
+		///////////////////
+
+        virtual void SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info ) override;
+        virtual void SetRelativeMouseMode( bool bRelative ) override;
+        virtual void SetVisible( bool bVisible ) override;
+        virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
+        virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
+		virtual std::optional<INestedHints::CursorInfo> GetHostCursor() override;
+	protected:
+		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
+	private:
+		void SDLThreadFunc();
+
+		uint32_t GetUserEventIndex( SDLCustomEvents eEvent ) const;
+		void PushUserEvent( SDLCustomEvents eEvent );
+
+		bool m_bShown = false;
+		CSDLConnector m_Connector; // Window.
+		uint32_t m_uUserEventIdBase = 0u;
+		std::vector<const char *> m_pszInstanceExtensions;
+
+		std::thread m_SDLThread;
+		std::atomic<SDLInitState> m_eSDLInit = { SDLInitState::SDLInit_Waiting };
+
+		std::atomic<bool> m_bApplicationGrabbed = { false };
+		std::atomic<bool> m_bApplicationVisible = { false };
+		std::atomic<std::shared_ptr<INestedHints::CursorInfo>> m_pApplicationCursor;
+		std::atomic<std::shared_ptr<std::string>> m_pApplicationTitle;
+		std::atomic<std::shared_ptr<std::vector<uint32_t>>> m_pApplicationIcon;
+		SDL_Surface *m_pIconSurface = nullptr;
+		SDL_Surface *m_pCursorSurface = nullptr;
+		SDL_Cursor *m_pCursor = nullptr;
+	};
+
+	//////////////////
+	// CSDLConnector
+	//////////////////
+
+	CSDLConnector::CSDLConnector()
+	{
+	}
+
+	CSDLConnector::~CSDLConnector()
+	{
+		if ( m_pWindow )
+			SDL_DestroyWindow( m_pWindow );
+	}
+
+	bool CSDLConnector::Init()
+	{
+		g_nOutputWidth = g_nPreferredOutputWidth;
+		g_nOutputHeight = g_nPreferredOutputHeight;
+		g_nOutputRefresh = g_nNestedRefresh;
+
+		if ( g_nOutputHeight == 0 )
+		{
+			if ( g_nOutputWidth != 0 )
+			{
+				fprintf( stderr, "Cannot specify -W without -H\n" );
+				return false;
+			}
+			g_nOutputHeight = 720;
+		}
+		if ( g_nOutputWidth == 0 )
+			g_nOutputWidth = g_nOutputHeight * 16 / 9;
+		if ( g_nOutputRefresh == 0 )
+			g_nOutputRefresh = 60;
+
+		uint32_t uSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
+
+		if ( g_bBorderlessOutputWindow == true )
+			uSDLWindowFlags |= SDL_WINDOW_BORDERLESS;
+
+		if ( g_bFullscreen == true )
+			uSDLWindowFlags |= SDL_WINDOW_FULLSCREEN_DESKTOP;
+
+		if ( g_bGrabbed == true )
+			uSDLWindowFlags |= SDL_WINDOW_KEYBOARD_GRABBED;
+
+		m_pWindow = SDL_CreateWindow(
+			"gamescope",
+			SDL_WINDOWPOS_UNDEFINED_DISPLAY( g_nNestedDisplayIndex ),
+			SDL_WINDOWPOS_UNDEFINED_DISPLAY( g_nNestedDisplayIndex ),
+			g_nOutputWidth,
+			g_nOutputHeight,
+			uSDLWindowFlags );
+
+		if ( m_pWindow == nullptr )
+			return false;
+
+		if ( !SDL_Vulkan_CreateSurface( m_pWindow, vulkan_get_instance(), &m_pVkSurface ) )
+		{
+			fprintf(stderr, "SDL_Vulkan_CreateSurface failed: %s", SDL_GetError() );
+			return false;
+		}
+
+		return true;
+	}
+
+	GamescopeScreenType CSDLConnector::GetScreenType() const
+	{
+		return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
+	}
+	GamescopePanelOrientation CSDLConnector::GetCurrentOrientation() const
+	{
+		return GAMESCOPE_PANEL_ORIENTATION_0;
+	}
+	bool CSDLConnector::SupportsHDR() const
+	{
+		return GetHDRInfo().IsHDR10();
+	}
+	bool CSDLConnector::IsHDRActive() const
+	{
+		// XXX: blah
+		return false;
+	}
+	const BackendConnectorHDRInfo &CSDLConnector::GetHDRInfo() const
+	{
+		return m_HDRInfo;
+	}
+	std::span<const BackendMode> CSDLConnector::GetModes() const
+	{
+		return std::span<const BackendMode>{};
+	}
+
+	bool CSDLConnector::SupportsVRR() const
+	{
+		return false;
+	}
+
+	std::span<const uint8_t> CSDLConnector::GetRawEDID() const
+	{
+		return std::span<const uint8_t>{};
+	}
+	std::span<const uint32_t> CSDLConnector::GetValidDynamicRefreshRates() const
+	{
+		return std::span<const uint32_t>{};
+	}
+
+	void CSDLConnector::GetNativeColorimetry(
+		bool bHDR10,
+		displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
+		displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const
+	{
+		if ( g_bForceHDR10OutputDebug )
+		{
+			*displayColorimetry = displaycolorimetry_2020;
+			*displayEOTF = EOTF_PQ;
+			*outputEncodingColorimetry = displaycolorimetry_2020;
+			*outputEncodingEOTF = EOTF_PQ;
+		}
+		else
+		{
+			*displayColorimetry = displaycolorimetry_709;
+			*displayEOTF = EOTF_Gamma22;
+			*outputEncodingColorimetry = displaycolorimetry_709;
+			*outputEncodingEOTF = EOTF_Gamma22;
+		}
+	}
+
+	////////////////
+	// CSDLBackend
+	////////////////
+
+	CSDLBackend::CSDLBackend()
+		: m_SDLThread{ [this](){ this->SDLThreadFunc(); } }
+	{
+	}
+
+	bool CSDLBackend::Init()
+	{
+		m_eSDLInit.wait( SDLInitState::SDLInit_Waiting );
+
+		return m_eSDLInit == SDLInitState::SDLInit_Success;
+	}
+
+	bool CSDLBackend::PostInit()
+	{
+		return true;
+	}
+
+	std::span<const char *const> CSDLBackend::GetInstanceExtensions() const
+	{
+		return std::span<const char *const>{ m_pszInstanceExtensions.begin(), m_pszInstanceExtensions.end() };
+	}
+
+	std::span<const char *const> CSDLBackend::GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const
+	{
+		return std::span<const char *const>{};
+	}
+
+	VkImageLayout CSDLBackend::GetPresentLayout() const
+	{
+		return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+	}
+
+	void CSDLBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
+	{
+		*pPrimaryPlaneFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+		*pOverlayPlaneFormat = VK_FORMAT_B8G8R8A8_UNORM;
+	}
+
+	bool CSDLBackend::ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const
+	{
+		return true;
+	}
+
+	int CSDLBackend::Present( const FrameInfo_t *pFrameInfo, bool bAsync )
+	{
+		// TODO: Resolve const crap
+		std::optional oCompositeResult = vulkan_composite( (FrameInfo_t *)pFrameInfo, nullptr, false );
+		if ( !oCompositeResult )
+			return -EINVAL;
+
+		vulkan_present_to_window();
+
+		// TODO: Hook up PresentationFeedback.
+
+		// Wait for the composite result on our side *after* we
+		// commit the buffer to the compositor to avoid a bubble.
+		vulkan_wait( *oCompositeResult, true );
+
+		GetVBlankTimer().UpdateWasCompositing( true );
+		GetVBlankTimer().UpdateLastDrawTime( get_time_in_nanos() - g_SteamCompMgrVBlankTime.ulWakeupTime );
+
+		return 0;
+	}
+	void CSDLBackend::DirtyState( bool bForce, bool bForceModeset )
+	{
+	}
+	bool CSDLBackend::PollState()
+	{
+		return false;
+	}
+
+	std::shared_ptr<BackendBlob> CSDLBackend::CreateBackendBlob( std::span<const uint8_t> data )
+	{
+		return std::make_shared<BackendBlob>( data );
+	}
+
+	uint32_t CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
+	{
+		return 0;
+	}
+	void CSDLBackend::LockBackendFb( uint32_t uFbId )
+	{
+		abort();
+	}
+	void CSDLBackend::UnlockBackendFb( uint32_t uFbId )
+	{
+		abort();
+	}
+	void CSDLBackend::DropBackendFb( uint32_t uFbId )
+	{
+		abort();
+	}
+
+	bool CSDLBackend::UsesModifiers() const
+	{
+		return false;
+	}
+	std::span<const uint64_t> CSDLBackend::GetSupportedModifiers( uint32_t uDrmFormat ) const
+	{
+		return std::span<const uint64_t>{};
+	}
+
+	IBackendConnector *CSDLBackend::GetCurrentConnector()
+	{
+		return &m_Connector;
+	}
+	IBackendConnector *CSDLBackend::GetConnector( GamescopeScreenType eScreenType )
+	{
+		if ( eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL )
+			return &m_Connector;
+
+		return nullptr;
+	}
+	bool CSDLBackend::IsVRRActive() const
+	{
+		return false;
+	}
+
+	bool CSDLBackend::SupportsPlaneHardwareCursor() const
+	{
+		// We use the nested hints cursor stuff.
+		// Not our own plane.
+		return false;
+	}
+
+	bool CSDLBackend::SupportsTearing() const
+	{
+		return false;
+	}
+	bool CSDLBackend::UsesVulkanSwapchain() const
+	{
+		return true;
+	}
+
+	bool CSDLBackend::IsSessionBased() const
+	{
+		return false;
+	}
+
+	bool CSDLBackend::IsVisible() const
+	{
+		return true;
+	}
+
+	glm::uvec2 CSDLBackend::CursorSurfaceSize( glm::uvec2 uvecSize ) const
+	{
+		return uvecSize;
+	}
+
+	INestedHints *CSDLBackend::GetNestedHints()
+	{
+		return this;
+	}
+
+	///////////////////
+	// INestedHints
+	///////////////////
+
+	void CSDLBackend::SetCursorImage( std::shared_ptr<INestedHints::CursorInfo> info )
+	{
+		m_pApplicationCursor = info;
+		PushUserEvent( GAMESCOPE_SDL_EVENT_CURSOR );
+	}
+	void CSDLBackend::SetRelativeMouseMode( bool bRelative )
+	{
+		m_bApplicationGrabbed = bRelative;
+		PushUserEvent( GAMESCOPE_SDL_EVENT_GRAB );
+	}
+	void CSDLBackend::SetVisible( bool bVisible )
+	{
+		m_bApplicationVisible = bVisible;
+		PushUserEvent( GAMESCOPE_SDL_EVENT_VISIBLE );
+	}
+	void CSDLBackend::SetTitle( std::shared_ptr<std::string> szTitle )
+	{
+		m_pApplicationTitle = szTitle;
+		PushUserEvent( GAMESCOPE_SDL_EVENT_TITLE );
+	}
+	void CSDLBackend::SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels )
+	{
+		m_pApplicationIcon = uIconPixels;
+		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
+	}
+
+	std::optional<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
+	{
+		if ( !g_pOriginalDisplay )
+			return std::nullopt;
+
+		Display *display = XOpenDisplay( g_pOriginalDisplay );
+		if ( !display )
+			return std::nullopt;
+		defer( XCloseDisplay( display ) );
+
+		int xfixes_event, xfixes_error;
+		if ( !XFixesQueryExtension( display, &xfixes_event, &xfixes_error ) )
+		{
+			xwm_log.errorf("No XFixes extension on current compositor");
+			return std::nullopt;
+		}
+
+		XFixesCursorImage *image = XFixesGetCursorImage( display );
+		if ( !image )
+			return std::nullopt;
+		defer( XFree( image ) );
+
+		// image->pixels is `unsigned long*` :/
+		// Thanks X11.
+		std::vector<uint32_t> cursorData = std::vector<uint32_t>( image->width * image->height );
+		for (uint32_t y = 0; y < image->height; y++)
+		{
+			for (uint32_t x = 0; x < image->width; x++)
+			{
+				cursorData[y * image->width + x] = static_cast<uint32_t>( image->pixels[image->height * y + x] );
+			}
+		}
+
+		return CursorInfo
+		{
+			.pPixels   = std::move( cursorData ),
+			.uWidth    = image->width,
+			.uHeight   = image->height,
+			.uXHotspot = image->xhot,
+			.uYHotspot = image->yhot,
+		};
+	}
+
+	void CSDLBackend::OnBackendBlobDestroyed( BackendBlob *pBlob )
+	{
+		// Do nothing.
+	}
+
+	void CSDLBackend::SDLThreadFunc()
+	{
+		pthread_setname_np( pthread_self(), "gamescope-sdl" );
+
+		m_uUserEventIdBase = SDL_RegisterEvents( GAMESCOPE_SDL_EVENT_COUNT );
+
+		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
+		{
+			m_eSDLInit = SDLInitState::SDLInit_Failure;
+			m_eSDLInit.notify_all();
+			return;
+		}
+
+		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
+		{
+			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
+			m_eSDLInit = SDLInitState::SDLInit_Failure;
+			m_eSDLInit.notify_all();
+			return;
+		}
+
+		unsigned int uExtCount = 0;
+		SDL_Vulkan_GetInstanceExtensions( nullptr, &uExtCount, nullptr );
+		m_pszInstanceExtensions.resize( uExtCount );
+		SDL_Vulkan_GetInstanceExtensions( nullptr, &uExtCount, m_pszInstanceExtensions.data() );
+
+		if ( !m_Connector.Init() )
+		{
+			m_eSDLInit = SDLInitState::SDLInit_Failure;
+			m_eSDLInit.notify_all();
+			return;
+		}
+
+		if ( !vulkan_init( vulkan_get_instance(), m_Connector.GetVulkanSurface() ) )
+		{
+			m_eSDLInit = SDLInitState::SDLInit_Failure;
+			m_eSDLInit.notify_all();
+			return;
+		}
+
+		if ( !wlsession_init() )
+		{
+			fprintf( stderr, "Failed to initialize Wayland session\n" );
+			m_eSDLInit = SDLInitState::SDLInit_Failure;
+			m_eSDLInit.notify_all();
+			return;
+		}
+
+		// Update g_nOutputWidthPts.
+		{
+			int width, height;
+			SDL_GetWindowSize( m_Connector.GetSDLWindow(), &width, &height );
+			g_nOutputWidthPts = width;
+			g_nOutputHeightPts = height;
+
+		#if SDL_VERSION_ATLEAST(2, 26, 0)
+			SDL_GetWindowSizeInPixels( m_Connector.GetSDLWindow(), &width, &height );
+		#endif
+			g_nOutputWidth = width;
+			g_nOutputHeight = height;
+		}
+
+		bool bRelativeMouse = false;
+		if ( g_bForceRelativeMouse )
+		{
+			SDL_SetRelativeMouseMode( SDL_TRUE );
+			bRelativeMouse = true;
+		}
+
+		SDL_SetHint( SDL_HINT_TOUCH_MOUSE_EVENTS, "0" );
+
+		g_nOldNestedRefresh = g_nNestedRefresh;
+
+		m_eSDLInit = SDLInitState::SDLInit_Success;
+		m_eSDLInit.notify_all();
+
+		static uint32_t fake_timestamp = 0;
+
+		SDL_Event event;
+		while( SDL_WaitEvent( &event ) )
+		{
+			fake_timestamp++;
+
+			switch( event.type )
+			{
+				case SDL_CLIPBOARDUPDATE:
 				{
-					if ( g_bWindowFocused )
+					char *pClipBoard = SDL_GetClipboardText();
+					char *pPrimarySelection = SDL_GetPrimarySelectionText();
+
+					gamescope_set_selection(pClipBoard, GAMESCOPE_SELECTION_CLIPBOARD);
+					gamescope_set_selection(pPrimarySelection, GAMESCOPE_SELECTION_PRIMARY);
+
+					SDL_free(pClipBoard);
+					SDL_free(pPrimarySelection);
+				}
+				break;
+
+				case SDL_MOUSEMOTION:
+				{
+					if ( bRelativeMouse )
+					{
+						if ( g_bWindowFocused )
+						{
+							wlserver_lock();
+							wlserver_mousemotion( event.motion.xrel, event.motion.yrel, fake_timestamp );
+							wlserver_unlock();
+						}
+					}
+					else
 					{
 						wlserver_lock();
-						wlserver_mousemotion( event.motion.xrel, event.motion.yrel, fake_timestamp );
+						wlserver_touchmotion(
+							event.motion.x / float(g_nOutputWidthPts),
+							event.motion.y / float(g_nOutputHeightPts),
+							0,
+							fake_timestamp );
 						wlserver_unlock();
 					}
 				}
-				else
+				break;
+
+				case SDL_MOUSEBUTTONDOWN:
+				case SDL_MOUSEBUTTONUP:
 				{
 					wlserver_lock();
-					wlserver_touchmotion(
-						event.motion.x / float(g_nOutputWidthPts),
-						event.motion.y / float(g_nOutputHeightPts),
-						0,
-						fake_timestamp );
+					wlserver_mousebutton( SDLButtonToLinuxButton( event.button.button ),
+										event.button.state == SDL_PRESSED,
+										fake_timestamp );
 					wlserver_unlock();
 				}
 				break;
-			case SDL_MOUSEBUTTONDOWN:
-			case SDL_MOUSEBUTTONUP:
-				wlserver_lock();
-				wlserver_mousebutton( SDLButtonToLinuxButton( event.button.button ),
-									  event.button.state == SDL_PRESSED,
-									  fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_MOUSEWHEEL:
-				wlserver_lock();
-				wlserver_mousewheel( -event.wheel.x, -event.wheel.y, fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_FINGERMOTION:
-				wlserver_lock();
-				wlserver_touchmotion( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_FINGERDOWN:
-				wlserver_lock();
-				wlserver_touchdown( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_FINGERUP:
-				wlserver_lock();
-				wlserver_touchup( event.tfinger.fingerId, fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_KEYDOWN:
-				// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
-				// event will be consumed by the next case statement when the user releases the key
-				if ( event.key.keysym.mod & KMOD_LGUI )
+
+				case SDL_MOUSEWHEEL:
 				{
-					key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-					const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
-					const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
-					if ( isShortcutKey )
+					wlserver_lock();
+					wlserver_mousewheel( -event.wheel.x, -event.wheel.y, fake_timestamp );
+					wlserver_unlock();
+				}
+				break;
+
+				case SDL_FINGERMOTION:
+				{
+					wlserver_lock();
+					wlserver_touchmotion( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_unlock();
+				}
+				break;
+
+				case SDL_FINGERDOWN:
+				{
+					wlserver_lock();
+					wlserver_touchdown( event.tfinger.x, event.tfinger.y, event.tfinger.fingerId, fake_timestamp );
+					wlserver_unlock();
+				}
+				break;
+
+				case SDL_FINGERUP:
+				{
+					wlserver_lock();
+					wlserver_touchup( event.tfinger.fingerId, fake_timestamp );
+					wlserver_unlock();
+				}
+				break;
+
+				case SDL_KEYDOWN:
+				{
+					// If this keydown event is super + one of the shortcut keys, consume the keydown event, since the corresponding keyup
+					// event will be consumed by the next case statement when the user releases the key
+					if ( event.key.keysym.mod & KMOD_LGUI )
 					{
-						break;
+						uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
+						const uint32_t shortcutKeys[] = {KEY_F, KEY_N, KEY_B, KEY_U, KEY_Y, KEY_I, KEY_O, KEY_S, KEY_G};
+						const bool isShortcutKey = std::find(std::begin(shortcutKeys), std::end(shortcutKeys), key) != std::end(shortcutKeys);
+						if ( isShortcutKey )
+						{
+							break;
+						}
 					}
 				}
-			[[fallthrough]];
-			case SDL_KEYUP:
-				key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
-
-				if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
+				[[fallthrough]];
+				case SDL_KEYUP:
 				{
-					bool handled = true;
-					switch ( key )
-					{
-						case KEY_F:
-							g_bFullscreen = !g_bFullscreen;
-							SDL_SetWindowFullscreen( g_SDLWindow, g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
-							break;
-						case KEY_N:
-							g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
-							break;
-						case KEY_B:
-							g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
-							break;
-						case KEY_U:
-							g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR) ?
-								GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
-							break;
-						case KEY_Y:
-							g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
-								GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
-							break;
-						case KEY_I:
-							g_upscaleFilterSharpness = std::min(20, g_upscaleFilterSharpness + 1);
-							break;
-						case KEY_O:
-							g_upscaleFilterSharpness = std::max(0, g_upscaleFilterSharpness - 1);
-							break;
-						case KEY_S:
-							take_screenshot();
-							break;
-						case KEY_G:
-							g_bGrabbed = !g_bGrabbed;
-							SDL_SetWindowKeyboardGrab( g_SDLWindow, g_bGrabbed ? SDL_TRUE : SDL_FALSE );
-							g_bUpdateSDLWindowTitle = true;
+					uint32_t key = SDLScancodeToLinuxKey( event.key.keysym.scancode );
 
-							SDL_Event event;
-							event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
-							SDL_PushEvent( &event );
+					if ( event.type == SDL_KEYUP && ( event.key.keysym.mod & KMOD_LGUI ) )
+					{
+						bool handled = true;
+						switch ( key )
+						{
+							case KEY_F:
+								g_bFullscreen = !g_bFullscreen;
+								SDL_SetWindowFullscreen( m_Connector.GetSDLWindow(), g_bFullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0 );
+								break;
+							case KEY_N:
+								g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
+								break;
+							case KEY_B:
+								g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+								break;
+							case KEY_U:
+								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR) ?
+									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+								break;
+							case KEY_Y:
+								g_wantedUpscaleFilter = (g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS) ? 
+									GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+								break;
+							case KEY_I:
+								g_upscaleFilterSharpness = std::min(20, g_upscaleFilterSharpness + 1);
+								break;
+							case KEY_O:
+								g_upscaleFilterSharpness = std::max(0, g_upscaleFilterSharpness - 1);
+								break;
+							case KEY_S:
+								gamescope::CScreenshotManager::Get().TakeScreenshot( true );
+								break;
+							case KEY_G:
+								g_bGrabbed = !g_bGrabbed;
+								SDL_SetWindowKeyboardGrab( m_Connector.GetSDLWindow(), g_bGrabbed ? SDL_TRUE : SDL_FALSE );
+
+								SDL_Event event;
+								event.type = GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE );
+								SDL_PushEvent( &event );
+								break;
+							default:
+								handled = false;
+						}
+						if ( handled )
+						{
+							break;
+						}
+					}
+
+					// On Wayland, clients handle key repetition
+					if ( event.key.repeat )
+						break;
+
+					wlserver_lock();
+					wlserver_key( key, event.type == SDL_KEYDOWN, fake_timestamp );
+					wlserver_unlock();
+				}
+				break;
+
+				case SDL_WINDOWEVENT:
+				{
+					switch( event.window.event )
+					{
+						case SDL_WINDOWEVENT_CLOSE:
+							raise( SIGTERM );
 							break;
 						default:
-							handled = false;
-					}
-					if ( handled )
-					{
-						break;
-					}
-				}
-
-				// On Wayland, clients handle key repetition
-				if ( event.key.repeat )
-					break;
-
-				wlserver_lock();
-				wlserver_key( key, event.type == SDL_KEYDOWN, fake_timestamp );
-				wlserver_unlock();
-				break;
-			case SDL_WINDOWEVENT:
-				switch( event.window.event )
-				{
-					case SDL_WINDOWEVENT_CLOSE:
-						raise( SIGTERM );
-						break;
-					default:
-						break;
-					case SDL_WINDOWEVENT_MOVED:
-					case SDL_WINDOWEVENT_SHOWN:
-						updateOutputRefresh();
-						break;
-					case SDL_WINDOWEVENT_SIZE_CHANGED:
-						int width, height;
-						SDL_GetWindowSize( g_SDLWindow, &width, &height );
-						g_nOutputWidthPts = width;
-						g_nOutputHeightPts = height;
+							break;
+						case SDL_WINDOWEVENT_SIZE_CHANGED:
+							int width, height;
+							SDL_GetWindowSize( m_Connector.GetSDLWindow(), &width, &height );
+							g_nOutputWidthPts = width;
+							g_nOutputHeightPts = height;
 
 #if SDL_VERSION_ATLEAST(2, 26, 0)
-						SDL_GetWindowSizeInPixels( g_SDLWindow, &width, &height );
+							SDL_GetWindowSizeInPixels( m_Connector.GetSDLWindow(), &width, &height );
 #endif
-						g_nOutputWidth = width;
-						g_nOutputHeight = height;
+							g_nOutputWidth = width;
+							g_nOutputHeight = height;
 
-						updateOutputRefresh();
+						[[fallthrough]];
+						case SDL_WINDOWEVENT_MOVED:
+						case SDL_WINDOWEVENT_SHOWN:
+							{
+								int display_index = 0;
+								SDL_DisplayMode mode = { SDL_PIXELFORMAT_UNKNOWN, 0, 0, 0, 0 };
 
-						break;
-					case SDL_WINDOWEVENT_FOCUS_LOST:
-						g_nNestedRefresh = g_nNestedUnfocusedRefresh;
-						g_bWindowFocused = false;
-						break;
-					case SDL_WINDOWEVENT_FOCUS_GAINED:
-						g_nNestedRefresh = g_nOldNestedRefresh;
-						g_bWindowFocused = true;
-						break;
-					case SDL_WINDOWEVENT_EXPOSED:
-						force_repaint();
-						break;
+								display_index = SDL_GetWindowDisplayIndex( m_Connector.GetSDLWindow() );
+								if ( SDL_GetDesktopDisplayMode( display_index, &mode ) == 0 )
+								{
+									g_nOutputRefresh = mode.refresh_rate;
+								}
+							}
+							break;
+						case SDL_WINDOWEVENT_FOCUS_LOST:
+							g_nNestedRefresh = g_nNestedUnfocusedRefresh;
+							g_bWindowFocused = false;
+							break;
+						case SDL_WINDOWEVENT_FOCUS_GAINED:
+							g_nNestedRefresh = g_nOldNestedRefresh;
+							g_bWindowFocused = true;
+							break;
+						case SDL_WINDOWEVENT_EXPOSED:
+							force_repaint();
+							break;
+					}
 				}
 				break;
-			default:
-				if ( event.type == g_unSDLUserEventID + USER_EVENT_TITLE )
+
+				default:
 				{
-					g_SDLWindowTitleLock.lock();
-					if ( g_bUpdateSDLWindowTitle )
+					if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_VISIBLE ) )
 					{
-						std::string tmp_title;
+						bool bVisible = m_bApplicationVisible;
 
-						const std::string *window_title = g_SDLWindowTitle.get();
-						if (!window_title)
-							window_title = &gamescope_str;
+						// If we are Steam Mode in nested, show the window
+						// whenever we have had a first frame to match
+						// what we do in embedded with Steam for testing
+						// held commits, etc.
+						if ( steamMode )
+							bVisible |= !g_bFirstFrame;
 
-						g_bUpdateSDLWindowTitle = false;
-						if ( g_bGrabbed )
+						if ( m_bShown != bVisible )
 						{
-							tmp_title = *window_title;
-							tmp_title += " (grabbed)";
+							m_bShown = bVisible;
 
-							window_title = &tmp_title;
+							if ( m_bShown )
+							{
+								SDL_ShowWindow( m_Connector.GetSDLWindow() );
+							}
+							else
+							{
+								SDL_HideWindow( m_Connector.GetSDLWindow() );
+							}
 						}
-						SDL_SetWindowTitle( g_SDLWindow, window_title->c_str() );
 					}
-					
-					if ( g_bUpdateSDLWindowIcon )
+					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_TITLE ) )
 					{
-						if ( icon_surface )
+						std::shared_ptr<std::string> pAppTitle = m_pApplicationTitle;
+
+						std::string szTitle = pAppTitle ? *pAppTitle : "gamescope";
+						if ( g_bGrabbed )
+							szTitle += " (grabbed)";
+						SDL_SetWindowTitle( m_Connector.GetSDLWindow(), szTitle.c_str() );
+					}
+					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_ICON ) )
+					{
+						std::shared_ptr<std::vector<uint32_t>> pIcon = m_pApplicationIcon;
+
+						if ( m_pIconSurface )
 						{
-							SDL_FreeSurface( icon_surface );
-							icon_surface = nullptr;
+							SDL_FreeSurface( m_pIconSurface );
+							m_pIconSurface = nullptr;
 						}
 
-						if ( g_SDLWindowIcon && g_SDLWindowIcon->size() >= 3 )
+						if ( pIcon && pIcon->size() >= 3 )
 						{
-							const uint32_t width = (*g_SDLWindowIcon)[0];
-        					const uint32_t height = (*g_SDLWindowIcon)[1];
+							const uint32_t uWidth = (*pIcon)[0];
+							const uint32_t uHeight = (*pIcon)[1];
 
-							icon_surface = SDL_CreateRGBSurfaceFrom(
-								&(*g_SDLWindowIcon)[2],
-								width, height,
-								32, width * sizeof(uint32_t),
+							m_pIconSurface = SDL_CreateRGBSurfaceFrom(
+								&(*pIcon)[2],
+								uWidth, uHeight,
+								32, uWidth * sizeof(uint32_t),
 								0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
 						}
 
-						SDL_SetWindowIcon( g_SDLWindow, icon_surface );
+						SDL_SetWindowIcon( m_Connector.GetSDLWindow(), m_pIconSurface );
 					}
-					g_SDLWindowTitleLock.unlock();
-				}
-				if ( event.type == g_unSDLUserEventID + USER_EVENT_VISIBLE )
-				{
-					bool should_show = !!event.user.code;
-
-					// If we are Steam Mode in nested, show the window
-					// whenever we have had a first frame to match
-					// what we do in embedded with Steam for testing
-					// held commits, etc.
-					if ( steamMode )
-						should_show |= !g_bFirstFrame;
-
-					if ( g_bWindowShown != should_show )
+					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_GRAB ) )
 					{
-						g_bWindowShown = should_show;
+						SDL_SetRelativeMouseMode( m_bApplicationGrabbed ? SDL_TRUE : SDL_FALSE );
+					}
+					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_CURSOR ) )
+					{
+						std::shared_ptr<INestedHints::CursorInfo> pCursorInfo = m_pApplicationCursor;
 
-						if ( g_bWindowShown )
+						if ( m_pCursorSurface )
 						{
-							SDL_ShowWindow( g_SDLWindow );
+							SDL_FreeSurface( m_pCursorSurface );
+							m_pCursorSurface = nullptr;
 						}
-						else
+
+						if ( m_pCursor )
 						{
-							SDL_HideWindow( g_SDLWindow );
+							SDL_FreeCursor( m_pCursor );
+							m_pCursor = nullptr;
 						}
-					}
-				}
-				if ( event.type == g_unSDLUserEventID + USER_EVENT_GRAB )
-				{
-					bool grab = !!event.user.code;
-					if ( grab != bRelativeMouse )
-					{
-						SDL_SetRelativeMouseMode( grab ? SDL_TRUE : SDL_FALSE );
-						bRelativeMouse = grab;
-					}
-				}
-				if ( event.type == g_unSDLUserEventID + USER_EVENT_CURSOR )
-				{
-					std::unique_lock lock(g_SDLCursorLock);
-					if ( g_bUpdateSDLCursor )
-					{
-						if (cursor_surface)
-							SDL_FreeSurface(cursor_surface);
 
-						cursor_surface = SDL_CreateRGBSurfaceFrom(
-							g_SDLPendingCursorData.data->data(),
-							g_SDLPendingCursorData.width,
-							g_SDLPendingCursorData.height,
-							32,
-							g_SDLPendingCursorData.width * sizeof(uint32_t),
-							0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
+						if ( pCursorInfo )
+						{
+							m_pCursorSurface = SDL_CreateRGBSurfaceFrom(
+								pCursorInfo->pPixels.data(),
+								pCursorInfo->uWidth,
+								pCursorInfo->uHeight,
+								32,
+								pCursorInfo->uWidth * sizeof(uint32_t),
+								0x00FF0000, 0x0000FF00, 0x000000FF, 0xFF000000);
 
-						if (cursor)
-							SDL_FreeCursor(cursor);
+							m_pCursor = SDL_CreateColorCursor( m_pCursorSurface, pCursorInfo->uXHotspot, pCursorInfo->uYHotspot );
+						}
 
-						cursor = SDL_CreateColorCursor( cursor_surface, g_SDLPendingCursorData.xhot, g_SDLPendingCursorData.yhot );
-						SDL_SetCursor( cursor );
-						g_bUpdateSDLCursor = false;
+						SDL_SetCursor( m_pCursor );
 					}
 				}
 				break;
+			}
 		}
 	}
-}
 
-std::optional<pthread_t> sdlwindow_thread;
-
-bool sdlwindow_init( void )
-{
-	g_SDLInitLock.lock();
-
-	std::thread inputSDLThread( inputSDLThreadRun );
-	sdlwindow_thread = inputSDLThread.native_handle();
-	inputSDLThread.detach();
-
-	// When this returns SDL_Init should be over
-	g_SDLInitLock.lock();
-
-	return g_bSDLInitOK;
-}
-
-void sdlwindow_shutdown( void )
-{
-	if ( sdlwindow_thread )
+	uint32_t CSDLBackend::GetUserEventIndex( SDLCustomEvents eEvent ) const
 	{
-		pthread_cancel(*sdlwindow_thread);
-		sdlwindow_thread = std::nullopt;
+		return m_uUserEventIdBase + uint32_t( eEvent );
 	}
-}
 
-void sdlwindow_title( std::shared_ptr<std::string> title, std::shared_ptr<std::vector<uint32_t>> icon )
-{
-	if ( !BIsSDLSession() )
-		return;
-
+	void CSDLBackend::PushUserEvent( SDLCustomEvents eEvent )
 	{
-		std::unique_lock lock(g_SDLWindowTitleLock);
-
-		if ( g_SDLWindowTitle != title )
+		SDL_Event event =
 		{
-			g_SDLWindowTitle = title;
-			g_bUpdateSDLWindowTitle = true;
-		}
-
-		if ( g_SDLWindowIcon != icon )
-		{
-			g_SDLWindowIcon = icon;
-			g_bUpdateSDLWindowIcon = true;
-		}
-
-		if ( g_bUpdateSDLWindowTitle || g_bUpdateSDLWindowIcon )
-		{
-			SDL_Event event;
-			event.type = g_unSDLUserEventID + USER_EVENT_TITLE;
-			SDL_PushEvent( &event );
-		}
+			.user =
+			{
+				.type = GetUserEventIndex( eEvent ),
+			},
+		};
+		SDL_PushEvent( &event );
 	}
-}
 
-void sdlwindow_set_selection(std::string contents, int selection)
-{
-	if (selection == CLIPBOARD)
+	/////////////////////////
+	// Backend Instantiator
+	/////////////////////////
+
+	template <>
+	bool IBackend::Set<CSDLBackend>()
 	{
-		SDL_SetClipboardText(contents.c_str());
+		return Set( new CSDLBackend{} );
 	}
-	else if (selection == PRIMARYSELECTION)
-	{
-		SDL_SetPrimarySelectionText(contents.c_str());
-	}
-}
-
-static void set_gamescope_selections()
-{
-	char *_clipboard = SDL_GetClipboardText();
-
-	char *_primarySelection = SDL_GetPrimarySelectionText();
-
-	gamescope_set_selection(_clipboard, CLIPBOARD);
-	gamescope_set_selection(_primarySelection, PRIMARYSELECTION);
-
-	SDL_free(_clipboard);
-	SDL_free(_primarySelection);
-}
-
-void sdlwindow_visible( bool bVisible )
-{
-	if ( !BIsSDLSession() )
-		return;
-
-	SDL_Event event;
-	event.type = g_unSDLUserEventID + USER_EVENT_VISIBLE;
-	event.user.code = bVisible ? 1 : 0;
-	SDL_PushEvent( &event );
-}
-
-void sdlwindow_grab( bool bGrab )
-{
-	if ( !BIsSDLSession() )
-		return;
-
-	if ( g_bForceRelativeMouse )
-		return;
-
-	static bool s_bWasGrabbed = false;
-
-	if ( s_bWasGrabbed == bGrab )
-		return;
-
-	s_bWasGrabbed = bGrab;
-
-	SDL_Event event;
-	event.type = g_unSDLUserEventID + USER_EVENT_GRAB;
-	event.user.code = bGrab ? 1 : 0;
-	SDL_PushEvent( &event );
-}
-
-void sdlwindow_cursor(std::shared_ptr<std::vector<uint32_t>> pixels, uint32_t width, uint32_t height, uint32_t xhot, uint32_t yhot)
-{
-	if ( !BIsSDLSession() )
-		return;
-
-	if ( g_bForceRelativeMouse )
-		return;
-
-	{
-		std::unique_lock lock( g_SDLCursorLock );
-		g_SDLPendingCursorData.width = width;
-		g_SDLPendingCursorData.height = height;
-		g_SDLPendingCursorData.xhot = xhot;
-		g_SDLPendingCursorData.yhot = yhot;
-		g_SDLPendingCursorData.data = pixels;
-		g_bUpdateSDLCursor = true;
-	}
-
-	SDL_Event event;
-	event.type = g_unSDLUserEventID + USER_EVENT_CURSOR;
-	SDL_PushEvent( &event );
 }

@@ -1,6 +1,7 @@
 #pragma once
 
-#include "drm.hpp"
+#include "backend.h"
+#include "waitable.h"
 
 #include <mutex>
 #include <memory>
@@ -20,6 +21,8 @@ class gamescope_xwayland_server_t;
 struct ignore;
 struct steamcompmgr_win_t;
 class MouseCursor;
+
+extern LogScope xwm_log;
 
 struct focus_t
 {
@@ -49,7 +52,7 @@ struct CommitDoneList_t
 	std::vector< CommitDoneEntry_t > listCommitsDone;
 };
 
-struct xwayland_ctx_t
+struct xwayland_ctx_t final : public gamescope::IWaitable
 {
 	gamescope_xwayland_server_t *xwayland_server;
 	Display			*dpy;
@@ -67,6 +70,7 @@ struct xwayland_ctx_t
 	int				render_event, render_error;
 	int				xshape_event, xshape_error;
 	int				composite_opcode;
+	int				xinput_opcode, xinput_event, xinput_error;
 	Window			ourWindow;
 
 	focus_t 		focus;
@@ -146,7 +150,7 @@ struct xwayland_ctx_t
 		Atom gamescopeXWaylandModeControl;
 
 		Atom gamescopeFPSLimit;
-		Atom gamescopeDynamicRefresh[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 		Atom gamescopeLowLatency;
 
 		Atom gamescopeFSRFeedback;
@@ -188,7 +192,6 @@ struct xwayland_ctx_t
 		Atom gamescopeDebugHDRHeatmap_MSWCG;
 		Atom gamescopeHDROutputFeedback;
 		Atom gamescopeSDROnHDRContentBrightness;
-		Atom gamescopeInternalDisplayBrightness;
 		Atom gamescopeHDRInputGain;
 		Atom gamescopeSDRInputGain;
 		Atom gamescopeHDRItmEnable;
@@ -213,9 +216,9 @@ struct xwayland_ctx_t
 		Atom gamescopeColorAppHDRMetadataFeedback;
 		Atom gamescopeColorSliderInUse;
 		Atom gamescopeColorChromaticAdaptationMode;
-		Atom gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorMuraScale[DRM_SCREEN_TYPE_COUNT];
-		Atom gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+		Atom gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 
 		Atom gamescopeCreateXWaylandServer;
 		Atom gamescopeCreateXWaylandServerFeedback;
@@ -234,4 +237,24 @@ struct xwayland_ctx_t
 		Atom primarySelection;
 		Atom targets;
 	} atoms;
+
+	bool HasQueuedEvents();
+
+	void Dispatch();
+
+	int GetFD() final
+	{
+		return XConnectionNumber( dpy );
+	}
+
+	void OnPollIn() final
+	{
+		Dispatch();
+	}
+
+	void OnPollHangUp() final
+	{
+		xwm_log.errorf( "XWayland server hung up! This is fatal. Aborting..." );
+		abort();
+	}
 };

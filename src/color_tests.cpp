@@ -41,16 +41,16 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
             colorMapping, nightmode, tonemapping, nullptr, flGain );
         for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
         {
-            lut1d[4*i+0] = drm_quantize_lut_value( lut1d_float.dataR[i] );
-            lut1d[4*i+1] = drm_quantize_lut_value( lut1d_float.dataG[i] );
-            lut1d[4*i+2] = drm_quantize_lut_value( lut1d_float.dataB[i] );
+            lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
+            lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
+            lut1d[4*i+2] = quantize_lut_value_16bit( lut1d_float.dataB[i] );
             lut1d[4*i+3] = 0;
         }
         for ( size_t i=0, end = lut3d_float.data.size(); i<end; ++i )
         {
-            lut3d[4*i+0] = drm_quantize_lut_value( lut3d_float.data[i].r );
-            lut3d[4*i+1] = drm_quantize_lut_value( lut3d_float.data[i].g );
-            lut3d[4*i+2] = drm_quantize_lut_value( lut3d_float.data[i].b );
+            lut3d[4*i+0] = quantize_lut_value_16bit( lut3d_float.data[i].r );
+            lut3d[4*i+1] = quantize_lut_value_16bit( lut3d_float.data[i].g );
+            lut3d[4*i+2] = quantize_lut_value_16bit( lut3d_float.data[i].b );
             lut3d[4*i+3] = 0;
         }
     }

@@ -16,243 +16,383 @@
 
 #include "vblankmanager.hpp"
 #include "steamcompmgr.hpp"
-#include "wlserver.hpp"
 #include "main.hpp"
-#include "drm.hpp"
 
-#if HAVE_OPENVR
-#include "vr_session.hpp"
-#endif
+LogScope g_VBlankLog("vblank");
 
-static int g_vblankPipe[2];
+// #define VBLANK_DEBUG
 
-std::atomic<uint64_t> g_lastVblank;
-
-// 3ms by default -- a good starting value.
-const uint64_t g_uStartingDrawTime = 3'000'000;
-
-// This is the last time a draw took.
-std::atomic<uint64_t> g_uVblankDrawTimeNS = { g_uStartingDrawTime };
-
-// 1.3ms by default. (g_uDefaultMinVBlankTime)
-// This accounts for some time we cannot account for (which (I think) is the drm_commit -> triggering the pageflip)
-// It would be nice to make this lower if we can find a way to track that effectively
-// Perhaps the missing time is spent elsewhere, but given we track from the pipe write
-// to after the return from `drm_commit` -- I am very doubtful.
-uint64_t g_uMinVblankTime = g_uDefaultMinVBlankTime;
-
-// Tuneable
-// 0.3ms by default. (g_uDefaultVBlankRedZone)
-// This is the leeway we always apply to our buffer.
-uint64_t g_uVblankDrawBufferRedZoneNS = g_uDefaultVBlankRedZone;
-
-// Tuneable
-// 93% by default. (g_uVBlankRateOfDecayPercentage)
-// The rate of decay (as a percentage) of the rolling average -> current draw time
-uint64_t g_uVBlankRateOfDecayPercentage = g_uDefaultVBlankRateOfDecayPercentage;
-
-const uint64_t g_uVBlankRateOfDecayMax = 1000;
-
-static std::atomic<uint64_t> g_uRollingMaxDrawTime = { g_uStartingDrawTime };
-
-std::atomic<bool> g_bCurrentlyCompositing = { false };
-
-// The minimum drawtime to use when we are compositing.
-// Getting closer and closer to vblank when compositing means that we can get into
-// a feedback loop with our clocks. Pick a sane minimum draw time.
-const uint64_t g_uVBlankDrawTimeMinCompositing = 2'400'000;
-
-//#define VBLANK_DEBUG
-
-uint64_t vblank_next_target( uint64_t offset )
+namespace gamescope
 {
-	const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-	const uint64_t nsecInterval = 1'000'000'000ul / refresh;
-
-	uint64_t lastVblank = g_lastVblank - offset;
-
-	uint64_t now = get_time_in_nanos();
-	uint64_t targetPoint = lastVblank + nsecInterval;
-	while ( targetPoint < now )
-		targetPoint += nsecInterval;
-
-	return targetPoint;
-}
-
-void vblankThreadRun( void )
-{
-	pthread_setname_np( pthread_self(), "gamescope-vblk" );
-
-	// Start off our average with our starting draw time.
-	uint64_t rollingMaxDrawTime = g_uStartingDrawTime;
-
-	const uint64_t range = g_uVBlankRateOfDecayMax;
-	while ( true )
+	CVBlankTimer::CVBlankTimer()
 	{
-		const int refresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-		const uint64_t nsecInterval = 1'000'000'000ul / refresh;
-		// The redzone is relative to 60Hz, scale it by our
-		// target refresh so we don't miss submitting for vblank in DRM.
-		// (This fixes 4K@30Hz screens)
-		const uint64_t nsecToSec = 1'000'000'000ul;
-		const drm_screen_type screen_type = drm_get_screen_type( &g_DRM );
-		const uint64_t redZone = screen_type == DRM_SCREEN_TYPE_INTERNAL
-			? g_uVblankDrawBufferRedZoneNS
-			: ( g_uVblankDrawBufferRedZoneNS * 60 * nsecToSec ) / ( refresh * nsecToSec );
+		m_ulTargetVBlank = get_time_in_nanos();
+		m_ulLastVBlank = m_ulTargetVBlank;
 
-		uint64_t offset;
-		bool bVRR = drm_get_vrr_in_use( &g_DRM );
+		if ( !GetBackend()->NeedsFrameSync() )
+		{
+			// Majority of backends fall down this optimal
+			// timerfd path, vs nudge thread.
+			g_VBlankLog.infof( "Using timerfd." );
+		}
+		else
+		{
+			g_VBlankLog.infof( "Using nudge thread." );
+
+			if ( pipe2( m_nNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
+			{
+				g_VBlankLog.errorf_errno( "Failed to create VBlankTimer pipe." );
+				abort();
+			}
+
+			std::thread vblankThread( [this]() { this->NudgeThread(); } );
+			vblankThread.detach();
+		}
+	}
+
+	CVBlankTimer::~CVBlankTimer()
+	{
+		std::unique_lock lock( m_ScheduleMutex );
+
+		m_bRunning = false;
+
+		m_bArmed = true;
+		m_bArmed.notify_all();
+
+		for ( int i = 0; i < 2; i++ )
+		{
+			if ( m_nNudgePipe[ i ] >= 0 )
+			{
+				close ( m_nNudgePipe[ i ] );
+				m_nNudgePipe[ i ] = -1;
+			}
+		}
+	}
+
+	int CVBlankTimer::GetRefresh() const
+	{
+		return g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+	}
+
+	uint64_t CVBlankTimer::GetLastVBlank() const
+	{
+		return m_ulLastVBlank;
+	}
+
+	uint64_t CVBlankTimer::GetNextVBlank( uint64_t ulOffset ) const
+	{
+		const uint64_t ulIntervalNSecs = kSecInNanoSecs / GetRefresh();
+		const uint64_t ulNow = get_time_in_nanos();
+
+		uint64_t ulTargetPoint = GetLastVBlank() + ulIntervalNSecs - ulOffset;
+
+		while ( ulTargetPoint < ulNow )
+			ulTargetPoint += ulIntervalNSecs;
+
+		return ulTargetPoint;
+	}
+
+	VBlankScheduleTime CVBlankTimer::CalcNextWakeupTime( bool bPreemptive )
+	{
+		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
+
+		const int nRefreshRate = GetRefresh();
+		const uint64_t ulRefreshInterval = kSecInNanoSecs / nRefreshRate;
+		// The redzone is relative to 60Hz for external displays.
+		// Scale it by our target refresh so we don't miss submitting for
+		// vblank in DRM.
+		// (This fixes wonky frame-pacing on 4K@30Hz screens)
+		//
+		// TODO(Josh): Is this fudging still needed with our SteamOS kernel patches
+		// to not account for vertical front porch when dealing with the vblank
+		// drm_commit is going to target?
+		// Need to re-test that.
+		const uint64_t ulRedZone = eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL
+			? m_ulVBlankDrawBufferRedZone
+			: ( m_ulVBlankDrawBufferRedZone * 60 * kSecInNanoSecs ) / ( nRefreshRate * kSecInNanoSecs );
+
+		bool bVRR = GetBackend()->IsVRRActive();
+		uint64_t ulOffset = 0;
 		if ( !bVRR )
 		{
-			const uint64_t alpha = g_uVBlankRateOfDecayPercentage;
+			const uint64_t ulDecayAlpha = m_ulVBlankRateOfDecayPercentage; // eg. 980 = 98%
 
-			uint64_t drawTime = g_uVblankDrawTimeNS;
+			uint64_t ulDrawTime = m_ulLastDrawTime;
+			/// See comment of m_ulVBlankDrawTimeMinCompositing.
+			if ( m_bCurrentlyCompositing )
+				ulDrawTime = std::max( ulDrawTime, m_ulVBlankDrawTimeMinCompositing );
 
-			if ( g_bCurrentlyCompositing )
-				drawTime = std::max(drawTime, g_uVBlankDrawTimeMinCompositing);
-			// This is a rolling average when drawTime < rollingMaxDrawTime,
-			// and a a max when drawTime > rollingMaxDrawTime.
+			uint64_t ulNewRollingDrawTime;
+			// This is a rolling average when ulDrawTime < m_ulRollingMaxDrawTime,
+			// and a maximum when ulDrawTime > m_ulRollingMaxDrawTime.
+			//
 			// This allows us to deal with spikes in the draw buffer time very easily.
 			// eg. if we suddenly spike up (eg. because of test commits taking a stupid long time),
 			// we will then be able to deal with spikes in the long term, even if several commits after
 			// we get back into a good state and then regress again.
 
-			// If we go over half of our deadzone, be more defensive about things.
-			if ( int64_t(drawTime) - int64_t(redZone / 2) > int64_t(rollingMaxDrawTime) )
-				rollingMaxDrawTime = drawTime;
+			// If we go over half of our deadzone, be more defensive about things and
+			// spike up back to our current drawtime (sawtooth).
+			if ( int64_t( ulDrawTime ) - int64_t( ulRedZone / 2 ) > int64_t( m_ulRollingMaxDrawTime ) )
+				ulNewRollingDrawTime = ulDrawTime;
 			else
-				rollingMaxDrawTime = ( ( alpha * rollingMaxDrawTime ) + ( range - alpha ) * drawTime ) / range;
+				ulNewRollingDrawTime = ( ( ulDecayAlpha * m_ulRollingMaxDrawTime ) + ( kVBlankRateOfDecayMax - ulDecayAlpha ) * ulDrawTime ) / kVBlankRateOfDecayMax;
 
 			// If we need to offset for our draw more than half of our vblank, something is very wrong.
 			// Clamp our max time to half of the vblank if we can.
-			rollingMaxDrawTime = std::min( rollingMaxDrawTime, nsecInterval - redZone );
+			ulNewRollingDrawTime = std::min( ulNewRollingDrawTime, ulRefreshInterval - ulRedZone );
 
-			g_uRollingMaxDrawTime = rollingMaxDrawTime;
+			// If this is not a pre-emptive re-arming, then update
+			// the rolling internal max draw time for next time.
+			if ( !bPreemptive )
+				m_ulRollingMaxDrawTime = ulNewRollingDrawTime;
 
-			offset = rollingMaxDrawTime + redZone;
+			ulOffset = ulNewRollingDrawTime + ulRedZone;
+
+			if ( !bPreemptive )
+				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
 		}
 		else
 		{
-			// VRR:
-			// Just ensure that if we missed a frame due to already
-			// having a page flip in-flight, that we flush it out with this.
-			// Nothing fancy needed, just need to get on the other side of the page flip.
-			//
-			// We don't use any of the rolling times due to them varying given our
-			// 'vblank' time is varying.
-			g_uRollingMaxDrawTime = g_uStartingDrawTime;
+			// See above.
+			if ( !bPreemptive )
+			{
+				// Reset the max draw time to default, it is unused for VRR.
+				m_ulRollingMaxDrawTime = kStartingVBlankDrawTime;
+			}
 
-			offset = 1'000'000 + redZone;
+			// TODO(Josh): We can probably do better than this for VRR.
+			uint64_t ulDrawTime = kVRRFlushingDrawTime;
+			/// See comment of m_ulVBlankDrawTimeMinCompositing.
+			if ( m_bCurrentlyCompositing )
+				ulDrawTime = std::max( ulDrawTime, m_ulVBlankDrawTimeMinCompositing );
+
+			ulOffset = ulDrawTime + ulRedZone;
+
+			if ( !bPreemptive )
+				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
 		}
 
-#ifdef VBLANK_DEBUG
-		// Debug stuff for logging missed vblanks
-		static uint64_t vblankIdx = 0;
-		static uint64_t lastDrawTime = g_uVblankDrawTimeNS;
-		static uint64_t lastOffset = g_uVblankDrawTimeNS + redZone;
+		const uint64_t ulScheduledWakeupPoint = GetNextVBlank( ulOffset );
+		const uint64_t ulTargetVBlank = ulScheduledWakeupPoint + ulOffset;
 
-		if ( vblankIdx++ % 300 == 0 || drawTime > lastOffset )
+		VBlankScheduleTime schedule =
 		{
-			if ( drawTime > lastOffset )
+			.ulTargetVBlank = ulTargetVBlank,
+			.ulScheduledWakeupPoint = ulScheduledWakeupPoint,
+		};
+		return schedule;
+	}
+
+	std::optional<VBlankTime> CVBlankTimer::ProcessVBlank()
+	{
+		return std::exchange( m_PendingVBlank, std::nullopt );
+	}
+
+	void CVBlankTimer::MarkVBlank( uint64_t ulNanos, bool bReArmTimer )
+	{
+		m_ulLastVBlank = ulNanos;
+		if ( bReArmTimer )
+		{
+			// Force timer re-arm with the new vblank timings.
+			ArmNextVBlank( false );
+		}
+	}
+
+	bool CVBlankTimer::WasCompositing() const
+	{
+		return m_bCurrentlyCompositing;
+	}
+
+	void CVBlankTimer::UpdateWasCompositing( bool bCompositing )
+	{
+		m_bCurrentlyCompositing = bCompositing;
+	}
+
+	void CVBlankTimer::UpdateLastDrawTime( uint64_t ulNanos )
+	{
+		m_ulLastDrawTime = ulNanos;
+	}
+
+	void CVBlankTimer::WaitToBeArmed()
+	{
+		// Wait for m_bArmed to change *from* false.
+		m_bArmed.wait( false );
+	}
+
+	void CVBlankTimer::ArmNextVBlank( bool bPreemptive )
+	{
+		std::unique_lock lock( m_ScheduleMutex );
+
+		// If we're pre-emptively re-arming, don't
+		// do anything if we are already armed.
+		if ( bPreemptive && m_bArmed )
+			return;
+
+		m_bArmed = true;
+		m_bArmed.notify_all();
+
+		if ( UsingTimerFD() )
+		{
+			m_TimerFDSchedule = CalcNextWakeupTime( bPreemptive );
+
+			ITimerWaitable::ArmTimer( m_TimerFDSchedule.ulScheduledWakeupPoint );
+		}
+	}
+
+	bool CVBlankTimer::UsingTimerFD() const
+	{
+		return m_nNudgePipe[ 0 ] < 0;
+	}
+
+	int CVBlankTimer::GetFD()
+	{
+		return UsingTimerFD() ? ITimerWaitable::GetFD() : m_nNudgePipe[ 0 ];
+	}
+
+	void CVBlankTimer::OnPollIn()
+	{
+		if ( UsingTimerFD() )
+		{
+			std::unique_lock lock( m_ScheduleMutex );
+
+			// Disarm the timer if it was armed.
+			if ( !m_bArmed.exchange( false ) )
+				return;
+
+
+			m_PendingVBlank = VBlankTime
+			{
+				.schedule = m_TimerFDSchedule,
+				// One might think this should just be 'now', however consider the fact
+				// that the effective draw-time should also include the scheduling quantums
+				// and any work before we reached this poll.
+				// The old path used to be be on its own thread, simply awaking from sleep
+				// then writing to a pipe and going back to sleep, the wakeup time was before we
+				// did the write, so we included the quantum of pipe nudge -> wakeup.
+				// Doing this aims to include that, like we were before, but with timerfd.
+				.ulWakeupTime = m_TimerFDSchedule.ulScheduledWakeupPoint,
+			};
+#ifdef VBLANK_DEBUG
+			uint64_t ulNow = get_time_in_nanos();
+			fprintf( stderr, "wakeup: %lu\n", ulNow );
+#endif
+
+			gpuvis_trace_printf( "vblank timerfd wakeup" );
+
+			ITimerWaitable::DisarmTimer();
+		}
+		else
+		{
+			VBlankTime time{};
+			for ( ;; )
+			{
+				ssize_t ret = read( m_nNudgePipe[ 0 ], &time, sizeof( time ) );
+
+				if ( ret < 0 )
+				{
+					if ( errno == EAGAIN )
+						continue;
+
+					g_VBlankLog.errorf_errno( "Failed to read nudge pipe. Pre-emptively re-arming." );
+					ArmNextVBlank( true );
+					return;
+				}
+				else if ( ret != sizeof( VBlankTime ) )
+				{
+					g_VBlankLog.errorf( "Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming." );
+					ArmNextVBlank( true );
+					return;
+				}
+				else
+				{
+					break;
+				}
+			}
+
+			uint64_t ulDiff = get_time_in_nanos() - time.ulWakeupTime;
+			if ( ulDiff > 1'000'000ul )
+			{
+				gpuvis_trace_printf( "Ignoring stale vblank... Pre-emptively re-arming." );
+				ArmNextVBlank( true );
+				return;
+			}
+
+			gpuvis_trace_printf( "got vblank" );
+			m_PendingVBlank = time;
+		}
+	}
+
+	void CVBlankTimer::VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone )
+	{
+#ifdef VBLANK_DEBUG
+		static uint64_t s_ulVBlankID = 0;
+		static uint64_t s_ulLastDrawTime = kStartingVBlankDrawTime;
+		static uint64_t s_ulLastOffset = kStartingVBlankDrawTime + ulRedZone;
+
+		if ( s_ulVBlankID++ % 300 == 0 || ulDrawTime > s_ulLastOffset )
+		{
+			if ( ulDrawTime > s_ulLastOffset )
 				fprintf( stderr, " !! missed vblank " );
 
 			fprintf( stderr, "redZone: %.2fms decayRate: %lu%% - rollingMaxDrawTime: %.2fms lastDrawTime: %.2fms lastOffset: %.2fms - drawTime: %.2fms offset: %.2fms\n",
-				redZone / 1'000'000.0,
-				g_uVBlankRateOfDecayPercentage,
-				rollingMaxDrawTime / 1'000'000.0,
-				lastDrawTime / 1'000'000.0,
-				lastOffset / 1'000'000.0,
-				drawTime / 1'000'000.0,
-				offset / 1'000'000.0 );
+				ulRedZone / 1'000'000.0,
+				m_ulVBlankRateOfDecayPercentage,
+				m_ulRollingMaxDrawTime / 1'000'000.0,
+				s_ulLastDrawTime / 1'000'000.0,
+				s_ulLastOffset / 1'000'000.0,
+				ulDrawTime / 1'000'000.0,
+				ulOffset / 1'000'000.0 );
 		}
 
-		lastDrawTime = drawTime;
-		lastOffset = offset;
+		s_ulLastDrawTime = ulDrawTime;
+		s_ulLastOffset = ulOffset;
 #endif
-
-		uint64_t targetPoint = vblank_next_target( offset );
-
-		sleep_until_nanos( targetPoint );
-
-		VBlankTimeInfo_t time_info =
-		{
-			.target_vblank_time = targetPoint + offset,
-			.pipe_write_time    = get_time_in_nanos(),
-		};
-
-		ssize_t ret = write( g_vblankPipe[ 1 ], &time_info, sizeof( time_info ) );
-		if ( ret <= 0 )
-		{
-			perror( "vblankmanager: write failed" );
-		}
-		else
-		{
-			gpuvis_trace_printf( "sent vblank" );
-		}
-		
-		// Get on the other side of it now
-		sleep_for_nanos( offset + 1'000'000 );
 	}
-}
 
-#if HAVE_OPENVR
-void vblankThreadVR()
-{
-	pthread_setname_np( pthread_self(), "gamescope-vblkvr" );
-
-	while ( true )
+	void CVBlankTimer::NudgeThread()
 	{
-		vrsession_wait_until_visible();
+		pthread_setname_np( pthread_self(), "gamescope-vblk" );
 
-		// Includes redzone.
-		vrsession_framesync( ~0u );
-
-		uint64_t now = get_time_in_nanos();
-
-		VBlankTimeInfo_t time_info =
+		for ( ;; )
 		{
-			.target_vblank_time = now + 3'000'000, // not right. just a stop-gap for now.
-			.pipe_write_time    = now,
-		};
+			WaitToBeArmed();
 
-		ssize_t ret = write( g_vblankPipe[ 1 ], &time_info, sizeof( time_info ) );
-		if ( ret <= 0 )
-		{
-			perror( "vblankmanager: write failed" );
+			if ( !m_bRunning )
+				return;
+
+			VBlankScheduleTime schedule = GetBackend()->FrameSync();
+
+			const uint64_t ulWakeupTime = get_time_in_nanos();
+			{
+				std::unique_lock lock( m_ScheduleMutex );
+
+				// Unarm, we are processing now!
+				m_bArmed = false;
+
+				VBlankTime timeInfo =
+				{
+					.schedule = schedule,
+					.ulWakeupTime = ulWakeupTime,
+				};
+
+				ssize_t ret = write( m_nNudgePipe[ 1 ], &timeInfo, sizeof( timeInfo ) );
+				if ( ret <= 0 )
+				{
+					g_VBlankLog.errorf_errno( "Nudge write failed" );
+				}
+				else
+				{
+					gpuvis_trace_printf( "sent vblank (nudge thread)" );
+				}
+			}
 		}
-		else
-		{
-			gpuvis_trace_printf( "sent vblank" );
-		}
 	}
 }
-#endif
 
-int vblank_init( void )
+gamescope::CVBlankTimer &GetVBlankTimer()
 {
-	if ( pipe2( g_vblankPipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
-	{
-		perror( "vblankmanager: pipe failed" );
-		return -1;
-	}
-	
-	g_lastVblank = get_time_in_nanos();
-
-#if HAVE_OPENVR
-	if ( BIsVRSession() )
-	{
-		std::thread vblankThread( vblankThreadVR );
-		vblankThread.detach();
-		return g_vblankPipe[ 0 ];
-	}
-#endif
-
-	std::thread vblankThread( vblankThreadRun );
-	vblankThread.detach();
-	return g_vblankPipe[ 0 ];
+    static gamescope::CVBlankTimer s_VBlankTimer;
+    return s_VBlankTimer;
 }
 
-void vblank_mark_possible_vblank( uint64_t nanos )
-{
-	g_lastVblank = nanos;
-}

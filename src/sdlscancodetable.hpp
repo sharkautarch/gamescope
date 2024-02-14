@@ -1,5 +1,5 @@
 
-static uint32_t s_ScancodeTable[] =
+static const uint32_t s_ScancodeTable[] =
 {
 	KEY_RESERVED,	/* SDL_SCANCODE_UNKNOWN	0 */
 	KEY_RESERVED,	/* SDL_SCANCODE_UNKNOWN	1 */
@@ -287,3 +287,25 @@ static uint32_t s_ScancodeTable[] =
 	KEY_PROG1,	/* SDL_SCANCODE_APP1	283 */
 	KEY_RESERVED,	/* SDL_SCANCODE_APP2	284 */
 };
+
+inline uint32_t SDLScancodeToLinuxKey( uint32_t nScancode )
+{
+	if ( nScancode < sizeof( s_ScancodeTable ) / sizeof( s_ScancodeTable[0] ) )
+	{
+		return s_ScancodeTable[ nScancode ];
+	}
+	return KEY_RESERVED;
+}
+
+inline int SDLButtonToLinuxButton( int SDLButton )
+{
+	switch ( SDLButton )
+	{
+		case SDL_BUTTON_LEFT: return BTN_LEFT;
+		case SDL_BUTTON_MIDDLE: return BTN_MIDDLE;
+		case SDL_BUTTON_RIGHT: return BTN_RIGHT;
+		case SDL_BUTTON_X1: return BTN_SIDE;
+		case SDL_BUTTON_X2: return BTN_EXTRA;
+		default: return 0;
+	}
+}

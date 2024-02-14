@@ -1,5 +1,7 @@
 #pragma once
 
+#define GLM_ENABLE_EXPERIMENTAL 1
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -8,6 +10,7 @@
 #include <glm/vec2.hpp> // glm::vec2
 #include <glm/vec3.hpp> // glm::vec3
 #include <glm/mat3x3.hpp> // glm::mat3
+#include <glm/gtx/component_wise.hpp>
 
 // Color utils
 inline int quantize( float fVal, float fMaxVal )
@@ -15,7 +18,7 @@ inline int quantize( float fVal, float fMaxVal )
     return std::max( 0.f, std::min( fMaxVal, rintf( fVal * fMaxVal ) ) );
 }
 
-inline uint16_t drm_quantize_lut_value( float flValue )
+inline uint16_t quantize_lut_value_16bit( float flValue )
 {
     return (uint16_t)quantize( flValue, (float)UINT16_MAX );
 }

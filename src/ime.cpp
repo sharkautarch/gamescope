@@ -12,13 +12,11 @@
 
 #include <linux/input-event-codes.h>
 
-extern "C" {
-#define delete delete_
+#include "wlr_begin.hpp"
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_seat.h>
-#undef delete
-}
+#include "wlr_end.hpp"
 
 #include "gamescope-input-method-protocol.h"
 

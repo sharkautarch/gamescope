@@ -1,3 +1,4 @@
+
 #include <assert.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -295,7 +296,7 @@ static void stream_handle_state_changed(void *data, enum pw_stream_state old_str
 {
 	struct pipewire_state *state = (struct pipewire_state *) data;
 
-	pwr_log.debugf("stream state changed: %s", pw_stream_state_as_string(stream_state));
+	pwr_log.infof("stream state changed: %s", pw_stream_state_as_string(stream_state));
 
 	switch (stream_state) {
 	case PW_STREAM_STATE_PAUSED:
@@ -473,8 +474,23 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	uint32_t drmFormat = spa_format_to_drm(state->video_info.format);
 
-	buffer->texture = vulkan_acquire_screenshot_texture(s_nCaptureWidth, s_nCaptureHeight, is_dmabuf, drmFormat, colorspace);
-	assert(buffer->texture != nullptr);
+	buffer->texture = std::make_shared<CVulkanTexture>();
+	CVulkanTexture::createFlags screenshotImageFlags;
+	screenshotImageFlags.bMappable = true;
+	screenshotImageFlags.bTransferDst = true;
+	screenshotImageFlags.bStorage = true;
+	if (is_dmabuf || drmFormat == DRM_FORMAT_NV12)
+	{
+		screenshotImageFlags.bExportable = true;
+		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
+	}
+	bool bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
+	if ( !bImageInitSuccess )
+	{
+		pwr_log.errorf("Failed to initialize pipewire texture");
+		goto error;
+	}
+	buffer->texture->setStreamColorspace(colorspace);
 
 	if (is_dmabuf) {
 		const struct wlr_dmabuf_attributes dmabuf = buffer->texture->dmabuf();
@@ -555,6 +571,8 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 
 	if (!buffer->copying) {
 		destroy_buffer(buffer);
+	} else {
+		nudge_pipewire();
 	}
 }
 
@@ -714,7 +732,10 @@ struct pipewire_buffer *dequeue_pipewire_buffer(void)
 void push_pipewire_buffer(struct pipewire_buffer *buffer)
 {
 	struct pipewire_buffer *old = in_buffer.exchange(buffer);
-	assert(old == nullptr);
+	if ( old != nullptr )
+	{
+		pwr_log.errorf_errno("push_pipewire_buffer: Already had a buffer?!");
+	}
 	nudge_pipewire();
 }
 

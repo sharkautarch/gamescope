@@ -10,7 +10,8 @@
 #include <array>
 #include <bitset>
 #include <thread>
-#include <vulkan/vulkan_core.h>
+#include <dlfcn.h>
+#include "vulkan_include.h"
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -21,14 +22,19 @@
 // NIS_Config needs to be included before the X11 headers because of conflicting defines introduced by X11
 #include "shaders/NVIDIAImageScaling/NIS/NIS_Config.h"
 
+#include <drm_fourcc.h>
+#include "hdmi.h"
+#if HAVE_DRM
+#include "drm_include.h"
+#endif
+#include "wlr_begin.hpp"
+#include <wlr/render/drm_format_set.h>
+#include "wlr_end.hpp"
+
 #include "rendervulkan.hpp"
 #include "main.hpp"
 #include "steamcompmgr.hpp"
-#include "sdlwindow.hpp"
 #include "log.hpp"
-#if HAVE_OPENVR
-#include "vr_session.hpp"
-#endif
 
 #include "cs_composite_blit.h"
 #include "cs_composite_blur.h"
@@ -83,22 +89,42 @@ static const mat3x4& colorspace_to_conversion_from_srgb_matrix(EStreamColorspace
 	}
 }
 
-extern "C"
+PFN_vkGetInstanceProcAddr g_pfn_vkGetInstanceProcAddr;
+PFN_vkCreateInstance g_pfn_vkCreateInstance;
+
+static VkResult vulkan_load_module()
 {
-VKAPI_ATTR VkResult VKAPI_CALL vkCreateInstance(
-	const VkInstanceCreateInfo*                 pCreateInfo,
-	const VkAllocationCallbacks*                pAllocator,
-	VkInstance*                                 pInstance);
+	static VkResult s_result = []()
+	{
+		void* pModule = dlopen( "libvulkan.so.1", RTLD_NOW | RTLD_LOCAL );
+		if ( !pModule )
+			pModule = dlopen( "libvulkan.so", RTLD_NOW | RTLD_LOCAL );
+		if ( !pModule )
+			return VK_ERROR_INITIALIZATION_FAILED;
 
-VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL vkGetInstanceProcAddr(
-	VkInstance                                  instance,
-	const char*                                 pName);
+		g_pfn_vkGetInstanceProcAddr = (PFN_vkGetInstanceProcAddr)dlsym( pModule, "vkGetInstanceProcAddr" );
+		if ( !g_pfn_vkGetInstanceProcAddr )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		g_pfn_vkCreateInstance = (PFN_vkCreateInstance) g_pfn_vkGetInstanceProcAddr( nullptr, "vkCreateInstance" );
+		if ( !g_pfn_vkCreateInstance )
+			return VK_ERROR_INITIALIZATION_FAILED;
+
+		return VK_SUCCESS;
+	}();
+
+	return s_result;
 }
-
 
 VulkanOutput_t g_output;
 
 uint32_t g_uCompositeDebug = 0u;
+
+template <typename T>
+static bool Contains( const std::span<const T> x, T value )
+{
+	return std::ranges::any_of( x, std::bind_front(std::equal_to{}, value) );
+}
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
 static std::vector< uint32_t > sampledShmFormats{};
@@ -115,6 +141,18 @@ static void vk_errorf(VkResult result, const char *fmt, ...) {
 
 	vk_log.errorf("%s (VkResult: %d)", buf, result);
 }
+
+// For when device is up and it would be totally fatal to fail
+#define vk_check( x ) \
+	do \
+	{ \
+		VkResult check_res = VK_SUCCESS; \
+		if ( ( check_res = ( x ) ) != VK_SUCCESS ) \
+		{ \
+			vk_errorf( check_res, #x " failed!" ); \
+			abort(); \
+		} \
+	} while ( 0 )
 
 template<typename Target, typename Base>
 Target *pNextFind(const Base *base, VkStructureType sType)
@@ -241,8 +279,10 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 	assert(instance);
 	assert(!m_bInitialized);
 
+	g_output.surface = surface;
+
 	m_instance = instance;
-	#define VK_FUNC(x) vk.x = (PFN_vk##x) vkGetInstanceProcAddr(instance, "vk"#x);
+	#define VK_FUNC(x) vk.x = (PFN_vk##x) g_pfn_vkGetInstanceProcAddr(instance, "vk"#x);
 	VULKAN_INSTANCE_FUNCTIONS
 	#undef VK_FUNC
 
@@ -268,6 +308,8 @@ bool CVulkanDevice::BInit(VkInstance instance, VkSurfaceKHR surface)
 
 	return true;
 }
+
+extern bool env_to_bool(const char *env);
 
 bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 {
@@ -338,6 +380,9 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 
 				m_queueFamily = computeOnlyIndex == ~0u ? generalIndex : computeOnlyIndex;
 				m_physDev = cphysDev;
+
+				if ( env_to_bool( getenv( "GAMESCOPE_FORCE_GENERAL_QUEUE" ) ) )
+					m_queueFamily = generalIndex;
 			}
 		}
 	}
@@ -389,7 +434,14 @@ bool CVulkanDevice::createDevice()
 
 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
 
-	if ( hasDrmProps ) {
+	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) )
+		return false;
+
+#if HAVE_DRM
+	// XXX(JoshA): Move this to ValidPhysicalDevice.
+	// We need to refactor some Vulkan stuff to do that though.
+	if ( hasDrmProps )
+	{
 		VkPhysicalDeviceDrmPropertiesEXT drmProps = {
 			.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DRM_PROPERTIES_EXT,
 		};
@@ -399,7 +451,7 @@ bool CVulkanDevice::createDevice()
 		};
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
 
-		if ( !BIsNested() && !drmProps.hasPrimary ) {
+		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
 			vk_log.errorf( "physical device has no primary node" );
 			return false;
 		}
@@ -428,7 +480,10 @@ bool CVulkanDevice::createDevice()
 			m_bHasDrmPrimaryDevId = true;
 			m_drmPrimaryDevId = makedev( drmProps.primaryMajor, drmProps.primaryMinor );
 		}
-	} else {
+	}
+	else
+#endif
+	{
 		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
 		return false;
 	}
@@ -470,7 +525,7 @@ bool CVulkanDevice::createDevice()
 
 	std::vector< const char * > enabledExtensions;
 
-	if ( BIsNested() == true )
+	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_EXTENSION_NAME );
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME );
@@ -496,12 +551,8 @@ bool CVulkanDevice::createDevice()
 	if ( supportsHDRMetadata )
 		enabledExtensions.push_back( VK_EXT_HDR_METADATA_EXTENSION_NAME );
 
-	if ( BIsVRSession() )
-	{
-#if HAVE_OPENVR
-		vrsession_append_device_exts( physDev(), enabledExtensions );
-#endif
-	}
+	for ( auto& extension : GetBackend()->GetDeviceExtensions( physDev() ) )
+		enabledExtensions.push_back( extension );
 
 #if 0
 	VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
@@ -1172,12 +1223,7 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 		.pSignalSemaphores = &m_scratchTimelineSemaphore,
 	};
 
-	VkResult res = vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE );
-
-	if ( res != VK_SUCCESS )
-	{
-		assert( 0 );
-	}
+	vk_check( vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE ) );
 
 	return nextSeqNo;
 }
@@ -1192,8 +1238,7 @@ uint64_t CVulkanDevice::submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuffer)
 void CVulkanDevice::garbageCollect( void )
 {
 	uint64_t currentSeqNo;
-	VkResult res = vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo);
-	assert( res == VK_SUCCESS );
+	vk_check( vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo) );
 
 	resetCmdBuffers(currentSeqNo);
 }
@@ -1210,9 +1255,7 @@ void CVulkanDevice::wait(uint64_t sequence, bool reset)
 		.pValues = &sequence,
 	} ;
 
-	VkResult res = vk.WaitSemaphores(device(), &waitInfo, ~0ull);
-	if (res != VK_SUCCESS)
-		assert( 0 );
+	vk_check( vk.WaitSemaphores( device(), &waitInfo, ~0ull ) );
 
 	if (reset)
 		resetCmdBuffers(sequence);
@@ -1252,8 +1295,7 @@ CVulkanCmdBuffer::~CVulkanCmdBuffer()
 
 void CVulkanCmdBuffer::reset()
 {
-	VkResult res = m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
 	m_textureState.clear();
 }
@@ -1265,8 +1307,7 @@ void CVulkanCmdBuffer::begin()
 		.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
 	};
 
-	VkResult res = m_device->vk.BeginCommandBuffer(m_cmdBuffer, &commandBufferBeginInfo);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.BeginCommandBuffer(m_cmdBuffer, &commandBufferBeginInfo) );
 
 	clearState();
 }
@@ -1274,8 +1315,7 @@ void CVulkanCmdBuffer::begin()
 void CVulkanCmdBuffer::end()
 {
 	insertBarrier(true);
-	VkResult res = m_device->vk.EndCommandBuffer(m_cmdBuffer);
-	assert(res == VK_SUCCESS);
+	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
 void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture)
@@ -1561,7 +1601,7 @@ void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
 	if (!result.second)
 		return;
 	// using the swapchain image as a source without writing to it doesn't make any sense
-	assert(image->swapchainImage() == false);
+	assert(image->outputImage() == false);
 	result.first->second.needsImport = image->externalImage();
 	result.first->second.needsExport = image->externalImage();
 }
@@ -1574,7 +1614,7 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 		return;
 	result.first->second.discarded = true;
 	result.first->second.needsExport = image->externalImage();
-	result.first->second.needsPresentLayout = image->swapchainImage();
+	result.first->second.needsPresentLayout = image->outputImage();
 }
 
 void CVulkanCmdBuffer::discardImage(CVulkanTexture *image)
@@ -1615,8 +1655,6 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		bool isExport = flush && state.needsExport;
 		bool isPresent = flush && state.needsPresentLayout;
 
-		VkImageLayout presentLayout = BIsVRSession() ? VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL : VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
 		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
 			continue;
 
@@ -1632,7 +1670,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.srcAccessMask = state.dirty ? write_bits : 0u,
 			.dstAccessMask = flush ? 0u : read_bits | write_bits,
 			.oldLayout = (state.discarded || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = isPresent ? presentLayout : VK_IMAGE_LAYOUT_GENERAL,
+			.newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
 			.image = image->vkImage(),
@@ -1651,7 +1689,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
 }
 
-static CVulkanDevice g_device;
+CVulkanDevice g_device;
 
 static bool allDMABUFsEqual( wlr_dmabuf_attributes *pDMA )
 {
@@ -1733,6 +1771,7 @@ static VkImageViewType VulkanImageTypeToViewType(VkImageType type)
 
 bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */, CVulkanTexture *pExistingImageToReuseMemory )
 {
+	m_drmFormat = drmFormat;
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
 	VkImageTiling tiling = (flags.bMappable || flags.bLinear) ? VK_IMAGE_TILING_LINEAR : VK_IMAGE_TILING_OPTIMAL;
@@ -1778,9 +1817,9 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		properties = VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
 	}
 
-	if ( flags.bSwapchain == true )
+	if ( flags.bOutputImage == true )
 	{
-		m_bSwapchain = true;	
+		m_bOutputImage = true;	
 	}
 
 	m_bExternal = pDMA || flags.bExportable == true;
@@ -1867,7 +1906,8 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	}
 
 	std::vector<uint64_t> modifiers = {};
-	if ( flags.bFlippable == true && g_device.supportsModifiers() && !pDMA )
+	// TODO(JoshA): Move this code to backend for making flippable image.
+	if ( GetBackend()->UsesModifiers() && flags.bFlippable && g_device.supportsModifiers() && !pDMA )
 	{
 		assert( drmFormat != DRM_FORMAT_INVALID );
 
@@ -1882,10 +1922,10 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		}
 		else
 		{
-			const struct wlr_drm_format *drmFormatDesc = wlr_drm_format_set_get( &g_DRM.primary_formats, drmFormat );
-			assert( drmFormatDesc != nullptr );
-			possibleModifiers = drmFormatDesc->modifiers;
-			numPossibleModifiers = drmFormatDesc->len;
+			std::span<const uint64_t> modifiers = GetBackend()->GetSupportedModifiers( drmFormat );
+			assert( !modifiers.empty() );
+			possibleModifiers = modifiers.data();
+			numPossibleModifiers = modifiers.size();
 		}
 
 		for ( size_t i = 0; i < numPossibleModifiers; i++ )
@@ -1918,10 +1958,16 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			.pDrmFormatModifiers = modifiers.data(),
 		};
 
+		externalImageCreateInfo = {
+			.sType = VK_STRUCTURE_TYPE_EXTERNAL_MEMORY_IMAGE_CREATE_INFO,
+			.pNext = std::exchange(imageInfo.pNext, &externalImageCreateInfo),
+			.handleTypes = VK_EXTERNAL_MEMORY_HANDLE_TYPE_DMA_BUF_BIT_EXT,
+		};
+
 		imageInfo.tiling = tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT;
 	}
 
-	if ( flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
+	if ( GetBackend()->UsesModifiers() && flags.bFlippable == true && tiling != VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT )
 	{
 		// We want to scan-out the image
 		wsiImageCreateInfo = {
@@ -2185,11 +2231,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bFlippable == true )
 	{
-		m_FBID = drm_fbid_from_dmabuf( &g_DRM, nullptr, &m_dmabuf );
-		if ( m_FBID == 0 ) {
-			vk_log.errorf( "drm_fbid_from_dmabuf failed" );
-			return false;
-		}
+		m_FBID = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2248,7 +2290,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			createInfo.format = VK_FORMAT_R8_UNORM;
 
 			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_PLANE_0_BIT;
-			res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_lumaView);
+			res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_lumaView);
 			if ( res != VK_SUCCESS ) {
 				vk_errorf( res, "vkCreateImageView failed" );
 				return false;
@@ -2257,7 +2299,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 			createInfo.pNext = NULL;
 			createInfo.format = VK_FORMAT_R8G8_UNORM;
 			createInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_PLANE_1_BIT;
-			res = vkCreateImageView(g_device.device(), &createInfo, nullptr, &m_chromaView);
+			res = g_device.vk.CreateImageView(g_device.device(), &createInfo, nullptr, &m_chromaView);
 			if ( res != VK_SUCCESS ) {
 				vk_errorf( res, "vkCreateImageView failed" );
 				return false;
@@ -2293,6 +2335,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format )
 {
+	m_drmFormat = VulkanFormatToDRM( format );
 	m_vkImage = image;
 	m_vkImageMemory = VK_NULL_HANDLE;
 	m_width = width;
@@ -2301,7 +2344,7 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 	m_format = format;
 	m_contentWidth = width;
 	m_contentHeight = height;
-	m_bSwapchain = true;
+	m_bOutputImage = true;
 
 	VkImageViewCreateInfo createInfo = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -2374,7 +2417,7 @@ CVulkanTexture::~CVulkanTexture( void )
 
 	if ( m_FBID != 0 )
 	{
-		drm_drop_fbid( &g_DRM, m_FBID );
+		GetBackend()->DropBackendFb( m_FBID );
 		m_FBID = 0;
 	}
 
@@ -2410,6 +2453,49 @@ int CVulkanTexture::memoryFence()
 	return fence;
 }
 
+static bool is_image_format_modifier_supported(VkFormat format, uint32_t drmFormat, uint64_t modifier)
+{
+  VkPhysicalDeviceImageFormatInfo2 imageFormatInfo = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2,
+    .format = format,
+    .type = VK_IMAGE_TYPE_2D,
+    .tiling = VK_IMAGE_TILING_DRM_FORMAT_MODIFIER_EXT,
+    .usage = VK_IMAGE_USAGE_SAMPLED_BIT,
+  };
+
+  std::array<VkFormat, 2> formats = {
+    DRMFormatToVulkan(drmFormat, false),
+    DRMFormatToVulkan(drmFormat, true),
+  };
+
+  VkImageFormatListCreateInfo formatList = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+    .viewFormatCount = (uint32_t)formats.size(),
+    .pViewFormats = formats.data(),
+  };
+
+  if ( formats[0] != formats[1] )
+    {
+      formatList.pNext = std::exchange(imageFormatInfo.pNext,
+				       &formatList);
+      imageFormatInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+    }
+
+  VkPhysicalDeviceImageDrmFormatModifierInfoEXT modifierInfo = {
+    .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_DRM_FORMAT_MODIFIER_INFO_EXT,
+    .pNext = nullptr,
+    .drmFormatModifier = modifier,
+  };
+
+  modifierInfo.pNext = std::exchange(imageFormatInfo.pNext, &modifierInfo);
+
+  VkImageFormatProperties2 imageFormatProps = {
+    .sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
+  };
+
+  VkResult res = g_device.vk.GetPhysicalDeviceImageFormatProperties2( g_device.physDev(), &imageFormatInfo, &imageFormatProps );
+  return res == VK_SUCCESS;
+}
 
 bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 {
@@ -2421,6 +2507,25 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 		.tiling = VK_IMAGE_TILING_OPTIMAL,
 		.usage = VK_IMAGE_USAGE_SAMPLED_BIT,
 	};
+
+	std::array<VkFormat, 2> formats = {
+		DRMFormatToVulkan(drmFormat, false),
+		DRMFormatToVulkan(drmFormat, true),
+	};
+
+	VkImageFormatListCreateInfo formatList = {
+		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_LIST_CREATE_INFO,
+		.viewFormatCount = (uint32_t)formats.size(),
+		.pViewFormats = formats.data(),
+	};
+
+	if ( formats[0] != formats[1] )
+	{
+		formatList.pNext = std::exchange(imageFormatInfo.pNext,
+						 &formatList);
+		imageFormatInfo.flags |= VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
+	}
+
 
 	VkImageFormatProperties2 imageFormatProps = {
 		.sType = VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2,
@@ -2442,10 +2547,12 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 	if ( !g_device.supportsModifiers() )
 	{
-		if ( BIsNested() == false && !wlr_drm_format_set_has( &g_DRM.formats, drmFormat, DRM_FORMAT_MOD_INVALID ) )
+		if ( GetBackend()->UsesModifiers() )
 		{
-			return false;
+			if ( !Contains<uint64_t>( GetBackend()->GetSupportedModifiers( drmFormat ), DRM_FORMAT_MOD_INVALID ) )
+				return false;
 		}
+
 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
 		return false;
 	}
@@ -2479,22 +2586,20 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 		uint64_t modifier = modifierProps[j].drmFormatModifier;
 
+		if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
+		  continue;
+
 		if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
 		{
 			continue;
 		}
-		if ( BIsNested() == false && !wlr_drm_format_set_has( &g_DRM.formats, drmFormat, modifier ) )
+
+		if ( GetBackend()->UsesModifiers() )
 		{
-			continue;
+			if ( !Contains<uint64_t>( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
+				continue;
 		}
-		if ( BIsNested() == false && drmFormat == DRM_FORMAT_NV12 && modifier == DRM_FORMAT_MOD_LINEAR && g_bRotated )
-		{
-			// If embedded and rotated, blacklist NV12 LINEAR because
-			// amdgpu won't support direct scan-out. Since only pure
-			// Wayland clients can submit NV12 buffers, this should only
-			// affect streaming_client.
-			continue;
-		}
+
 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
 	}
 
@@ -2522,9 +2627,11 @@ bool vulkan_init_formats()
 	for ( size_t i = 0; i < sampledDRMFormats.len; i++ )
 	{
 		uint32_t fmt = sampledDRMFormats.formats[ i ].format;
+#if HAVE_DRM
 		char *name = drmGetFormatName(fmt);
 		vk_log.infof( "  %s (0x%" PRIX32 ")", name, fmt );
 		free(name);
+#endif
 	}
 
 	return true;
@@ -2563,7 +2670,7 @@ static void present_wait_thread_func( void )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
-				vblank_mark_possible_vblank( vblanktime );
+				GetVBlankTimer().MarkVBlank( vblanktime, true );
 				mangoapp_output_update( vblanktime );
 			}
 		}
@@ -2586,7 +2693,7 @@ void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
 		return;
 	}
 
-	hdr_metadata_infoframe &infoframe = g_output.swapchainHDRMetadata->metadata.hdmi_metadata_type1;
+	const hdr_metadata_infoframe &infoframe = g_output.swapchainHDRMetadata->View<hdr_output_metadata>().hdmi_metadata_type1;
 	VkHdrMetadataEXT metadata =
 	{
 		.sType = VK_STRUCTURE_TYPE_HDR_METADATA_EXT,
@@ -2641,7 +2748,10 @@ void vulkan_present_to_window( void )
 	};
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
+	{
 		g_currentPresentWaitId = presentId;
+		g_currentPresentWaitId.notify_all();
+	}
 	else
 		vulkan_remake_swapchain();
 
@@ -2658,7 +2768,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
 
 	auto texture = std::make_shared<CVulkanTexture>();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
-	assert( texture->BInit( size, 1u, 1u, drmFormat, flags ) );
+	bool bRes = texture->BInit( size, 1u, 1u, drmFormat, flags );
+	assert( bRes );
 
 	return texture;
 }
@@ -2672,7 +2783,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t he
 
 	auto texture = std::make_shared<CVulkanTexture>();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
-	assert( texture->BInit( width, height, depth, drmFormat, flags ) );
+	bool bRes = texture->BInit( width, height, depth, drmFormat, flags );
+	assert( bRes );
 
 	return texture;
 }
@@ -2704,7 +2816,7 @@ std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
 std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 {
 	CVulkanTexture::createFlags flags;
-	flags.bFlippable = !BIsNested();
+	flags.bFlippable = true;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 
@@ -2713,7 +2825,8 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 	int height = std::min<int>( g_nOutputHeight, 1080 );
 
 	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
+	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
+	assert( bRes );
 
 	void* dst = g_device.uploadBufferData( width * height * 4 );
 	memset( dst, 0x0, width * height * 4 );
@@ -2725,45 +2838,6 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 
 	return texture;
 }
-
-#if HAVE_OPENVR
-std::shared_ptr<CVulkanTexture> vulkan_create_debug_white_texture()
-{
-	CVulkanTexture::createFlags flags;
-	flags.bMappable = true;
-	flags.bSampled = true;
-	flags.bTransferSrc = true;
-	flags.bLinear = true;
-
-	auto texture = std::make_shared<CVulkanTexture>();
-	assert( texture->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags ) );
-
-	memset( texture->mappedData(), 0xFF, texture->width() * texture->height() * 4 );
-
-	return texture;
-}
-
-void vulkan_present_to_openvr( void )
-{
-	//static auto texture = vulkan_create_debug_white_texture();
-	auto texture = vulkan_get_last_output_image( false, false );
-
-	vr::VRVulkanTextureData_t data =
-	{
-		.m_nImage            = (uint64_t)(uintptr_t)texture->vkImage(),
-		.m_pDevice           = g_device.device(),
-		.m_pPhysicalDevice   = g_device.physDev(),
-		.m_pInstance         = g_device.instance(),
-		.m_pQueue            = g_device.queue(),
-		.m_nQueueFamilyIndex = g_device.queueFamily(),
-		.m_nWidth            = texture->width(),
-		.m_nHeight           = texture->height(),
-		.m_nFormat           = texture->format(),
-		.m_nSampleCount      = 1,
-	};
-	vrsession_present(&data);
-}
-#endif
 
 bool vulkan_supports_hdr10()
 {
@@ -2888,6 +2962,7 @@ bool vulkan_remake_swapchain( void )
 {
 	std::unique_lock lock(present_wait_lock);
 	g_currentPresentWaitId = 0;
+	g_currentPresentWaitId.notify_all();
 
 	VulkanOutput_t *pOutput = &g_output;
 	g_device.waitIdle();
@@ -2909,11 +2984,11 @@ bool vulkan_remake_swapchain( void )
 static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 {
 	CVulkanTexture::createFlags outputImageflags;
-	outputImageflags.bFlippable = !BIsNested();
+	outputImageflags.bFlippable = true;
 	outputImageflags.bStorage = true;
 	outputImageflags.bTransferSrc = true; // for screenshots
 	outputImageflags.bSampled = true; // for pipewire blits
-	outputImageflags.bSwapchain = BIsVRSession();
+	outputImageflags.bOutputImage = true;
 
 	pOutput->outputImages.resize(3); // extra image for partial composition.
 	pOutput->outputImagesPartialOverlay.resize(3);
@@ -3002,22 +3077,14 @@ bool vulkan_remake_output_images()
 	return bRet;
 }
 
-bool vulkan_make_output( VkSurfaceKHR surface )
+bool vulkan_make_output()
 {
 	VulkanOutput_t *pOutput = &g_output;
 
 	VkResult result;
 	
-	if ( BIsVRSession() || BIsHeadless() )
+	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
-		pOutput->outputFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-		vulkan_make_output_images( pOutput );
-	}
-	else if ( BIsSDLSession() )
-	{
-		assert(surface);
-		pOutput->surface = surface;
-
 		result = g_device.vk.GetPhysicalDeviceSurfaceCapabilitiesKHR( g_device.physDev(), pOutput->surface, &pOutput->surfaceCaps );
 		if ( result != VK_SUCCESS )
 		{
@@ -3069,9 +3136,8 @@ bool vulkan_make_output( VkSurfaceKHR surface )
 	}
 	else
 	{
-		pOutput->outputFormat = DRMFormatToVulkan( g_nDRMFormat, false );
-		pOutput->outputFormatOverlay = DRMFormatToVulkan( g_nDRMFormatOverlay, false );
-		
+		GetBackend()->GetPreferredOutputFormat( &pOutput->outputFormat, &pOutput->outputFormatOverlay );
+
 		if ( pOutput->outputFormat == VK_FORMAT_UNDEFINED )
 		{
 			vk_log.errorf( "failed to find Vulkan format suitable for KMS" );
@@ -3135,55 +3201,47 @@ static bool init_nis_data()
 	return true;
 }
 
-VkInstance vulkan_create_instance( void )
+VkInstance vulkan_get_instance( void )
 {
-	VkResult result = VK_ERROR_INITIALIZATION_FAILED;
+	static VkInstance s_pVkInstance = []() -> VkInstance
+	{
+		VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
-	std::vector< const char * > sdlExtensions;
-	if ( BIsVRSession() )
-	{
-#if HAVE_OPENVR
-		vrsession_append_instance_exts( sdlExtensions );
-#endif
-	}
-	else if ( BIsSDLSession() )
-	{
-		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
+		if ( ( result = vulkan_load_module() ) != VK_SUCCESS )
 		{
-			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
+			vk_errorf( result, "Failed to load vulkan module." );
 			return nullptr;
 		}
 
-		unsigned int extCount = 0;
-		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, nullptr );
-		sdlExtensions.resize( extCount );
-		SDL_Vulkan_GetInstanceExtensions( nullptr, &extCount, sdlExtensions.data() );
-	}
+		auto instanceExtensions = GetBackend()->GetInstanceExtensions();
 
-	const VkApplicationInfo appInfo = {
-		.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-		.pApplicationName = "gamescope",
-		.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
-		.pEngineName = "hopefully not just some code",
-		.engineVersion = VK_MAKE_VERSION(1, 0, 0),
-		.apiVersion = VK_API_VERSION_1_3,
-	};
+		const VkApplicationInfo appInfo = {
+			.sType              = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+			.pApplicationName   = "gamescope",
+			.applicationVersion = VK_MAKE_VERSION(1, 0, 0),
+			.pEngineName        = "hopefully not just some code",
+			.engineVersion      = VK_MAKE_VERSION(1, 0, 0),
+			.apiVersion         = VK_API_VERSION_1_3,
+		};
 
-	const VkInstanceCreateInfo createInfo = {
-		.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-		.pApplicationInfo = &appInfo,
-		.enabledExtensionCount = (uint32_t)sdlExtensions.size(),
-		.ppEnabledExtensionNames = sdlExtensions.data(),
-	};
+		const VkInstanceCreateInfo createInfo = {
+			.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+			.pApplicationInfo        = &appInfo,
+			.enabledExtensionCount   = (uint32_t)instanceExtensions.size(),
+			.ppEnabledExtensionNames = instanceExtensions.data(),
+		};
 
-	VkInstance instance = nullptr;
-	result = vkCreateInstance(&createInfo, 0, &instance);
-	if ( result != VK_SUCCESS )
-	{
-		vk_errorf( result, "vkCreateInstance failed" );
-	}
+		VkInstance instance = nullptr;
+		result = g_pfn_vkCreateInstance(&createInfo, 0, &instance);
+		if ( result != VK_SUCCESS )
+		{
+			vk_errorf( result, "vkCreateInstance failed" );
+		}
 
-	return instance;
+		return instance;
+	}();
+
+	return s_pVkInstance;
 }
 
 bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
@@ -3194,7 +3252,7 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 	if (!init_nis_data())
 		return false;
 
-	if (BIsNested() && !BIsVRSession())
+	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
 		std::thread present_wait_thread( present_wait_thread_func );
 		present_wait_thread.detach();
@@ -3273,7 +3331,10 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 			assert( bSuccess );
 		}
 
-		if (pScreenshotImage.use_count() > 1 || width != pScreenshotImage->width() || height != pScreenshotImage->height())
+		if (pScreenshotImage.use_count() > 1 ||
+			width != pScreenshotImage->width() ||
+			height != pScreenshotImage->height() ||
+			drmFormat != pScreenshotImage->drmFormat())
 			continue;
 
 		return pScreenshotImage;
@@ -3322,7 +3383,7 @@ struct BlitPushData_t
 
 			if (layer->ctm)
 			{
-				ctm[i] = layer->ctm->matrix;
+				ctm[i] = layer->ctm->View<glm::mat3x4>();
 			}
 			else
 			{
@@ -3457,7 +3518,7 @@ struct RcasPushData_t
 
 			if (layer->ctm)
 			{
-				ctm[i] = layer->ctm->matrix;
+				ctm[i] = layer->ctm->View<glm::mat3x4>();
 			}
 			else
 			{
@@ -3525,14 +3586,18 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 	}
 }
 
-bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
 {
+	EOTF outputTF = frameInfo->outputEncodingEOTF;
+	if (!frameInfo->applyOutputColorMgmt)
+		outputTF = EOTF_Count; //Disable blending stuff.
+
 	auto cmdBuffer = g_device.commandBuffer();
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
-	cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), EOTF_Gamma22 ));
+	cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, frameInfo->layerCount, frameInfo->ycbcrMask(), 0u, frameInfo->colorspaceMask(), outputTF ));
 	bind_all_layers(cmdBuffer.get(), frameInfo);
 	cmdBuffer->bindTarget(pScreenshotTexture);
 	cmdBuffer->uploadConstants<BlitPushData_t>(frameInfo);
@@ -3542,29 +3607,15 @@ bool vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVu
 	cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
-	g_device.wait(sequence);
-
-	return true;
+	return sequence;
 }
 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
-std::unique_ptr<std::thread> defer_wait_thread;
-uint64_t defer_sequence = 0;
-
-bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, bool defer, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
-	if ( defer_wait_thread )
-	{
-		defer_wait_thread->join();
-		defer_wait_thread = nullptr;
-
-		g_device.resetCmdBuffers(defer_sequence);
-		defer_sequence = 0;
-	}
-
-	EOTF outputTF = g_ColorMgmt.current.outputEncodingEOTF;
+	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
 
@@ -3784,25 +3835,17 @@ bool vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTex
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 
-	if ( defer )
-	{
-		defer_wait_thread = std::make_unique<std::thread>([sequence]
-		{
-			g_device.wait(sequence, false);
-		});
-		defer_sequence = sequence;
-	}
-	else
-	{
-		g_device.wait(sequence);
-	}
-
-	if ( !BIsSDLSession() && pOutputOverride == nullptr && increment )
+	if ( !GetBackend()->UsesVulkanSwapchain() && pOutputOverride == nullptr && increment )
 	{
 		g_output.nOutImage = ( g_output.nOutImage + 1 ) % 3;
 	}
 
-	return true;
+	return sequence;
+}
+
+void vulkan_wait( uint64_t ulSeqNo, bool bReset )
+{
+	return g_device.wait( ulSeqNo, bReset );
 }
 
 std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )

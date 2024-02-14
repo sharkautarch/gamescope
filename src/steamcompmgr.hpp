@@ -1,9 +1,10 @@
 #include <stdint.h>
 
-extern "C" {
+#include "wlr_begin.hpp"
 #include <wlr/types/wlr_buffer.h>
 #include <wlr/render/wlr_texture.h>
-}
+#include <wlr/render/dmabuf.h>
+#include "wlr_end.hpp"
 
 extern uint32_t currentOutputWidth;
 extern uint32_t currentOutputHeight;
@@ -12,6 +13,7 @@ unsigned int get_time_in_milliseconds(void);
 uint64_t get_time_in_nanos();
 void sleep_for_nanos(uint64_t nanos);
 void sleep_until_nanos(uint64_t nanos);
+timespec nanos_to_timespec( uint64_t ulNanos );
 
 void steamcompmgr_main(int argc, char **argv);
 
@@ -21,8 +23,6 @@ void steamcompmgr_main(int argc, char **argv);
 
 #include <mutex>
 #include <vector>
-
-#include <wlr/render/dmabuf.h>
 
 #include <X11/extensions/Xfixes.h>
 
@@ -43,17 +43,18 @@ extern bool g_bForceHDRSupportDebug;
 
 extern EStreamColorspace g_ForcedNV12ColorSpace;
 
-// Disable partial composition for now until we get
-// composite priorities working in libliftoff + also
-// use the proper libliftoff composite plane system.
-static constexpr bool kDisablePartialComposition = true;
-
-enum TakeScreenshotMode_t
+struct CursorBarrierInfo
 {
-	TAKE_SCREENSHOT_BASEPLANE_ONLY = 1, // Just the game/base plane
-	TAKE_SCREENSHOT_ALL_REAL_LAYERS = 2, // Just the game + steam overlay/perf overlays
-	TAKE_SCREENSHOT_FULL_COMPOSITION = 3, // Everything, but no display color management + no mura
-	TAKE_SCREENSHOT_SCREEN_BUFFER = 4,	// Yes, mura comp, color management! Exactly what we put on the screen.
+	int x1 = 0;
+	int y1 = 0;
+	int x2 = 0;
+	int y2 = 0;
+};
+
+struct CursorBarrier
+{
+	PointerBarrier obj = None;
+	CursorBarrierInfo info = {};
 };
 
 class MouseCursor
@@ -65,9 +66,7 @@ public:
 	int y() const;
 
 	void move(int x, int y);
-	void updatePosition();
 	void constrainPosition();
-	void resetPosition();
 
 	void paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, FrameInfo_t *frameInfo);
 	void setDirty();
@@ -79,6 +78,7 @@ public:
 	void hide() { m_lastMovedTime = 0; checkSuspension(); }
 
 	bool isHidden() { return m_hideForMovement || m_imageEmpty; }
+	bool imageEmpty() const { return m_imageEmpty; }
 
 	void forcePosition(int x, int y)
 	{
@@ -96,13 +96,12 @@ public:
 
 	void GetDesiredSize( int& nWidth, int &nHeight );
 
+	void UpdateXInputMotionMasks();
+	void UpdatePosition();
+
+	void checkSuspension();
 private:
 	void warp(int x, int y);
-	void checkSuspension();
-
-	void queryGlobalPosition(int &x, int &y);
-	void queryPositions(int &rootX, int &rootY, int &winX, int &winY);
-	void queryButtonMask(unsigned int &mask);
 
 	bool getTexture();
 
@@ -118,7 +117,9 @@ private:
 	unsigned int m_lastMovedTime = 0;
 	bool m_hideForMovement;
 
-	PointerBarrier m_scaledFocusBarriers[4] = { None };
+	bool m_bMotionMaskEnabled = false;
+
+	CursorBarrier m_barriers[4] = {};
 
 	xwayland_ctx_t *m_ctx;
 
@@ -145,7 +146,6 @@ extern uint32_t inputCounter;
 extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );
-void take_screenshot( int flags = TAKE_SCREENSHOT_BASEPLANE_ONLY );
 void force_repaint( void );
 
 extern void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uint64_t latency_ns );
@@ -155,15 +155,15 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 
 struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xwayland_server_t *xwayland_server, uint32_t xid );
 
-extern VBlankTimeInfo_t g_SteamCompMgrVBlankTime;
+extern gamescope::VBlankTime g_SteamCompMgrVBlankTime;
 extern pid_t focusWindow_pid;
 
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server);
-void gamescope_set_selection(std::string contents, int selection);
+void gamescope_set_selection(std::string contents, GamescopeSelection eSelection);
 
 MouseCursor *steamcompmgr_get_current_cursor();
 MouseCursor *steamcompmgr_get_server_cursor(uint32_t serverId);
 
 extern int g_nAsyncFlipsEnabled;
 
-extern void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps );
+extern void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps );

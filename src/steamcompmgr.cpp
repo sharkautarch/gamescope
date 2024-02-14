@@ -34,8 +34,8 @@
 #include <X11/Xlib.h>
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
+#include <X11/extensions/XInput2.h>
 #include <cstdint>
-#include <drm_mode.h>
 #include <memory>
 #include <thread>
 #include <condition_variable>
@@ -48,6 +48,7 @@
 #include <fstream>
 #include <string>
 #include <queue>
+#include <filesystem>
 #include <variant>
 #include <unordered_set>
 
@@ -76,26 +77,27 @@
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
 
-#include "steamcompmgr_shared.hpp"
-
 #include "main.hpp"
 #include "wlserver.hpp"
-#include "drm.hpp"
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
 #include "vblankmanager.hpp"
-#include "sdlwindow.hpp"
 #include "log.hpp"
 #include "defer.hpp"
+#include "win32_styles.h"
+#include "mwm_hints.h"
+#include "edid.h"
+#include "hdmi.h"
+#include "convar.h"
+
+#if HAVE_AVIF
+#include "avif/avif.h"
+#endif
 
 static const int g_nBaseCursorScale = 36;
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
-#endif
-
-#if HAVE_OPENVR
-#include "vr_session.hpp"
 #endif
 
 #define STB_IMAGE_IMPLEMENTATION
@@ -108,7 +110,7 @@ static const int g_nBaseCursorScale = 36;
 #include "gpuvis_trace_utils.h"
 
 
-static LogScope xwm_log("xwm");
+LogScope xwm_log("xwm");
 LogScope g_WaitableLog("waitable");
 
 bool g_bWasPartialComposite = false;
@@ -126,6 +128,7 @@ static lut3d_t g_ColorMgmtLooks[ EOTF_Count ];
 gamescope_color_mgmt_luts g_ColorMgmtLuts[ EOTF_Count ];
 
 gamescope_color_mgmt_luts g_ScreenshotColorMgmtLuts[ EOTF_Count ];
+gamescope_color_mgmt_luts g_ScreenshotColorMgmtLutsHDR[ EOTF_Count ];
 
 static lut1d_t g_tmpLut1d;
 static lut3d_t g_tmpLut3d;
@@ -137,9 +140,7 @@ extern float g_flHDRItmTargetNits;
 
 uint64_t g_lastWinSeq = 0;
 
-extern std::atomic<uint64_t> g_lastVblank;
-
-static std::shared_ptr<wlserver_ctm> s_scRGB709To2020Matrix;
+static std::shared_ptr<gamescope::BackendBlob> s_scRGB709To2020Matrix;
 
 std::string clipboard;
 std::string primarySelection;
@@ -148,14 +149,35 @@ std::string g_reshade_effect{};
 uint32_t g_reshade_technique_idx = 0;
 
 bool g_bSteamIsActiveWindow = false;
+bool g_bForceInternal = false;
+
+bool env_to_bool(const char *env)
+{
+	if (!env || !*env)
+		return false;
+
+	return !!atoi(env);
+}
 
 uint64_t timespec_to_nanos(struct timespec& spec)
 {
 	return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
 }
 
+timespec nanos_to_timespec( uint64_t ulNanos )
+{
+	timespec ts =
+	{
+		.tv_sec = time_t( ulNanos / 1'000'000'000ul ),
+		.tv_nsec = long( ulNanos % 1'000'000'000ul ),
+	};
+	return ts;
+}
+
 static void
 update_runtime_info();
+
+bool g_bAllowVRR = false;
 
 static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -167,6 +189,15 @@ static const gamescope_color_mgmt_t k_ScreenshotColorMgmt =
 	.displayEOTF = EOTF_Gamma22,
 	.outputEncodingColorimetry = displaycolorimetry_709,
 	.outputEncodingEOTF = EOTF_Gamma22,
+};
+
+static const gamescope_color_mgmt_t k_ScreenshotColorMgmtHDR =
+{
+	.enabled = true,
+	.displayColorimetry = displaycolorimetry_2020,
+	.displayEOTF = EOTF_PQ,
+	.outputEncodingColorimetry = displaycolorimetry_2020,
+	.outputEncodingEOTF = EOTF_PQ,
 };
 
 //#define COLOR_MGMT_MICROBENCH
@@ -278,17 +309,17 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 			// Create quantized output luts
 			for ( size_t i=0, end = g_tmpLut1d.dataR.size(); i<end; ++i )
 			{
-				outColorMgmtLuts[nInputEOTF].lut1d[4*i+0] = drm_quantize_lut_value( g_tmpLut1d.dataR[i] );
-				outColorMgmtLuts[nInputEOTF].lut1d[4*i+1] = drm_quantize_lut_value( g_tmpLut1d.dataG[i] );
-				outColorMgmtLuts[nInputEOTF].lut1d[4*i+2] = drm_quantize_lut_value( g_tmpLut1d.dataB[i] );
+				outColorMgmtLuts[nInputEOTF].lut1d[4*i+0] = quantize_lut_value_16bit( g_tmpLut1d.dataR[i] );
+				outColorMgmtLuts[nInputEOTF].lut1d[4*i+1] = quantize_lut_value_16bit( g_tmpLut1d.dataG[i] );
+				outColorMgmtLuts[nInputEOTF].lut1d[4*i+2] = quantize_lut_value_16bit( g_tmpLut1d.dataB[i] );
 				outColorMgmtLuts[nInputEOTF].lut1d[4*i+3] = 0;
 			}
 
 			for ( size_t i=0, end = g_tmpLut3d.data.size(); i<end; ++i )
 			{
-				outColorMgmtLuts[nInputEOTF].lut3d[4*i+0] = drm_quantize_lut_value( g_tmpLut3d.data[i].r );
-				outColorMgmtLuts[nInputEOTF].lut3d[4*i+1] = drm_quantize_lut_value( g_tmpLut3d.data[i].g );
-				outColorMgmtLuts[nInputEOTF].lut3d[4*i+2] = drm_quantize_lut_value( g_tmpLut3d.data[i].b );
+				outColorMgmtLuts[nInputEOTF].lut3d[4*i+0] = quantize_lut_value_16bit( g_tmpLut3d.data[i].r );
+				outColorMgmtLuts[nInputEOTF].lut3d[4*i+1] = quantize_lut_value_16bit( g_tmpLut3d.data[i].g );
+				outColorMgmtLuts[nInputEOTF].lut3d[4*i+2] = quantize_lut_value_16bit( g_tmpLut3d.data[i].b );
 				outColorMgmtLuts[nInputEOTF].lut3d[4*i+3] = 0;
 			}
 		}
@@ -304,36 +335,22 @@ int g_nAsyncFlipsEnabled = 0;
 int g_nSteamMaxHeight = 0;
 bool g_bVRRCapable_CachedValue = false;
 bool g_bVRRInUse_CachedValue = false;
-bool g_bSupportsST2084_CachedValue = false;
+bool g_bSupportsHDR_CachedValue = false;
 bool g_bForceHDR10OutputDebug = false;
-bool g_bHDREnabled = false;
+gamescope::ConVar<bool> cv_hdr_enabled{ "hdr_enabled", false, "Whether or not HDR is enabled if it is available." };
 bool g_bHDRItmEnable = false;
 int g_nCurrentRefreshRate_CachedValue = 0;
 
 static void
 update_color_mgmt()
 {
-	// update pending native display colorimetry
-	if ( !BIsNested() )
-	{
-		drm_get_native_colorimetry( &g_DRM,
-			&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
-			&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
-	}
-	else if (g_bForceHDR10OutputDebug)
-	{
-		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_2020;
-		g_ColorMgmt.pending.displayEOTF = EOTF_PQ;
-		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_2020;
-		g_ColorMgmt.pending.outputEncodingEOTF = EOTF_PQ;
-	}
-	else
-	{
-		g_ColorMgmt.pending.displayColorimetry = displaycolorimetry_709;
-		g_ColorMgmt.pending.displayEOTF = EOTF_Gamma22;
-		g_ColorMgmt.pending.outputEncodingColorimetry = displaycolorimetry_709;
-		g_ColorMgmt.pending.outputEncodingEOTF = EOTF_Gamma22;
-	}
+	if ( !GetBackend()->GetCurrentConnector() )
+		return;
+
+	GetBackend()->GetCurrentConnector()->GetNativeColorimetry(
+		g_bOutputHDREnabled,
+		&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
+		&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
 
 #ifdef COLOR_MGMT_MICROBENCH
 	struct timespec t0, t1;
@@ -389,6 +406,7 @@ static void
 update_screenshot_color_mgmt()
 {
 	create_color_mgmt_luts(k_ScreenshotColorMgmt, g_ScreenshotColorMgmtLuts);
+	create_color_mgmt_luts(k_ScreenshotColorMgmtHDR, g_ScreenshotColorMgmtLutsHDR);
 }
 
 bool set_color_sdr_gamut_wideness( float flVal )
@@ -480,20 +498,23 @@ bool set_color_mgmt_enabled( bool bEnabled )
 	return true;
 }
 
-static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[DRM_SCREEN_TYPE_COUNT];
-static std::shared_ptr<wlserver_ctm> s_MuraCTMBlob[DRM_SCREEN_TYPE_COUNT];
+static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+static std::shared_ptr<gamescope::BackendBlob> s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 static float g_flMuraScale = 1.0f;
 static bool g_bMuraCompensationDisabled = false;
 
 bool is_mura_correction_enabled()
 {
-	return s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )] != nullptr && !g_bMuraCompensationDisabled;
+	if ( !GetBackend()->GetCurrentConnector() )
+		return false;
+
+	return s_MuraCorrectionImage[GetBackend()->GetCurrentConnector()->GetScreenType()] != nullptr && !g_bMuraCompensationDisabled;
 }
 
 void update_mura_ctm()
 {
-	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
-	if (s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] == nullptr)
+	s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = nullptr;
+	if (s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] == nullptr)
 		return;
 
 	static constexpr float kMuraMapScale = 0.0625f;
@@ -508,7 +529,7 @@ void update_mura_ctm()
 		0,       flScale, 0,       kMuraOffset * flScale,
 		0,       0,       0,       0, // No mura comp for blue channel.
 	};
-	s_MuraCTMBlob[DRM_SCREEN_TYPE_INTERNAL] = drm_create_ctm(&g_DRM, mura_scale_offset);
+	s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = GetBackend()->CreateBackendBlob( mura_scale_offset );
 }
 
 bool g_bMuraDebugFullColor = false;
@@ -516,7 +537,7 @@ bool g_bMuraDebugFullColor = false;
 bool set_mura_overlay( const char *path )
 {
 	xwm_log.infof("[josh mura correction] Setting mura correction image to: %s", path);
-	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = nullptr;
+	s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = nullptr;
 	update_mura_ctm();
 
 	std::string red_path = std::string(path) + "_red.png";
@@ -550,9 +571,9 @@ bool set_mura_overlay( const char *path )
 	free(green_data);
 
 	CVulkanTexture::createFlags texCreateFlags;
-	texCreateFlags.bFlippable = !BIsNested();
+	texCreateFlags.bFlippable = true;
 	texCreateFlags.bSampled = true;
-	s_MuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
+	s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = vulkan_create_texture_from_bits(w, h, w, h, DRM_FORMAT_ABGR8888, texCreateFlags, (void*)data);
 	free(data);
 
 	xwm_log.infof("[josh mura correction] Loaded new mura correction image!");
@@ -640,65 +661,6 @@ bool set_color_look_g22(const char *path)
 
 bool g_bColorSliderInUse = false;
 
-//
-//
-//
-
-const uint32_t WS_OVERLAPPED          		= 0x00000000u;
-const uint32_t WS_POPUP               		= 0x80000000u;
-const uint32_t WS_CHILD               		= 0x40000000u;
-const uint32_t WS_MINIMIZE            		= 0x20000000u;
-const uint32_t WS_VISIBLE             		= 0x10000000u;
-const uint32_t WS_DISABLED            		= 0x08000000u;
-const uint32_t WS_CLIPSIBLINGS        		= 0x04000000u;
-const uint32_t WS_CLIPCHILDREN        		= 0x02000000u;
-const uint32_t WS_MAXIMIZE            		= 0x01000000u;
-const uint32_t WS_BORDER              		= 0x00800000u;
-const uint32_t WS_DLGFRAME            		= 0x00400000u;
-const uint32_t WS_VSCROLL             		= 0x00200000u;
-const uint32_t WS_HSCROLL             		= 0x00100000u;
-const uint32_t WS_SYSMENU             		= 0x00080000u;
-const uint32_t WS_THICKFRAME          		= 0x00040000u;
-const uint32_t WS_GROUP               		= 0x00020000u;
-const uint32_t WS_TABSTOP             		= 0x00010000u;
-const uint32_t WS_MINIMIZEBOX         		= 0x00020000u;
-const uint32_t WS_MAXIMIZEBOX         		= 0x00010000u;
-const uint32_t WS_CAPTION             		= WS_BORDER | WS_DLGFRAME;
-const uint32_t WS_TILED               		= WS_OVERLAPPED;
-const uint32_t WS_ICONIC              		= WS_MINIMIZE;
-const uint32_t WS_SIZEBOX             		= WS_THICKFRAME;
-const uint32_t WS_OVERLAPPEDWINDOW    		= WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_THICKFRAME| WS_MINIMIZEBOX | WS_MAXIMIZEBOX;
-const uint32_t WS_POPUPWINDOW         		= WS_POPUP | WS_BORDER | WS_SYSMENU;
-const uint32_t WS_CHILDWINDOW         		= WS_CHILD;
-const uint32_t WS_TILEDWINDOW         		= WS_OVERLAPPEDWINDOW;
-
-const uint32_t WS_EX_DLGMODALFRAME    		= 0x00000001u;
-const uint32_t WS_EX_DRAGDETECT       		= 0x00000002u; // Undocumented
-const uint32_t WS_EX_NOPARENTNOTIFY   		= 0x00000004u;
-const uint32_t WS_EX_TOPMOST          		= 0x00000008u;
-const uint32_t WS_EX_ACCEPTFILES      		= 0x00000010u;
-const uint32_t WS_EX_TRANSPARENT      		= 0x00000020u;
-const uint32_t WS_EX_MDICHILD         		= 0x00000040u;
-const uint32_t WS_EX_TOOLWINDOW       		= 0x00000080u;
-const uint32_t WS_EX_WINDOWEDGE       		= 0x00000100u;
-const uint32_t WS_EX_CLIENTEDGE       		= 0x00000200u;
-const uint32_t WS_EX_CONTEXTHELP      		= 0x00000400u;
-const uint32_t WS_EX_RIGHT            		= 0x00001000u;
-const uint32_t WS_EX_LEFT             		= 0x00000000u;
-const uint32_t WS_EX_RTLREADING       		= 0x00002000u;
-const uint32_t WS_EX_LTRREADING       		= 0x00000000u;
-const uint32_t WS_EX_LEFTSCROLLBAR    		= 0x00004000u;
-const uint32_t WS_EX_RIGHTSCROLLBAR   		= 0x00000000u;
-const uint32_t WS_EX_CONTROLPARENT    		= 0x00010000u;
-const uint32_t WS_EX_STATICEDGE       		= 0x00020000u;
-const uint32_t WS_EX_APPWINDOW        		= 0x00040000u;
-const uint32_t WS_EX_LAYERED          		= 0x00080000u;
-const uint32_t WS_EX_NOINHERITLAYOUT  		= 0x00100000u;
-const uint32_t WS_EX_NOREDIRECTIONBITMAP	= 0x00200000u;
-const uint32_t WS_EX_LAYOUTRTL        		= 0x00400000u;
-const uint32_t WS_EX_COMPOSITED       		= 0x02000000u;
-const uint32_t WS_EX_NOACTIVATE       		= 0x08000000u;
-
 template< typename T >
 constexpr const T& clamp( const T& x, const T& min, const T& max )
 {
@@ -735,7 +697,7 @@ struct commit_t : public gamescope::IWaitable
 
         if ( fb_id != 0 )
 		{
-			drm_unlock_fbid( &g_DRM, fb_id );
+			GetBackend()->UnlockBackendFb( fb_id );
 			fb_id = 0;
 		}
 
@@ -879,35 +841,7 @@ static inline void GarbageCollectWaitableCommit( std::shared_ptr<commit_t> &comm
 	}
 }
 
-static std::vector<pollfd> pollfds;
-
-#define MWM_HINTS_FUNCTIONS   1
-#define MWM_HINTS_DECORATIONS 2
-#define MWM_HINTS_INPUT_MODE  4
-#define MWM_HINTS_STATUS      8
-
-#define MWM_FUNC_ALL          0x01
-#define MWM_FUNC_RESIZE       0x02
-#define MWM_FUNC_MOVE         0x04
-#define MWM_FUNC_MINIMIZE     0x08
-#define MWM_FUNC_MAXIMIZE     0x10
-#define MWM_FUNC_CLOSE        0x20
-
-#define MWM_DECOR_ALL         0x01
-#define MWM_DECOR_BORDER      0x02
-#define MWM_DECOR_RESIZEH     0x04
-#define MWM_DECOR_TITLE       0x08
-#define MWM_DECOR_MENU        0x10
-#define MWM_DECOR_MINIMIZE    0x20
-#define MWM_DECOR_MAXIMIZE    0x40
-
-#define MWM_INPUT_MODELESS                  0
-#define MWM_INPUT_PRIMARY_APPLICATION_MODAL 1
-#define MWM_INPUT_SYSTEM_MODAL              2
-#define MWM_INPUT_FULL_APPLICATION_MODAL    3
-#define MWM_INPUT_APPLICATION_MODAL         1
-
-#define MWM_TEAROFF_WINDOW 1
+gamescope::CWaiter g_SteamCompMgrWaiter;
 
 Window x11_win(steamcompmgr_win_t *w) {
 	if (w == nullptr)
@@ -967,33 +901,29 @@ bool			synchronize;
 
 std::mutex g_SteamCompMgrXWaylandServerMutex;
 
-VBlankTimeInfo_t g_SteamCompMgrVBlankTime = {};
+gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
 uint64_t g_uCurrentBasePlaneCommitID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
 static uint64_t g_uDynamicRefreshEqualityTime = 0;
-static int g_nDynamicRefreshRate[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
+static int g_nDynamicRefreshRate[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 0 };
 // Delay to stop modes flickering back and forth.
 static const uint64_t g_uDynamicRefreshDelay = 600'000'000; // 600ms
 
-static int g_nCombinedAppRefreshCycleOverride[DRM_SCREEN_TYPE_COUNT] = { 0, 0 };
+static int g_nCombinedAppRefreshCycleOverride[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT] = { 0, 0 };
 
 static void _update_app_target_refresh_cycle()
 {
-	if ( BIsNested() )
-	{
-		g_nDynamicRefreshRate[ DRM_SCREEN_TYPE_INTERNAL ] = 0;
-		g_nSteamCompMgrTargetFPS = g_nCombinedAppRefreshCycleOverride[ DRM_SCREEN_TYPE_INTERNAL ];
+	if ( !GetBackend()->GetCurrentConnector() )
 		return;
-	}
 
-	static drm_screen_type last_type;
+	static gamescope::GamescopeScreenType last_type;
 	static int last_target_fps;
 	static bool first = true;
 
-	drm_screen_type type = drm_get_screen_type( &g_DRM );
+	gamescope::GamescopeScreenType type = GetBackend()->GetCurrentConnector()->GetScreenType();
 	int target_fps = g_nCombinedAppRefreshCycleOverride[type];
 
 	if ( !first && type == last_type && last_target_fps == target_fps )
@@ -1012,7 +942,7 @@ static void _update_app_target_refresh_cycle()
 		return;
 	}
 
-	auto rates = drm_get_valid_refresh_rates( &g_DRM );
+	auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
 
 	g_nDynamicRefreshRate[ type ] = 0;
 	g_nSteamCompMgrTargetFPS = target_fps;
@@ -1037,7 +967,7 @@ static void update_app_target_refresh_cycle()
 		update_runtime_info();
 }
 
-void steamcompmgr_set_app_refresh_cycle_override( drm_screen_type type, int override_fps )
+void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps )
 {
 	g_nCombinedAppRefreshCycleOverride[ type ] = override_fps;
 	update_app_target_refresh_cycle();
@@ -1141,7 +1071,7 @@ static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
 static bool		debugEvents = false;
 bool			steamMode = false;
-static bool		alwaysComposite = false;
+bool		alwaysComposite = false;
 static bool		useXRes = true;
 
 struct wlr_buffer_map_entry {
@@ -1154,14 +1084,19 @@ struct wlr_buffer_map_entry {
 static std::mutex wlr_buffer_map_lock;
 static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
 
-static std::atomic< int > g_nTakeScreenshot{ 0 };
-static bool g_bPropertyRequestedScreenshot;
+namespace gamescope
+{
+	CScreenshotManager &CScreenshotManager::Get()
+	{
+		static CScreenshotManager s_Instance;
+		return s_Instance;
+	}
+}
+
 
 static std::atomic<bool> g_bForceRepaint{false};
 
-static int g_nudgePipe[2] = {-1, -1};
-
-static int g_nCursorScaleHeight = -1;
+extern int g_nCursorScaleHeight;
 
 // poor man's semaphore
 class sem
@@ -1189,21 +1124,6 @@ private:
 	std::condition_variable cv;
 	int count = 0;
 };
-
-static void
-dispatch_nudge( int fd )
-{
-	for (;;)
-	{
-		static char buf[1024];
-		if ( read( fd, buf, sizeof(buf) ) < 0 )
-		{
-			if ( errno != EAGAIN )
-				xwm_log.errorf_errno(" steamcompmgr: dispatch_nudge: read failed" );
-			break;
-		}
-	}
-}
 
 sem statsThreadSem;
 std::mutex statsEventQueueLock;
@@ -1296,9 +1216,7 @@ uint64_t get_time_in_nanos()
 
 void sleep_for_nanos(uint64_t nanos)
 {
-	timespec ts;
-	ts.tv_sec = time_t(nanos / 1'000'000'000ul);
-	ts.tv_nsec = long(nanos % 1'000'000'000ul);
+	timespec ts = nanos_to_timespec( nanos );
 	nanosleep(&ts, nullptr);
 }
 
@@ -1353,12 +1271,11 @@ should_ignore(xwayland_ctx_t *ctx, unsigned long sequence)
 	return ctx->ignore_head && ctx->ignore_head->sequence == sequence;
 }
 
-static bool
-x_events_queued(xwayland_ctx_t* ctx)
+bool xwayland_ctx_t::HasQueuedEvents()
 {
 	// If mode is QueuedAlready, XEventsQueued() returns the number of
 	// events already in the event queue (and never performs a system call).
-	return XEventsQueued(ctx->dpy, QueuedAlready) != 0;
+	return XEventsQueued( dpy, QueuedAlready ) != 0;
 }
 
 static steamcompmgr_win_t *
@@ -1428,7 +1345,7 @@ destroy_buffer( struct wl_listener *listener, void * )
 
 	if ( entry->fb_id != 0 )
 	{
-		drm_drop_fbid( &g_DRM, entry->fb_id );
+		GetBackend()->DropBackendFb( entry->fb_id );
 	}
 
 	wl_list_remove( &entry->listener.link );
@@ -1473,7 +1390,7 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 
 		if (commit->fb_id)
 		{
-			drm_lock_fbid( &g_DRM, commit->fb_id );
+			GetBackend()->LockBackendFb( commit->fb_id );
 		}
 
 		return commit;
@@ -1498,19 +1415,16 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	commit->vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
 	assert( commit->vulkanTex );
 
+	commit->fb_id = 0;
 	struct wlr_dmabuf_attributes dmabuf = {0};
-	if ( BIsNested() == false && wlr_buffer_get_dmabuf( buf, &dmabuf ) )
+	if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
-		commit->fb_id = drm_fbid_from_dmabuf( &g_DRM, buf, &dmabuf );
+		commit->fb_id = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
 
 		if ( commit->fb_id )
 		{
-			drm_lock_fbid( &g_DRM, commit->fb_id );
+			GetBackend()->LockBackendFb( commit->fb_id );
 		}
-	}
-	else
-	{
-		commit->fb_id = 0;
 	}
 
 	entry.listener.notify = destroy_buffer;
@@ -1655,35 +1569,9 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 	updateCursorFeedback( true );
 }
 
-void MouseCursor::queryPositions(int &rootX, int &rootY, int &winX, int &winY)
-{
-	Window window, child;
-	unsigned int mask;
-
-	XQueryPointer(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy), &window, &child,
-				  &rootX, &rootY, &winX, &winY, &mask);
-
-}
-
-void MouseCursor::queryGlobalPosition(int &x, int &y)
-{
-	int winX, winY;
-	queryPositions(x, y, winX, winY);
-}
-
-void MouseCursor::queryButtonMask(unsigned int &mask)
-{
-	Window window, child;
-	int rootX, rootY, winX, winY;
-
-	XQueryPointer(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy), &window, &child,
-				  &rootX, &rootY, &winX, &winY, &mask);
-}
-
 void MouseCursor::checkSuspension()
 {
-	unsigned int buttonMask;
-	queryButtonMask(buttonMask);
+	unsigned int buttonMask = 0;
 
 	bool bWasHidden = m_hideForMovement;
 
@@ -1740,11 +1628,6 @@ void MouseCursor::checkSuspension()
 void MouseCursor::warp(int x, int y)
 {
 	XWarpPointer(m_ctx->dpy, None, x11_win(m_ctx->focus.inputFocusWindow), 0, 0, 0, 0, x, y);
-}
-
-void MouseCursor::resetPosition()
-{
-	warp(m_x, m_y);
 }
 
 void MouseCursor::setDirty()
@@ -1843,23 +1726,28 @@ bool MouseCursor::setCursorImageByName(const char *name)
 
 void MouseCursor::constrainPosition()
 {
-	int i;
 	steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
 	steamcompmgr_win_t *override = m_ctx->focus.overrideWindow;
 	if (window == override)
 		window = m_ctx->focus.focusWindow;
 
-	// If we had barriers before, get rid of them.
-	for (i = 0; i < 4; i++) {
-		if (m_scaledFocusBarriers[i] != None) {
-			XFixesDestroyPointerBarrier(m_ctx->dpy, m_scaledFocusBarriers[i]);
-			m_scaledFocusBarriers[i] = None;
-		}
-	}
+	if (!window)
+		return;
 
-	auto barricade = [this](int x1, int y1, int x2, int y2) {
-		return XFixesCreatePointerBarrier(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy),
-										  x1, y1, x2, y2, 0, 0, NULL);
+	auto barricade = [this](CursorBarrier& barrier, const CursorBarrierInfo& info) {
+		if (barrier.info.x1 == info.x1 && barrier.info.x2 == info.x2 &&
+			barrier.info.y1 == info.y1 && barrier.info.y2 == info.y2)
+			return;
+
+		if (barrier.obj != None)
+		{
+			XFixesDestroyPointerBarrier(m_ctx->dpy, barrier.obj);
+			barrier.obj = None;
+		}
+
+		barrier.obj = XFixesCreatePointerBarrier(m_ctx->dpy, DefaultRootWindow(m_ctx->dpy),
+										  info.x1, info.y1, info.x2, info.y2, 0, 0, NULL);
+		barrier.info = info;
 	};
 
 	int x1 = window->xwayland().a.x;
@@ -1878,14 +1766,13 @@ void MouseCursor::constrainPosition()
 	}
 
 	// Constrain it to the window; careful, the corners will leak due to a known X server bug.
-	m_scaledFocusBarriers[0] = barricade(0, y1, m_ctx->root_width, y1);
-	m_scaledFocusBarriers[1] = barricade(x2, 0, x2, m_ctx->root_height);
-	m_scaledFocusBarriers[2] = barricade(m_ctx->root_width, y2, 0, y2);
-	m_scaledFocusBarriers[3] = barricade(x1, m_ctx->root_height, x1, 0);
+	barricade(m_barriers[0], CursorBarrierInfo{ 0, y1, m_ctx->root_width, y1 });
+	barricade(m_barriers[1], CursorBarrierInfo{ x2, 0, x2, m_ctx->root_height });
+	barricade(m_barriers[2], CursorBarrierInfo{ m_ctx->root_width, y2, 0, y2 });
+	barricade(m_barriers[3], CursorBarrierInfo{ x1, m_ctx->root_height, x1, 0 });
 
 	// Make sure the cursor is somewhere in our jail
-	int rootX, rootY;
-	queryGlobalPosition(rootX, rootY);
+	int rootX = m_x, rootY = m_y;
 
 	if ( rootX >= x2 || rootY >= y2 || rootX < x1 || rootY < y1 ) {
 		if ( window_wants_no_focus_when_mouse_hidden( window ) && m_hideForMovement )
@@ -1941,14 +1828,6 @@ void MouseCursor::move(int x, int y)
 	updateCursorFeedback();
 }
 
-void MouseCursor::updatePosition()
-{
-	int x,y;
-	queryGlobalPosition(x, y);
-	move(x, y);
-	checkSuspension();
-}
-
 int MouseCursor::x() const
 {
 	return m_x;
@@ -1974,28 +1853,25 @@ bool MouseCursor::getTexture()
 	m_hotspotX = image->xhot;
 	m_hotspotY = image->yhot;
 
-	int nDesiredWidth, nDesiredHeight;
-	GetDesiredSize( nDesiredWidth, nDesiredHeight );
+	int nDesiredWidth = image->width;
+	int nDesiredHeight = image->height;
+	if ( g_nCursorScaleHeight > 0 )
+	{
+		GetDesiredSize( nDesiredWidth, nDesiredHeight );
+	}
 
 	uint32_t surfaceWidth;
 	uint32_t surfaceHeight;
-	if ( BIsNested() == false && alwaysComposite == false )
-	{
-		surfaceWidth = g_DRM.cursor_width;
-		surfaceHeight = g_DRM.cursor_height;
-	}
-	else
-	{
-		surfaceWidth = nDesiredWidth;
-		surfaceHeight = nDesiredHeight;
-	}
+	glm::uvec2 surfaceSize = GetBackend()->CursorSurfaceSize( glm::uvec2{ (uint32_t)nDesiredWidth, (uint32_t)nDesiredHeight } );
+	surfaceWidth = surfaceSize.x;
+	surfaceHeight = surfaceSize.y;
 
 	m_texture = nullptr;
 
 	// Assume the cursor is fully translucent unless proven otherwise.
 	bool bNoCursor = true;
 
-	std::shared_ptr<std::vector<uint32_t>> cursorBuffer = nullptr;
+	std::vector<uint32_t> cursorBuffer;
 
 	int nContentWidth = image->width;
 	int nContentHeight = image->height;
@@ -2017,14 +1893,12 @@ bool MouseCursor::getTexture()
 									 (unsigned char *)resizeBuffer.data(), nDesiredWidth, nDesiredHeight, 0,
 									 4, 3, STBIR_FLAG_ALPHA_PREMULTIPLIED );
 
-			cursorBuffer = std::make_shared<std::vector<uint32_t>>(surfaceWidth * surfaceHeight);
-			for (int i = 0; i < nDesiredHeight; i++) {
-				for (int j = 0; j < nDesiredWidth; j++) {
-					(*cursorBuffer)[i * surfaceWidth + j] = resizeBuffer[i * nDesiredWidth + j];
-
-					if ( (*cursorBuffer)[i * surfaceWidth + j] & 0xff000000 ) {
-						bNoCursor = false;
-					}
+			cursorBuffer = std::vector<uint32_t>(surfaceWidth * surfaceHeight);
+			for (int i = 0; i < nDesiredHeight; i++)
+			{
+				for (int j = 0; j < nDesiredWidth; j++)
+				{
+					cursorBuffer[i * surfaceWidth + j] = resizeBuffer[i * nDesiredWidth + j];
 				}
 			}
 
@@ -2036,49 +1910,75 @@ bool MouseCursor::getTexture()
 		}
 		else
 		{
-			cursorBuffer = std::make_shared<std::vector<uint32_t>>(surfaceWidth * surfaceHeight);
-			for (int i = 0; i < image->height; i++) {
-				for (int j = 0; j < image->width; j++) {
-					(*cursorBuffer)[i * surfaceWidth + j] = image->pixels[i * image->width + j];
-
-					if ( (*cursorBuffer)[i * surfaceWidth + j] & 0xff000000 ) {
-						bNoCursor = false;
-					}
+			cursorBuffer = std::vector<uint32_t>(surfaceWidth * surfaceHeight);
+			for (int i = 0; i < image->height; i++)
+			{
+				for (int j = 0; j < image->width; j++)
+				{
+					cursorBuffer[i * surfaceWidth + j] = image->pixels[i * image->width + j];
 				}
 			}
 		}
 	}
 
+	for (int i = 0; i < image->height; i++)
+	{
+		for (int j = 0; j < image->width; j++)
+		{
+			if ( cursorBuffer[i * surfaceWidth + j] & 0xff000000 )
+			{
+				bNoCursor = false;
+				break;
+			}
+		}
+	}
 
 	if (bNoCursor)
-		cursorBuffer = nullptr;
+		cursorBuffer.clear();
 
 	m_imageEmpty = bNoCursor;
 
-	if ( !g_bForceRelativeMouse )
+	if ( !GetBackend()->GetNestedHints() || !g_bForceRelativeMouse )
 	{
-		sdlwindow_grab( m_imageEmpty );
-		bSteamCompMgrGrab = BIsNested() && m_imageEmpty;
+		if ( GetBackend()->GetNestedHints() )
+			GetBackend()->GetNestedHints()->SetRelativeMouseMode( m_imageEmpty );
+		bSteamCompMgrGrab = GetBackend()->GetNestedHints() && m_imageEmpty;
 	}
 
 	m_dirty = false;
 	updateCursorFeedback();
+	UpdateXInputMotionMasks();
 
 	if (m_imageEmpty) {
 
 		return false;
 	}
 
+	UpdatePosition();
+
 	CVulkanTexture::createFlags texCreateFlags;
-	if ( BIsNested() == false )
+	texCreateFlags.bFlippable = true;
+	if ( GetBackend()->SupportsPlaneHardwareCursor() )
 	{
-		texCreateFlags.bFlippable = true;
 		texCreateFlags.bLinear = true; // cursor buffer needs to be linear
 		// TODO: choose format & modifiers from cursor plane
 	}
 
-	m_texture = vulkan_create_texture_from_bits(surfaceWidth, surfaceHeight, nContentWidth, nContentHeight, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer->data());
-	sdlwindow_cursor(std::move(cursorBuffer), nDesiredWidth, nDesiredHeight, image->xhot, image->yhot);
+	m_texture = vulkan_create_texture_from_bits(surfaceWidth, surfaceHeight, nContentWidth, nContentHeight, DRM_FORMAT_ARGB8888, texCreateFlags, cursorBuffer.data());
+	if ( GetBackend()->GetNestedHints() )
+	{
+		auto info = std::make_shared<gamescope::INestedHints::CursorInfo>(
+			gamescope::INestedHints::CursorInfo
+			{
+				.pPixels   = std::move( cursorBuffer ),
+				.uWidth    = (uint32_t) nDesiredWidth,
+				.uHeight   = (uint32_t) nDesiredHeight,
+				.uXHotspot = image->xhot,
+				.uYHotspot = image->yhot,
+			});
+		GetBackend()->GetNestedHints()->SetCursorImage( std::move( info ) );
+	}
+
 	assert(m_texture);
 	XFree(image);
 
@@ -2094,8 +1994,43 @@ void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
 		nSize = std::clamp( nSize, g_nBaseCursorScale, 256 );
 	}
 
+	nSize = std::min<int>( nSize, glm::compMin( GetBackend()->CursorSurfaceSize( glm::uvec2{ (uint32_t)nSize, (uint32_t)nSize } ) ) );
+
 	nWidth = nSize;
 	nHeight = nSize;
+}
+
+void MouseCursor::UpdateXInputMotionMasks()
+{
+	bool bShouldMotionMask = !imageEmpty();
+
+	if ( m_bMotionMaskEnabled != bShouldMotionMask )
+	{
+		XIEventMask xi_eventmask;
+		unsigned char xi_mask[ ( XI_LASTEVENT + 7 ) / 8 ]{};
+		xi_eventmask.deviceid = XIAllDevices;
+		xi_eventmask.mask_len = sizeof( xi_mask );
+		xi_eventmask.mask = xi_mask;
+		if ( bShouldMotionMask )
+			XISetMask( xi_mask, XI_RawMotion );
+		XISelectEvents( m_ctx->dpy, m_ctx->root, &xi_eventmask, 1 );
+
+		m_bMotionMaskEnabled = bShouldMotionMask;
+	}
+}
+
+void MouseCursor::UpdatePosition()
+{
+	Window root_return, child_return;
+	int root_x_return, root_y_return;
+	int win_x_return, win_y_return;
+	unsigned int mask_return;
+	XQueryPointer(m_ctx->dpy, m_ctx->root, &root_return, &child_return,
+				&root_x_return, &root_y_return,
+				&win_x_return, &win_y_return,
+				&mask_return);
+
+	move(root_x_return, root_y_return);
 }
 
 void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, struct FrameInfo_t *frameInfo)
@@ -2104,9 +2039,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		return;
 	}
 
-	int rootX, rootY, winX, winY;
-	queryPositions(rootX, rootY, winX, winY);
-	move(rootX, rootY);
+	int winX = m_x, winY = m_y;
 
 	// Also need new texture
 	if (!getTexture()) {
@@ -2172,7 +2105,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	layer->applyColorMgmt = false;
 
 	layer->tex = m_texture;
-	layer->fbid = BIsNested() ? 0 : m_texture->fbid();
+	layer->fbid = m_texture->fbid();
 
 	layer->filter = cursor_scale != 1.0f ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NEAREST;
 	layer->blackBorder = false;
@@ -2528,6 +2461,9 @@ paint_all(bool async)
 
 	struct FrameInfo_t frameInfo = {};
 	frameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
+	frameInfo.outputEncodingEOTF = g_ColorMgmt.pending.outputEncodingEOTF;
+	frameInfo.allowVRR = g_bAllowVRR;
+	frameInfo.bFadingOut = fadingOut;
 
 	// If the window we'd paint as the base layer is the streaming client,
 	// find the video underlay and put it up first in the scenegraph
@@ -2640,7 +2576,7 @@ paint_all(bool async)
 	else
 	{
 		auto tex = vulkan_get_hacky_blank_texture();
-		if ( !BIsNested() && tex != nullptr )
+		if ( !GetBackend()->UsesVulkanSwapchain() && tex != nullptr )
 		{
 			// HACK! HACK HACK HACK
 			// To avoid stutter when toggling the overlay on 
@@ -2682,21 +2618,16 @@ paint_all(bool async)
 		global_focus.cursor->undirty();
 	}
 
-	bool bForceHideCursor = BIsSDLSession() && !bSteamCompMgrGrab;
-
-	bool bDrewCursor = false;
+	bool bForceHideCursor = GetBackend()->GetNestedHints() && !bSteamCompMgrGrab;
 
 	// Draw cursor if we need to
 	if (input && !bForceHideCursor) {
-		int nLayerCountBefore = frameInfo.layerCount;
 		global_focus.cursor->paint(
 			input, w == input ? override : nullptr,
 			&frameInfo);
-		int nLayerCountAfter = frameInfo.layerCount;
-		bDrewCursor = nLayerCountAfter > nLayerCountBefore;
 	}
 
-	if ( !bValidContents || ( BIsNested() == false && g_DRM.paused == true ) )
+	if ( !bValidContents || !GetBackend()->IsVisible() )
 	{
 		return;
 	}
@@ -2727,45 +2658,34 @@ paint_all(bool async)
 
 	g_bFSRActive = frameInfo.useFSRLayer0;
 
-	bool bWasFirstFrame = g_bFirstFrame;
 	g_bFirstFrame = false;
-
-	bool bDoComposite = true;
-
-	// Handoff from whatever thread to this one since we check ours twice
-	int takeScreenshot = g_nTakeScreenshot.exchange( 0 );
-	bool propertyRequestedScreenshot = g_bPropertyRequestedScreenshot;
-	g_bPropertyRequestedScreenshot = false;
-
-	struct pipewire_buffer *pw_buffer = nullptr;
-#if HAVE_PIPEWIRE
-	pw_buffer = dequeue_pipewire_buffer();
-#endif
 
 	update_app_target_refresh_cycle();
 
-	int nDynamicRefresh = g_nDynamicRefreshRate[drm_get_screen_type( &g_DRM )];
+	const bool bSupportsDynamicRefresh = GetBackend()->GetCurrentConnector() && !GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates().empty();
+	if ( bSupportsDynamicRefresh )
+	{
+		auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
 
-	int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_refresh_switch( global_focus.focusWindow )// && !global_focus.overlayWindow
-		? nDynamicRefresh
-		: drm_get_default_refresh( &g_DRM );
+		int nDynamicRefresh = g_nDynamicRefreshRate[GetBackend()->GetScreenType()];
 
-	uint64_t now = get_time_in_nanos();
+		int nTargetRefresh = nDynamicRefresh && steamcompmgr_window_should_refresh_switch( global_focus.focusWindow )// && !global_focus.overlayWindow
+			? nDynamicRefresh
+			: int( rates[ rates.size() - 1 ] );
 
-	if ( g_nOutputRefresh == nTargetRefresh )
-		g_uDynamicRefreshEqualityTime = now;
+		uint64_t now = get_time_in_nanos();
 
-	if ( !BIsNested() && g_nOutputRefresh != nTargetRefresh && g_uDynamicRefreshEqualityTime + g_uDynamicRefreshDelay < now )
-		drm_set_refresh( &g_DRM, nTargetRefresh );
+		if ( g_nOutputRefresh == nTargetRefresh )
+			g_uDynamicRefreshEqualityTime = now;
 
-	bool bLayer0ScreenSize = close_enough(frameInfo.layers[0].scale.x, 1.0f) && close_enough(frameInfo.layers[0].scale.y, 1.0f);
+		if ( g_nOutputRefresh != nTargetRefresh && g_uDynamicRefreshEqualityTime + g_uDynamicRefreshDelay < now )
+			GetBackend()->HackTemporarySetDynamicRefresh( nTargetRefresh );
+	}
 
-	bool bNeedsCompositeFromFilter = (g_upscaleFilter == GamescopeUpscaleFilter::NEAREST || g_upscaleFilter == GamescopeUpscaleFilter::PIXEL) && !bLayer0ScreenSize;
-
-	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount && !pw_buffer;
+	bool bDoMuraCompensation = is_mura_correction_enabled() && frameInfo.layerCount;
 	if ( bDoMuraCompensation )
 	{
-		auto& MuraCorrectionImage = s_MuraCorrectionImage[drm_get_screen_type( &g_DRM )];
+		auto& MuraCorrectionImage = s_MuraCorrectionImage[GetBackend()->GetScreenType()];
 		int curLayer = frameInfo.layerCount++;
 
 		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
@@ -2780,354 +2700,109 @@ paint_all(bool async)
 		layer->zpos = g_zposMuraCorrection;
 		layer->filter = GamescopeUpscaleFilter::NEAREST;
 		layer->tex = MuraCorrectionImage;
-		layer->ctm = s_MuraCTMBlob[drm_get_screen_type( &g_DRM )];
+		layer->ctm = s_MuraCTMBlob[GetBackend()->GetScreenType()];
 
 		// Blending needs to be done in Gamma 2.2 space for mura correction to work.
 		frameInfo.applyOutputColorMgmt = false;
 	}
 
-	bool bWantsPartialComposite = frameInfo.layerCount >= 3 && !kDisablePartialComposition;
-
-	bool bNeedsFullComposite = BIsNested();
-	bNeedsFullComposite |= alwaysComposite;
-	bNeedsFullComposite |= pw_buffer != nullptr;
-	bNeedsFullComposite |= bWasFirstFrame;
-	bNeedsFullComposite |= frameInfo.useFSRLayer0;
-	bNeedsFullComposite |= frameInfo.useNISLayer0;
-	bNeedsFullComposite |= frameInfo.blurLayer0;
-	bNeedsFullComposite |= bNeedsCompositeFromFilter;
-	bNeedsFullComposite |= bDrewCursor;
-	bNeedsFullComposite |= g_bColorSliderInUse;
-	bNeedsFullComposite |= fadingOut;
-	bNeedsFullComposite |= !g_reshade_effect.empty();
-
-	constexpr bool bHackForceNV12DumpScreenshot = false;
-
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 	{
-		if (g_ColorMgmtLuts[i].HasLuts())
+		if ( g_ColorMgmtLuts[i].HasLuts() )
 		{
 			frameInfo.shaperLut[i] = g_ColorMgmtLuts[i].vk_lut1d;
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
 
-	if ( !BIsNested() && g_bOutputHDREnabled )
+	if ( GetBackend()->Present( &frameInfo, async ) != 0 )
 	{
-		bNeedsFullComposite |= g_bHDRItmEnable;
-		if ( !drm_supports_color_mgmt(&g_DRM) )
-			bNeedsFullComposite |= ( frameInfo.layerCount > 1 || frameInfo.layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
-	}
-	bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
-
-	static int g_nLastSingleOverlayZPos = 0;
-	static bool g_bWasCompositing = false;
-
-	if ( !bNeedsFullComposite && !bWantsPartialComposite )
-	{
-		int ret = drm_prepare( &g_DRM, async, &frameInfo );
-		if ( ret == 0 )
-		{
-			bDoComposite = false;
-			g_bWasPartialComposite = false;
-			g_bWasCompositing = false;
-			if ( frameInfo.layerCount == 2 )
-				g_nLastSingleOverlayZPos = frameInfo.layers[1].zpos;
-		}
-		else if ( ret == -EACCES )
-			return;
+		return;
 	}
 
-	// Update to let the vblank manager know we are currently compositing.
-	g_bCurrentlyCompositing = bDoComposite;
-
-	if ( bDoComposite == true )
-	{
-		if ( kDisablePartialComposition )
-			bNeedsFullComposite = true;
-
-		std::shared_ptr<CVulkanTexture> pPipewireTexture = nullptr;
 #if HAVE_PIPEWIRE
-		if ( pw_buffer != nullptr )
+	struct pipewire_buffer *pw_buffer = dequeue_pipewire_buffer();
+	if ( pw_buffer )
+	{
+		if ( pw_buffer->texture )
 		{
-			pPipewireTexture = pw_buffer->texture;
-		}
-#endif
+			struct FrameInfo_t pipewireFrameInfo = frameInfo;
 
-		struct FrameInfo_t compositeFrameInfo = frameInfo;
-
-		if ( compositeFrameInfo.layerCount == 1 )
-		{
-			// If we failed to flip a single plane then
-			// we definitely need to composite for some reason...
-			bNeedsFullComposite = true;
-		}
-
-		if ( !bNeedsFullComposite )
-		{
-			// If we want to partial composite, fallback to full
-			// composite if we have mismatching colorspaces in our overlays.
-			// This is 2, and we do i-1 so 1...layerCount. So AFTER we have removed baseplane.
-			// Overlays only.
-			//
-			// Josh:
-			// We could handle mismatching colorspaces for partial composition
-			// but I want to keep overlay -> partial composition promotion as simple
-			// as possible, using the same 3D + SHAPER LUTs + BLEND in DRM
-			// as changing them is incredibly expensive!! It takes forever.
-			// We can't just point it to random BDA or whatever, it has to be uploaded slowly
-			// thru registers which is SUPER SLOW.
-			// This avoids stutter.
-			for ( int i = 2; i < compositeFrameInfo.layerCount; i++ )
-			{
-				if ( frameInfo.layers[i - 1].colorspace != frameInfo.layers[i].colorspace )
-				{
-					bNeedsFullComposite = true;
-					break;
-				}
-			}
-		}
-
-		// If we ever promoted from partial -> full, for the first frame
-		// do NOT defer this partial composition.
-		// We were already stalling for the full composition before, so it's not an issue
-		// for latency, we just need to make sure we get 1 partial frame that isn't deferred
-		// in time so we don't lose layers.
-		bool bDefer = !bNeedsFullComposite && ( !g_bWasCompositing || g_bWasPartialComposite );
-
-		// If doing a partial composition then remove the baseplane
-		// from our frameinfo to composite.
-		if ( !bNeedsFullComposite )
-		{
-			for ( int i = 1; i < compositeFrameInfo.layerCount; i++ )
-				compositeFrameInfo.layers[i - 1] = compositeFrameInfo.layers[i];
-			compositeFrameInfo.layerCount -= 1;
-
-			// When doing partial composition, apply the shaper + 3D LUT stuff
-			// at scanout.
-			for ( uint32_t nEOTF = 0; nEOTF < EOTF_Count; nEOTF++ ) {
-				compositeFrameInfo.shaperLut[ nEOTF ] = nullptr;
-				compositeFrameInfo.lut3D[ nEOTF ] = nullptr;
-			}
-		}
-
-		// If using composite debug markers, make sure we mark them as partial
-		// so we know!
-		if ( bDefer && !!( g_uCompositeDebug & CompositeDebugFlag::Markers ) )
-			g_uCompositeDebug |= CompositeDebugFlag::Markers_Partial;
-
-		bool bResult;
-		// If using a pipewire stream, apply screenshot color management.
-		if ( pPipewireTexture )
-		{
+			// If using a pipewire stream, apply screenshot color management.
 			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 			{
-				compositeFrameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-				compositeFrameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+				pipewireFrameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
+				pipewireFrameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
 			}
-			vulkan_composite( &compositeFrameInfo, pPipewireTexture, !bNeedsFullComposite, bDefer, nullptr, false );
-			for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+
+			if ( is_mura_correction_enabled() )
 			{
-				if (g_ColorMgmtLuts[nInputEOTF].HasLuts())
+				// Remove the last layer which is for mura...
+				for (int i = 0; i < pipewireFrameInfo.layerCount; i++)
 				{
-					compositeFrameInfo.shaperLut[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut1d;
-					compositeFrameInfo.lut3D[nInputEOTF] = g_ColorMgmtLuts[nInputEOTF].vk_lut3d;
-				}
-			}
-		}
-
-		bResult = vulkan_composite( &compositeFrameInfo, nullptr, !bNeedsFullComposite, bDefer );
-
-		g_bWasCompositing = true;
-
-		g_uCompositeDebug &= ~CompositeDebugFlag::Markers_Partial;
-
-		if ( bResult != true )
-		{
-			xwm_log.errorf("vulkan_composite failed");
-			return;
-		}
-
-		if ( BIsNested() == true )
-		{
-#if HAVE_OPENVR
-			if ( BIsVRSession() )
-			{
-				vulkan_present_to_openvr();
-			}
-			else if ( BIsSDLSession() )
-#endif
-			{
-				vulkan_present_to_window();
-			}
-
-			// Update the time it took us to commit
-			g_uVblankDrawTimeNS = get_time_in_nanos() - g_SteamCompMgrVBlankTime.pipe_write_time;
-		}
-		else
-		{
-			struct FrameInfo_t presentCompFrameInfo = {};
-
-			if ( bNeedsFullComposite )
-			{
-				presentCompFrameInfo.applyOutputColorMgmt = false;
-				presentCompFrameInfo.layerCount = 1;
-
-				FrameInfo_t::Layer_t *baseLayer = &presentCompFrameInfo.layers[ 0 ];
-				baseLayer->scale.x = 1.0;
-				baseLayer->scale.y = 1.0;
-				baseLayer->opacity = 1.0;
-				baseLayer->zpos = g_zposBase;
-
-				baseLayer->tex = vulkan_get_last_output_image( false, false );
-				baseLayer->fbid = baseLayer->tex->fbid();
-				baseLayer->applyColorMgmt = false;
-
-				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
-				baseLayer->ctm = nullptr;
-				baseLayer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
-
-				g_bWasPartialComposite = false;
-			}
-			else
-			{
-				if ( g_bWasPartialComposite || !bDefer )
-				{
-					presentCompFrameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
-					presentCompFrameInfo.layerCount = 2;
-
-					presentCompFrameInfo.layers[ 0 ] = frameInfo.layers[ 0 ];
-					presentCompFrameInfo.layers[ 0 ].zpos = g_zposBase;
-
-					FrameInfo_t::Layer_t *overlayLayer = &presentCompFrameInfo.layers[ 1 ];
-					overlayLayer->scale.x = 1.0;
-					overlayLayer->scale.y = 1.0;
-					overlayLayer->opacity = 1.0;
-					overlayLayer->zpos = g_zposOverlay;
-
-					overlayLayer->tex = vulkan_get_last_output_image( true, bDefer );
-					overlayLayer->fbid = overlayLayer->tex->fbid();
-					overlayLayer->applyColorMgmt = g_ColorMgmt.pending.enabled;
-
-					overlayLayer->filter = GamescopeUpscaleFilter::NEAREST;
-					// Partial composition stuff has the same colorspace.
-					// So read that from the composite frame info
-					overlayLayer->ctm = nullptr;
-					overlayLayer->colorspace = compositeFrameInfo.layers[0].colorspace;
-				}
-				else
-				{
-					// Use whatever overlay we had last while waiting for the
-					// partial composition to have anything queued.
-					presentCompFrameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
-					presentCompFrameInfo.layerCount = 1;
-
-					presentCompFrameInfo.layers[ 0 ] = frameInfo.layers[ 0 ];
-					presentCompFrameInfo.layers[ 0 ].zpos = g_zposBase;
-
-					FrameInfo_t::Layer_t *lastPresentedOverlayLayer = nullptr;
-					for (int i = 0; i < frameInfo.layerCount; i++)
+					if (pipewireFrameInfo.layers[i].zpos >= (int)g_zposMuraCorrection)
 					{
-						if (frameInfo.layers[i].zpos == g_nLastSingleOverlayZPos)
-						{
-							lastPresentedOverlayLayer = &frameInfo.layers[i];
-							break;
-						}
-					}
-
-					if (lastPresentedOverlayLayer)
-					{
-						FrameInfo_t::Layer_t *overlayLayer = &presentCompFrameInfo.layers[ 1 ];
-						*overlayLayer = *lastPresentedOverlayLayer;
-						overlayLayer->zpos = g_zposOverlay;
-
-						presentCompFrameInfo.layerCount = 2;
+						pipewireFrameInfo.layerCount = i;
+						break;
 					}
 				}
 
-				g_bWasPartialComposite = true;
+				// Re-enable output color management (blending) if it was disabled by mura.
+				pipewireFrameInfo.applyOutputColorMgmt = true;
 			}
 
-			int ret = drm_prepare( &g_DRM, async, &presentCompFrameInfo );
+			std::optional<uint64_t> oPipewireSequence = vulkan_composite( &pipewireFrameInfo, pw_buffer->texture, false, nullptr, false );
 
-			// Happens when we're VT-switched away
-			if ( ret == -EACCES )
-				return;
-
-			if ( ret != 0 )
+			if ( oPipewireSequence )
 			{
-				if ( g_DRM.current.mode_id == 0 )
-				{
-					xwm_log.errorf("We failed our modeset and have no mode to fall back to! (Initial modeset failed?): %s", strerror(-ret));
-					abort();
-				}
+				vulkan_wait( *oPipewireSequence, true );
 
-				xwm_log.errorf("Failed to prepare 1-layer flip (%s), trying again with previous mode if modeset needed", strerror( -ret ));
-
-				drm_rollback( &g_DRM );
-
-				// Try once again to in case we need to fall back to another mode.
-				ret = drm_prepare( &g_DRM, async, &compositeFrameInfo );
-
-				// Happens when we're VT-switched away
-				if ( ret == -EACCES )
-					return;
-
-				if ( ret != 0 )
-				{
-					xwm_log.errorf("Failed to prepare 1-layer flip entirely: %s", strerror( -ret ));
-					// We should always handle a 1-layer flip, this used to abort,
-					// but lets be more friendly and just avoid a commit and try again later.
-					// Let's re-poll our state, and force grab the best connector again.
-					//
-					// Some intense connector hotplugging could be occuring and the
-					// connector could become destroyed before we had a chance to use it
-					// as we hadn't reffed it in a commit yet.
-					g_DRM.out_of_date = 2;
-					drm_poll_state( &g_DRM );
-					return;
-				}
+				push_pipewire_buffer( pw_buffer );
+				// TODO: make sure the pw_buffer isn't lost in one of the failure
+				// code-paths above
 			}
-
-			drm_commit( &g_DRM, &compositeFrameInfo );
 		}
-
-#if HAVE_PIPEWIRE
-		if ( pw_buffer != nullptr )
-		{
-			push_pipewire_buffer(pw_buffer);
-			// TODO: make sure the pw_buffer isn't lost in one of the failure
-			// code-paths above
-		}
+	}
 #endif
-	}
-	else
+
+	std::optional<gamescope::GamescopeScreenshotInfo> oScreenshotInfo =
+		gamescope::CScreenshotManager::Get().ProcessPendingScreenshot();
+
+	if ( oScreenshotInfo )
 	{
-		assert( BIsNested() == false );
+		std::filesystem::path path = std::filesystem::path{ oScreenshotInfo->szScreenshotPath };
 
-		drm_commit( &g_DRM, &frameInfo );
-	}
+		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;
 
-	if ( takeScreenshot )
-	{
-		uint32_t drmCaptureFormat = bHackForceNV12DumpScreenshot
-			? DRM_FORMAT_NV12
-			: DRM_FORMAT_XRGB8888;
+		if ( path.extension() == ".avif" )
+			drmCaptureFormat = DRM_FORMAT_XRGB2101010;
+		else if ( path.extension() == ".png" )
+			drmCaptureFormat = DRM_FORMAT_XRGB8888;
+		else if ( path.extension() == ".nv12.bin" )
+			drmCaptureFormat = DRM_FORMAT_NV12;
 
-		std::shared_ptr<CVulkanTexture> pScreenshotTexture = vulkan_acquire_screenshot_texture(g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat);
+		std::shared_ptr<CVulkanTexture> pScreenshotTexture;
+		if ( drmCaptureFormat != DRM_FORMAT_INVALID )
+			pScreenshotTexture = vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat );
 
 		if ( pScreenshotTexture )
 		{
-			if ( drmCaptureFormat == DRM_FORMAT_NV12 || takeScreenshot != TAKE_SCREENSHOT_SCREEN_BUFFER )
+			bool bHDRScreenshot = path.extension() == ".avif" &&
+								  frameInfo.layerCount > 0 &&
+								  ColorspaceIsHDR( frameInfo.layers[0].colorspace ) &&
+								  oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER;
+
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 || oScreenshotInfo->eScreenshotType != GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
 			{
 				// Basically no color mgmt applied for screenshots. (aside from being able to handle HDR content with LUTs)
 				for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
 				{
-					frameInfo.lut3D[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut3d;
-					frameInfo.shaperLut[nInputEOTF] = g_ScreenshotColorMgmtLuts[nInputEOTF].vk_lut1d;
+					auto& luts = bHDRScreenshot ? g_ScreenshotColorMgmtLutsHDR : g_ScreenshotColorMgmtLuts;
+					frameInfo.lut3D[nInputEOTF] = luts[nInputEOTF].vk_lut3d;
+					frameInfo.shaperLut[nInputEOTF] = luts[nInputEOTF].vk_lut1d;
 				}
 
-				if ( takeScreenshot == TAKE_SCREENSHOT_BASEPLANE_ONLY )
+				if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY )
 				{
 					// Remove everything but base planes from the screenshot.
 					for (int i = 0; i < frameInfo.layerCount; i++)
@@ -3164,18 +2839,58 @@ paint_all(bool async)
 
 			frameInfo.applyOutputColorMgmt = true;
 
-			bool bResult;
-			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
-				bResult = vulkan_composite( &frameInfo, pScreenshotTexture, false, false, nullptr );
-			else if ( takeScreenshot == TAKE_SCREENSHOT_FULL_COMPOSITION || takeScreenshot == TAKE_SCREENSHOT_SCREEN_BUFFER )
-				bResult = vulkan_composite( &frameInfo, nullptr, false, false, pScreenshotTexture );
-			else
-				bResult = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 
-			if ( bResult != true )
+			uint32_t uCompositeDebugBackup = g_uCompositeDebug;
+			g_uCompositeDebug = 0;
+
+			std::optional<uint64_t> oScreenshotSeq;
+			if ( drmCaptureFormat == DRM_FORMAT_NV12 )
+				oScreenshotSeq = vulkan_composite( &frameInfo, pScreenshotTexture, false, nullptr );
+			else if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_FULL_COMPOSITION ||
+					  oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+				oScreenshotSeq = vulkan_composite( &frameInfo, nullptr, false, pScreenshotTexture );
+			else
+				oScreenshotSeq = vulkan_screenshot( &frameInfo, pScreenshotTexture );
+
+			g_uCompositeDebug = uCompositeDebugBackup;
+
+			if ( !oScreenshotSeq )
 			{
 				xwm_log.errorf("vulkan_screenshot failed");
 				return;
+			}
+
+			vulkan_wait( *oScreenshotSeq, false );
+
+			uint16_t maxCLLNits = 0;
+			uint16_t maxFALLNits = 0;
+
+			if ( bHDRScreenshot )
+			{
+				// Unfortunately games give us very bogus values here.
+				// Thus we don't really use them.
+				// Instead rely on the display it was initially tonemapped for.
+				//if ( g_ColorMgmt.current.appHDRMetadata )
+				//{
+				//	maxCLLNits = g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_cll;
+				//	maxFALLNits = g_ColorMgmt.current.appHDRMetadata->metadata.hdmi_metadata_type1.max_fall;
+				//}
+
+				if ( !maxCLLNits && !maxFALLNits )
+				{
+					if ( GetBackend()->GetCurrentConnector() )
+					{
+						maxCLLNits = GetBackend()->GetCurrentConnector()->GetHDRInfo().uMaxContentLightLevel;
+						maxFALLNits = GetBackend()->GetCurrentConnector()->GetHDRInfo().uMaxFrameAverageLuminance;
+					}
+				}
+
+				if ( !maxCLLNits && !maxFALLNits )
+				{
+					maxCLLNits = g_ColorMgmt.pending.flInternalDisplayBrightness;
+					maxFALLNits = g_ColorMgmt.pending.flInternalDisplayBrightness * 0.8f;
+				}
 			}
 
 			std::thread screenshotThread = std::thread([=] {
@@ -3183,7 +2898,100 @@ paint_all(bool async)
 
 				const uint8_t *mappedData = pScreenshotTexture->mappedData();
 
-				if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
+				bool bScreenshotSuccess = false;
+
+				if ( pScreenshotTexture->format() == VK_FORMAT_A2R10G10B10_UNORM_PACK32 )
+				{
+					// Make our own copy of the image to remove the alpha channel.
+					constexpr uint32_t kCompCnt = 3;
+					auto imageData = std::vector<uint16_t>( g_nOutputWidth * g_nOutputHeight * kCompCnt );
+
+					for (uint32_t y = 0; y < g_nOutputHeight; y++)
+					{
+						for (uint32_t x = 0; x < g_nOutputWidth; x++)
+						{
+							uint32_t *pInPixel = (uint32_t *)&mappedData[(y * pScreenshotTexture->rowPitch()) + x * (32 / 8)];
+							uint32_t uInPixel = *pInPixel;
+
+							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 0] = (uInPixel & (0b1111111111 << 20)) >> 20;
+							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 1] = (uInPixel & (0b1111111111 << 10)) >> 10;
+							imageData[y * g_nOutputWidth * kCompCnt + x * kCompCnt + 2] = (uInPixel & (0b1111111111 << 0))  >> 0;
+						}
+					}
+
+					assert( HAVE_AVIF );
+#if HAVE_AVIF
+					avifResult avifResult = AVIF_RESULT_OK;
+
+					avifImage *pAvifImage = avifImageCreate( g_nOutputWidth, g_nOutputHeight, 10, AVIF_PIXEL_FORMAT_YUV444 );
+					defer( avifImageDestroy( pAvifImage ) );
+					pAvifImage->yuvRange = AVIF_RANGE_FULL;
+					pAvifImage->colorPrimaries = bHDRScreenshot ? AVIF_COLOR_PRIMARIES_BT2020 : AVIF_COLOR_PRIMARIES_BT709;
+					pAvifImage->transferCharacteristics = bHDRScreenshot ? AVIF_TRANSFER_CHARACTERISTICS_SMPTE2084 : AVIF_TRANSFER_CHARACTERISTICS_SRGB;
+					// We are not actually using YUV, but storing raw GBR (yes not RGB) data
+					// This does not compress as well, but is always lossless!
+					pAvifImage->matrixCoefficients = AVIF_MATRIX_COEFFICIENTS_IDENTITY;
+
+					if ( oScreenshotInfo->eScreenshotType == GAMESCOPE_CONTROL_SCREENSHOT_TYPE_SCREEN_BUFFER )
+					{
+						// When dumping the screen output buffer for debugging,
+						// mark the primaries as UNKNOWN as stuff has likely been transformed
+						// to native if HDR on Deck OLED etc.
+						// We want everything to be seen unadulterated by a viewer/image editor.
+						pAvifImage->colorPrimaries = AVIF_COLOR_PRIMARIES_UNKNOWN;
+					}
+
+					if ( bHDRScreenshot )
+					{
+						pAvifImage->clli.maxCLL = maxCLLNits;
+						pAvifImage->clli.maxPALL = maxFALLNits;
+					}
+
+					avifRGBImage rgbAvifImage{};
+					avifRGBImageSetDefaults( &rgbAvifImage, pAvifImage );
+					rgbAvifImage.format = AVIF_RGB_FORMAT_RGB;
+					rgbAvifImage.ignoreAlpha = AVIF_TRUE;
+
+					rgbAvifImage.pixels = (uint8_t *)imageData.data();
+					rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
+
+					avifImageRGBToYUV( pAvifImage, &rgbAvifImage ); // Not really! See Matrix Coefficients IDENTITY above.
+
+					avifEncoder *pEncoder = avifEncoderCreate();
+					defer( avifEncoderDestroy( pEncoder ) );
+					pEncoder->quality = AVIF_QUALITY_LOSSLESS;
+					pEncoder->qualityAlpha = AVIF_QUALITY_LOSSLESS;
+					pEncoder->speed = AVIF_SPEED_FASTEST;
+
+					if ( ( avifResult = avifEncoderAddImage( pEncoder, pAvifImage, 1, AVIF_ADD_IMAGE_FLAG_SINGLE ) ) != AVIF_RESULT_OK )
+					{
+						xwm_log.errorf( "Failed to add image to avif encoder: %u", avifResult );
+						return;
+					}
+
+					avifRWData avifOutput = AVIF_DATA_EMPTY;
+					defer( avifRWDataFree( &avifOutput ) );
+					if ( ( avifResult = avifEncoderFinish( pEncoder, &avifOutput ) ) != AVIF_RESULT_OK )
+					{
+						xwm_log.errorf( "Failed to finish encoder: %u", avifResult );
+						return;
+					}
+
+					FILE *pScreenshotFile = nullptr;
+					if ( ( pScreenshotFile = fopen( oScreenshotInfo->szScreenshotPath.c_str(), "wb" ) ) == nullptr )
+					{
+						xwm_log.errorf( "Failed to fopen file: %s", oScreenshotInfo->szScreenshotPath.c_str() );
+						return;
+					}
+
+					fwrite( avifOutput.data, 1, avifOutput.size, pScreenshotFile );
+					fclose( pScreenshotFile );
+
+					xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
+					bScreenshotSuccess = true;
+#endif
+				}
+				else if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
 					// Make our own copy of the image to remove the alpha channel.
 					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
@@ -3200,79 +3008,77 @@ paint_all(bool async)
 							imageData[y * pitch + x * comp + 3] = 255;
 						}
 					}
-
-					char pTimeBuffer[1024] = "/tmp/gamescope.png";
-
-					if ( !propertyRequestedScreenshot )
+					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch ) )
 					{
-						time_t currentTime = time(0);
-						struct tm *localTime = localtime( &currentTime );
-						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.png", localTime );
-					}
-
-					if ( stbi_write_png(pTimeBuffer, currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch) )
-					{
-						xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
+						bScreenshotSuccess = true;
 					}
 					else
 					{
-						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+						xwm_log.errorf( "Failed to save screenshot to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 					}
 				}
 				else if (pScreenshotTexture->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
 				{
-					char pTimeBuffer[1024] = "/tmp/gamescope.raw";
-
-					if ( !propertyRequestedScreenshot )
-					{
-						time_t currentTime = time(0);
-						struct tm *localTime = localtime( &currentTime );
-						strftime( pTimeBuffer, sizeof( pTimeBuffer ), "/tmp/gamescope_%Y-%m-%d_%H-%M-%S.raw", localTime );
-					}
-
-					FILE *file = fopen(pTimeBuffer, "wb");
+					FILE *file = fopen( oScreenshotInfo->szScreenshotPath.c_str(), "wb" );
 					if (file)
 					{
 						fwrite(mappedData, 1, pScreenshotTexture->totalSize(), file );
 						fclose(file);
 
 						char cmd[4096];
-						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), pTimeBuffer, pTimeBuffer);
+						sprintf(cmd, "ffmpeg -f rawvideo -pixel_format nv12 -video_size %dx%d -i %s %s_encoded.png", pScreenshotTexture->width(), pScreenshotTexture->height(), oScreenshotInfo->szScreenshotPath.c_str(), oScreenshotInfo->szScreenshotPath.c_str() );
 
 						int ret = system(cmd);
 
 						/* Above call may fail, ffmpeg returns 0 on success */
 						if (ret) {
 							xwm_log.infof("Ffmpeg call return status %i", ret);
-							xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+							xwm_log.errorf( "Failed to save screenshot to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						} else {
-							xwm_log.infof("Screenshot saved to %s", pTimeBuffer);
+							xwm_log.infof("Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str());
+							bScreenshotSuccess = true;
 						}
 					}
 					else
 					{
-						xwm_log.errorf( "Failed to save screenshot to %s", pTimeBuffer );
+						xwm_log.errorf( "Failed to save screenshot to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 					}
 				}
 
-				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+				if ( oScreenshotInfo->bX11PropertyRequested )
+				{
+					XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+					XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDebugScreenShotAtom );
+				}
+
+				if ( bScreenshotSuccess )
+				{
+						wlserver_lock();
+						for ( const auto &control : wlserver.gamescope_controls )
+						{
+							gamescope_control_send_screenshot_taken( control, oScreenshotInfo->szScreenshotPath.c_str() );
+						}
+						wlserver_unlock();
+				}
 			});
 
 			screenshotThread.detach();
-
-			takeScreenshot = 0;
 		}
 		else
 		{
 			xwm_log.errorf( "Oh no, we ran out of screenshot images. Not actually writing a screenshot." );
-			XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
-			takeScreenshot = 0;
+			if ( oScreenshotInfo->bX11PropertyRequested )
+			{
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeScreenShotAtom );
+				XDeleteProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDebugScreenShotAtom );
+			}
 		}
 	}
 
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
-	gpuvis_trace_printf( "paint_all %i layers, composite %i", (int)frameInfo.layerCount, bDoComposite );
+	gpuvis_trace_printf( "paint_all %i layers", (int)frameInfo.layerCount );
 }
 
 /* Get prop from window
@@ -4233,35 +4039,17 @@ determine_and_apply_focus()
 	}
 
 	// Set SDL window title
-	if ( global_focus.focusWindow )
+	if ( GetBackend()->GetNestedHints() )
 	{
-#if HAVE_OPENVR
-		if ( BIsVRSession() )
+		if ( global_focus.focusWindow )
 		{
-			const char *title = global_focus.focusWindow->title
-				? global_focus.focusWindow->title->c_str()
-				: nullptr;
-			vrsession_title( title, global_focus.focusWindow->icon );
+			GetBackend()->GetNestedHints()->SetVisible( true );
+			GetBackend()->GetNestedHints()->SetTitle( global_focus.focusWindow->title );
+			GetBackend()->GetNestedHints()->SetIcon( global_focus.focusWindow->icon );
 		}
-#endif
-
-		if ( BIsSDLSession() )
+		else
 		{
-			sdlwindow_title( global_focus.focusWindow->title, global_focus.focusWindow->icon );
-		}
-	}
-
-#if HAVE_OPENVR
-	if ( BIsVRSession() )
-	{
-		vrsession_set_dashboard_visible( global_focus.focusWindow != nullptr );
-	}
-	else
-#endif
-	{
-		if ( BIsSDLSession() )
-		{
-			sdlwindow_visible( global_focus.focusWindow != nullptr );
+			GetBackend()->GetNestedHints()->SetVisible( false );
 		}
 	}
 
@@ -5188,14 +4976,14 @@ handle_client_message(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 	}
 }
 
-static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, int selectionTarget)
+static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, GamescopeSelection eSelectionTarget)
 {
 	Atom target;
-	if (selectionTarget == CLIPBOARD)
+	if (eSelectionTarget == GAMESCOPE_SELECTION_CLIPBOARD)
 	{
 		target = ctx->atoms.clipboard;
 	}
-	else if (selectionTarget == PRIMARYSELECTION)
+	else if (eSelectionTarget == GAMESCOPE_SELECTION_PRIMARY)
 	{
 		target = ctx->atoms.primarySelection;
 	}
@@ -5207,13 +4995,13 @@ static void x11_set_selection_owner(xwayland_ctx_t *ctx, std::string contents, i
 	XSetSelectionOwner(ctx->dpy, target, ctx->ourWindow, CurrentTime);
 }
 
-void gamescope_set_selection(std::string contents, int selection)
+void gamescope_set_selection(std::string contents, GamescopeSelection eSelection)
 {
-	if (selection == CLIPBOARD)
+	if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
 	{
 		clipboard = contents;
 	}
-	else if (selection == PRIMARYSELECTION)
+	else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
 	{
 		primarySelection = contents;
 	}
@@ -5221,7 +5009,7 @@ void gamescope_set_selection(std::string contents, int selection)
 	gamescope_xwayland_server_t *server = NULL;
 	for (int i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
-		x11_set_selection_owner(server->ctx.get(), contents, selection);
+		x11_set_selection_owner(server->ctx.get(), contents, eSelection);
 	}
 }
 
@@ -5281,8 +5069,6 @@ handle_selection_request(xwayland_ctx_t *ctx, XSelectionRequestEvent *ev)
 static void
 handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 {
-	int selection;
-
 	Atom actual_type;
 	int actual_format;
 	unsigned long nitems;
@@ -5300,37 +5086,34 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 				&actual_type, &actual_format, &nitems, &bytes_after, &data);
 		if (data) {
 			const char *contents = (const char *) data;
+			defer( XFree( data ); );
 
 			if (ev->selection == ctx->atoms.clipboard)
 			{
-				selection = CLIPBOARD;
+				if ( GetBackend()->GetNestedHints() )
+				{
+					//GetBackend()->GetNestedHints()->SetSelection()
+				}
+				else
+				{
+					gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
+				}
 			}
 			else if (ev->selection == ctx->atoms.primarySelection)
 			{
-				selection = PRIMARYSELECTION;
+				if ( GetBackend()->GetNestedHints() )
+				{
+					//GetBackend()->GetNestedHints()->SetSelection()
+				}
+				else
+				{
+					gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
+				}
 			}
 			else
 			{
 				xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
-				goto done;
 			}
-
-			if (BIsNested())
-			{
-				/*
-				 * gamescope_set_selection() doesn't need to be called here.
-				 * sdlwindow_set_selection triggers a clipboard update, which
-				 * then indirectly ccalls gamescope_set_selection()
-				*/
-				sdlwindow_set_selection(contents, selection);
-			}
-			else
-			{
-				gamescope_set_selection(contents, selection);
-			}
-
-done:
-			XFree(data);
 		}
 	}
 }
@@ -5503,10 +5286,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if (ev->atom == ctx->atoms.steamTouchClickModeAtom )
 	{
 		g_nTouchClickMode = (enum wlserver_touch_click_mode) get_prop(ctx, ctx->root, ctx->atoms.steamTouchClickModeAtom, g_nDefaultTouchClickMode );
-#if HAVE_OPENVR
-		if (BIsVRSession())
-			vrsession_update_touch_mode();
-#endif
 	}
 	if (ev->atom == ctx->atoms.steamStreamingClientAtom)
 	{
@@ -5540,15 +5319,26 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		if ( ev->state == PropertyNewValue )
 		{
-			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeScreenShotAtom, None );
-			g_bPropertyRequestedScreenshot = true;
+			gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+			{
+				.szScreenshotPath = "/tmp/gamescope.png",
+				.eScreenshotType = (gamescope_control_screenshot_type) get_prop( ctx, ctx->root, ctx->atoms.gamescopeScreenShotAtom, None ),
+				.uScreenshotFlags = 0,
+				.bX11PropertyRequested = true,
+			} );
 		}
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDebugScreenShotAtom )
 	{
 		if ( ev->state == PropertyNewValue )
 		{
-			g_nTakeScreenshot = (int)get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugScreenShotAtom, None );
+			gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+			{
+				.szScreenshotPath = "/tmp/gamescope.png",
+				.eScreenshotType = (gamescope_control_screenshot_type) get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugScreenShotAtom, None ),
+				.uScreenshotFlags = 0,
+				.bX11PropertyRequested = true,
+			} );
 		}
 	}
 	if (ev->atom == ctx->atoms.gameAtom)
@@ -5664,7 +5454,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 			if (ev->window == x11_win(global_focus.focusWindow))
 			{
-				sdlwindow_title( w->title, w->icon );
+				if ( GetBackend()->GetNestedHints() )
+					GetBackend()->GetNestedHints()->SetTitle( w->title );
 			}
 		}
 	}
@@ -5678,7 +5469,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 			if (ev->window == x11_win(global_focus.focusWindow))
 			{
-				sdlwindow_title( w->title, w->icon );
+				if ( GetBackend()->GetNestedHints() )
+					GetBackend()->GetNestedHints()->SetIcon( w->icon );
 			}
 		}
 	}
@@ -5690,6 +5482,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			focusDirty = true;
 		}
 	}
+#if 0
 	if ( ev->atom == ctx->atoms.gamescopeTuneableVBlankRedZone )
 	{
 		g_uVblankDrawBufferRedZoneNS = (uint64_t)get_prop( ctx, ctx->root, ctx->atoms.gamescopeTuneableVBlankRedZone, g_uDefaultVBlankRedZone );
@@ -5698,6 +5491,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	{
 		g_uVBlankRateOfDecayPercentage = (uint64_t)get_prop( ctx, ctx->root, ctx->atoms.gamescopeTuneableRateOfDecay, g_uDefaultVBlankRateOfDecayPercentage );
 	}
+#endif
 	if ( ev->atom == ctx->atoms.gamescopeScalingFilter )
 	{
 		int nScalingMode = get_prop( ctx, ctx->root, ctx->atoms.gamescopeScalingFilter, 0 );
@@ -5774,7 +5568,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		g_nSteamCompMgrTargetFPS = get_prop( ctx, ctx->root, ctx->atoms.gamescopeFPSLimit, 0 );
 		update_runtime_info();
 	}
-	for (int i = 0; i < DRM_SCREEN_TYPE_COUNT; i++)
+	for (int i = 0; i < gamescope::GAMESCOPE_SCREEN_TYPE_COUNT; i++)
 	{
 		if ( ev->atom == ctx->atoms.gamescopeDynamicRefresh[i] )
 		{
@@ -5832,23 +5626,17 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeVRREnabled )
 	{
 		bool enabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeVRREnabled, 0 );
-		drm_set_vrr_enabled( &g_DRM, enabled );
+		g_bAllowVRR = enabled;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayForceInternal )
 	{
-		if ( !BIsNested() )
-		{
-			g_DRM.force_internal = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayForceInternal, 0 );
-			g_DRM.out_of_date = 1;
-		}
+		g_bForceInternal = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayForceInternal, 0 );
+		GetBackend()->DirtyState();
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayModeNudge )
 	{
-		if ( !BIsNested() )
-		{
-			g_DRM.out_of_date = 2;
-			XDeleteProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeDisplayModeNudge );
-		}
+		GetBackend()->DirtyState( true );
+		XDeleteProperty( ctx->dpy, ctx->root, ctx->atoms.gamescopeDisplayModeNudge );
 	}
 	if ( ev->atom == ctx->atoms.gamescopeNewScalingFilter )
 	{
@@ -5870,7 +5658,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayHDREnabled )
 	{
-		g_bHDREnabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayHDREnabled, 0 );
+		cv_hdr_enabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDisplayHDREnabled, 0 );
 		hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDebugForceHDR10Output )
@@ -5881,7 +5669,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeDebugForceHDRSupport )
 	{
 		g_bForceHDRSupportDebug = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugForceHDRSupport, 0 );
-		drm_update_patched_edid(&g_DRM);
+		GetBackend()->HackUpdatePatchedEdid();
 		hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDebugHDRHeatmap )
@@ -5991,15 +5779,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		}
 		hasRepaint = true;
 	}
-	if ( ev->atom == ctx->atoms.gamescopeInternalDisplayBrightness )
-	{
-		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeInternalDisplayBrightness, 0 );
-		if ( set_internal_display_brightness( bit_cast<float>(val) ) )
-		{
-			drm_update_patched_edid(&g_DRM);
-			hasRepaint = true;
-		}
-	}
 	if ( ev->atom == ctx->atoms.gamescopeHDRInputGain )
 	{
 		uint32_t val = get_prop( ctx, ctx->root, ctx->atoms.gamescopeHDRInputGain, 0 );
@@ -6073,24 +5852,24 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		g_ColorMgmt.pending.chromaticAdaptationMode = ( EChromaticAdaptationMethod ) val;
 	}
 	// TODO: Hook up gamescopeColorMuraCorrectionImage for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] );
+		std::string path = get_string_prop( ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] );
 		if ( set_mura_overlay( path.c_str() ) )
 			hasRepaint = true;
 	}
 	// TODO: Hook up gamescopeColorMuraScale for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL], 0);
+		uint32_t val = get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL], 0);
 		float new_scale = bit_cast<float>(val);
 		if ( set_mura_scale( new_scale ) )
 			hasRepaint = true;
 	}
 	// TODO: Hook up gamescopeColorMuraCorrectionDisabled for external.
-	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] )
+	if ( ev->atom == ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] )
 	{
-		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL], 0);
+		bool disabled = !!get_prop(ctx, ctx->root, ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL], 0);
 		if ( g_bMuraCompensationDisabled != disabled ) {
 			g_bMuraCompensationDisabled = disabled;
 			hasRepaint = true;
@@ -6115,10 +5894,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				.format = 8,
 				.nitems = strlen(propertyString),
 			};
-			pollfds.push_back(pollfd {
-				.fd = XConnectionNumber( server->ctx->dpy ),
-				.events = POLLIN,
-			});
+			g_SteamCompMgrWaiter.AddWaitable( server->ctx.get() );
 			XSetTextProperty( ctx->dpy, ctx->root, &text_property, ctx->atoms.gamescopeCreateXWaylandServerFeedback );
 			wlserver_unlock();
 		}
@@ -6175,9 +5951,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				global_focus.cursor = nullptr;
 
 			wlserver_lock();
-			std::erase_if(pollfds, [=](const auto& other){
-				return other.fd == XConnectionNumber( server->ctx->dpy );
-			});
+			g_SteamCompMgrWaiter.RemoveWaitable( server->ctx.get() );
 			wlserver_destroy_xwayland_server(server);
 			wlserver_unlock();
 
@@ -6315,13 +6089,11 @@ steamcompmgr_exit(void)
 		statsThreadSem.signal();
 	}
 
-    sdlwindow_shutdown();
+    //sdlwindow_shutdown();
 
     wlserver_lock();
     wlserver_force_shutdown();
     wlserver_unlock(false);
-
-	finish_drm( &g_DRM );
 
 	pthread_exit(NULL);
 }
@@ -6505,7 +6277,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.target_vblank_time;
+	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
 	static std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -6562,7 +6334,7 @@ void handle_done_commits_xdg()
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.target_vblank_time;
+	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
 	std::vector< CommitDoneEntry_t > commits_before_their_time;
@@ -6596,7 +6368,9 @@ void handle_done_commits_xdg()
 
 void handle_presented_for_window( steamcompmgr_win_t* w )
 {
-	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.target_vblank_time;
+	// wlserver_lock is held.
+
+	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	uint64_t refresh_cycle = g_nSteamCompMgrTargetFPS && steamcompmgr_window_should_limit_fps( w )
 		? g_SteamCompMgrLimitedAppRefreshCycle
@@ -6607,8 +6381,6 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 	{
 		if (!lastCommit->presentation_feedbacks.empty() || lastCommit->present_id)
 		{
-			wlserver_lock();
-
 			if (!lastCommit->presentation_feedbacks.empty())
 			{
 				wlserver_presentation_feedback_presented(
@@ -6629,17 +6401,14 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 					lastCommit->present_margin);
 				lastCommit->present_id = std::nullopt;
 			}
-
-			wlserver_unlock();
 		}
 	}
 
 	if (struct wlr_surface *surface = w->current_surface())
 	{
 		auto info = get_wl_surface_info(surface);
-		if  (info->gamescope_swapchain != nullptr && info->last_refresh_cycle != refresh_cycle)
+		if (info != nullptr && info->gamescope_swapchain != nullptr && info->last_refresh_cycle != refresh_cycle)
 		{
-			wlserver_lock();
 			if (info->gamescope_swapchain != nullptr)
 			{
 				// Could have got the override set in this bubble.s
@@ -6651,7 +6420,6 @@ void handle_presented_for_window( steamcompmgr_win_t* w )
 					wlserver_refresh_cycle(surface, refresh_cycle);
 				}
 			}
-			wlserver_unlock();
 		}
 	}
 }
@@ -6674,14 +6442,7 @@ void handle_presented_xdg()
 
 void nudge_steamcompmgr( void )
 {
-	if ( write( g_nudgePipe[ 1 ], "\n", 1 ) < 0 )
-		xwm_log.errorf_errno( "nudge_steamcompmgr: write failed" );
-}
-
-void take_screenshot( int flags )
-{
-	g_nTakeScreenshot = flags;
-	nudge_steamcompmgr();
+	g_SteamCompMgrWaiter.Nudge();
 }
 
 void force_repaint( void )
@@ -6758,7 +6519,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			g_ImageWaiter.AddWaitable( newCommit.get(), EPOLLIN | EPOLLHUP );
+			g_ImageWaiter.AddWaitable( newCommit.get() );
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -6943,12 +6704,14 @@ handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent 
 	XFlush(ctx->dpy);
 }
 
-static void
-dispatch_x11( xwayland_ctx_t *ctx )
+void xwayland_ctx_t::Dispatch()
 {
+	xwayland_ctx_t *ctx = this;
+
 	MouseCursor *cursor = ctx->cursor.get();
 	bool bShouldResetCursor = false;
 	bool bSetFocus = false;
+	bool bShouldUpdateCursor = false;
 
 	while (XPending(ctx->dpy))
 	{
@@ -7088,6 +6851,16 @@ dispatch_x11( xwayland_ctx_t *ctx )
 			case SelectionRequest:
 				handle_selection_request(ctx, &ev.xselectionrequest);
 				break;
+			case GenericEvent:
+				if (ev.xcookie.extension == ctx->xinput_opcode)
+				{
+					if (ev.xcookie.evtype == XI_RawMotion)
+					{
+						bShouldUpdateCursor = true;
+					}
+				}
+				break;
+
 			default:
 				if (ev.type == ctx->damage_event + XDamageNotify)
 				{
@@ -7106,53 +6879,30 @@ dispatch_x11( xwayland_ctx_t *ctx )
 		XFlush(ctx->dpy);
 	}
 
-	if ( bShouldResetCursor )
+	if ( bShouldUpdateCursor )
 	{
-		// This shouldn't happen due to our pointer barriers,
-		// but there is a known X server bug; warp to last good
-		// position.
-		cursor->resetPosition();
+		cursor->UpdatePosition();
+
+		if ( bShouldResetCursor )
+		{
+			// This shouldn't happen due to our pointer barriers,
+			// but there is a known X server bug; warp to last good
+			// position.
+			steamcompmgr_win_t *pInputWindow = ctx->focus.inputFocusWindow;
+			int nX = std::clamp<int>( cursor->x(), pInputWindow->xwayland().a.x, pInputWindow->xwayland().a.x + pInputWindow->xwayland().a.width );
+			int nY = std::clamp<int>( cursor->y(), pInputWindow->xwayland().a.y, pInputWindow->xwayland().a.y + pInputWindow->xwayland().a.height );
+
+			if ( cursor->x() != nX || cursor->y() != nY )
+			{
+				cursor->forcePosition( nX, nY );
+			}
+		}
 	}
 
 	if ( bSetFocus )
 	{
 		XSetInputFocus(ctx->dpy, ctx->currentKeyboardFocusWindow, RevertToNone, CurrentTime);
 	}
-}
-
-static bool
-dispatch_vblank( int fd )
-{
-	bool vblank = false;
-	for (;;)
-	{
-		VBlankTimeInfo_t vblanktime = {};
-		ssize_t ret = read( fd, &vblanktime, sizeof( vblanktime ) );
-		if ( ret < 0 )
-		{
-			if ( errno == EAGAIN )
-				break;
-
-			xwm_log.errorf_errno( "steamcompmgr: dispatch_vblank: read failed" );
-			break;
-		}
-
-		g_SteamCompMgrVBlankTime = vblanktime;
-
-		uint64_t diff = get_time_in_nanos() - vblanktime.pipe_write_time;
-
-		// give it 1 ms of slack from pipe to steamcompmgr... maybe too long
-		if ( diff > 1'000'000ul )
-		{
-			gpuvis_trace_printf( "ignored stale vblank" );
-		}
-		else
-		{
-			gpuvis_trace_printf( "got vblank" );
-			vblank = true;
-		}
-	}
-	return vblank;
 }
 
 struct rgba_t
@@ -7184,53 +6934,6 @@ load_mouse_cursor( MouseCursor *cursor, const char *path, int hx, int hy )
 	// Data is freed by XDestroyImage in setCursorImage.
 	return cursor->setCursorImage((char *)data, w, h, hx, hy);
 }
-
-static bool
-load_host_cursor( MouseCursor *cursor )
-{
-	extern const char *g_pOriginalDisplay;
-
-	if ( !g_pOriginalDisplay )
-		return false;
-
-	Display *display = XOpenDisplay( g_pOriginalDisplay );
-	if ( !display )
-		return false;
-	defer( XCloseDisplay( display ) );
-
-	int xfixes_event, xfixes_error;
-	if (!XFixesQueryExtension(display, &xfixes_event, &xfixes_error))
-	{
-		xwm_log.errorf("No XFixes extension on current compositor");
-		return false;
-	}
-
-	XFixesCursorImage *image = XFixesGetCursorImage( display );
-	if ( !image )
-		return false;
-	defer( XFree( image ) );
-
-	// image->pixels is `unsigned long*` :/
-	// Thanks X11.
-	std::vector<uint32_t> cursorData;
-	for (uint32_t y = 0; y < image->height; y++)
-	{
-		for (uint32_t x = 0; x < image->width; x++)
-		{
-			cursorData.push_back((uint32_t)image->pixels[image->height * y + x]);
-		}
-	}
-
-	cursor->setCursorImage((char *)cursorData.data(), image->width, image->height, image->xhot, image->yhot);
-	return true;
-}
-
-enum steamcompmgr_event_type {
-	EVENT_VBLANK,
-	EVENT_NUDGE,
-	EVENT_X11,
-	// Any past here are X11
-};
 
 const char* g_customCursorPath = nullptr;
 int g_customCursorHotspotX = 0;
@@ -7314,6 +7017,18 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 		xwm_log.errorf("Unsupported XRes version: have %d.%d, want 1.2", xres_major, xres_minor);
 		exit(1);
 	}
+    if (!XQueryExtension(ctx->dpy,
+                        "XInputExtension",
+                        &ctx->xinput_opcode,
+                        &ctx->xinput_event,
+                        &ctx->xinput_error))
+	{
+		xwm_log.errorf("No XInput extension");
+		exit(1);
+	}
+	int xi_major = 2;
+	int xi_minor = 0;
+	XIQueryVersion(ctx->dpy, &xi_major, &xi_minor);
 
 	if (!register_cm(ctx))
 	{
@@ -7386,8 +7101,8 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 
 	ctx->atoms.gamescopeXWaylandModeControl = XInternAtom( ctx->dpy, "GAMESCOPE_XWAYLAND_MODE_CONTROL", false );
 	ctx->atoms.gamescopeFPSLimit = XInternAtom( ctx->dpy, "GAMESCOPE_FPS_LIMIT", false );
-	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
-	ctx->atoms.gamescopeDynamicRefresh[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
+	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH", false );
+	ctx->atoms.gamescopeDynamicRefresh[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_DYNAMIC_REFRESH_EXTERNAL", false );
 	ctx->atoms.gamescopeLowLatency = XInternAtom( ctx->dpy, "GAMESCOPE_LOW_LATENCY", false );
 
 	ctx->atoms.gamescopeFSRFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_FSR_FEEDBACK", false );
@@ -7427,7 +7142,6 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeDebugHDRHeatmap = XInternAtom( ctx->dpy, "GAMESCOPE_DEBUG_HDR_HEATMAP", false );
 	ctx->atoms.gamescopeHDROutputFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_OUTPUT_FEEDBACK", false );
 	ctx->atoms.gamescopeSDROnHDRContentBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_SDR_ON_HDR_CONTENT_BRIGHTNESS", false );
-	ctx->atoms.gamescopeInternalDisplayBrightness = XInternAtom( ctx->dpy, "GAMESCOPE_INTERNAL_DISPLAY_BRIGHTNESS", false );
 	ctx->atoms.gamescopeHDRInputGain = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_INPUT_GAIN", false );
 	ctx->atoms.gamescopeSDRInputGain = XInternAtom( ctx->dpy, "GAMESCOPE_SDR_INPUT_GAIN", false );
 	ctx->atoms.gamescopeHDRItmEnable = XInternAtom( ctx->dpy, "GAMESCOPE_HDR_ITM_ENABLE", false );
@@ -7451,12 +7165,12 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	ctx->atoms.gamescopeColorAppHDRMetadataFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_APP_HDR_METADATA_FEEDBACK", false );
 	ctx->atoms.gamescopeColorSliderInUse = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MANAGEMENT_CHANGING_HINT", false );
 	ctx->atoms.gamescopeColorChromaticAdaptationMode = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_CHROMATIC_ADAPTATION_MODE", false );
-	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
-	ctx->atoms.gamescopeColorMuraCorrectionImage[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
-	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
-	ctx->atoms.gamescopeColorMuraScale[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
-	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
-	ctx->atoms.gamescopeColorMuraCorrectionDisabled[DRM_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE", false );
+	ctx->atoms.gamescopeColorMuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_IMAGE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE", false );
+	ctx->atoms.gamescopeColorMuraScale[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_SCALE_EXTERNAL", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED", false );
+	ctx->atoms.gamescopeColorMuraCorrectionDisabled[gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL] = XInternAtom( ctx->dpy, "GAMESCOPE_COLOR_MURA_CORRECTION_DISABLED_EXTERNAL", false );
 
 	ctx->atoms.gamescopeCreateXWaylandServer = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER", false );
 	ctx->atoms.gamescopeCreateXWaylandServerFeedback = XInternAtom( ctx->dpy, "GAMESCOPE_CREATE_XWAYLAND_SERVER_FEEDBACK", false );
@@ -7522,29 +7236,33 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	}
 	else
 	{
-		if ( BIsNested() )
+		std::optional<gamescope::INestedHints::CursorInfo> oHostCursor = std::nullopt;
+		if ( GetBackend()->GetNestedHints() && ( oHostCursor = GetBackend()->GetNestedHints()->GetHostCursor() ) )
 		{
-			if ( !load_host_cursor( ctx->cursor.get() ) )
-			{
-				xwm_log.errorf("Failed to load host cursor. Falling back to left_ptr.");
-				if (!ctx->cursor->setCursorImageByName("left_ptr"))
-					xwm_log.errorf("Failed to load mouse cursor: left_ptr");
-			}
+			ctx->cursor->setCursorImage(
+				reinterpret_cast<char *>( oHostCursor->pPixels.data() ),
+				oHostCursor->uWidth,
+				oHostCursor->uHeight,
+				oHostCursor->uXHotspot,
+				oHostCursor->uYHotspot );
 		}
 		else
 		{
-			xwm_log.infof("Embedded, no cursor set. Using left_ptr by default.");
-			if (!ctx->cursor->setCursorImageByName("left_ptr"))
-				xwm_log.errorf("Failed to load mouse cursor: left_ptr");
+			xwm_log.infof( "Embedded, no cursor set. Using left_ptr by default." );
+			if ( !ctx->cursor->setCursorImageByName( "left_ptr" ) )
+				xwm_log.errorf( "Failed to load mouse cursor: left_ptr" );
 		}
 	}
+
+	ctx->cursor->undirty();
+	ctx->cursor->UpdateXInputMotionMasks();
 
 	XFlush(ctx->dpy);
 }
 
 void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = nullptr)
 {
-	bool capable = drm_get_vrr_capable( &g_DRM );
+	bool capable = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->SupportsVRR();
 	if ( capable != g_bVRRCapable_CachedValue || force )
 	{
 		uint32_t capable_value = capable ? 1 : 0;
@@ -7555,18 +7273,18 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 			*needs_flush = true;
 	}
 
-	bool st2084 = BIsNested() ? vulkan_supports_hdr10() : drm_supports_st2084( &g_DRM );
-	if ( st2084 != g_bSupportsST2084_CachedValue || force )
+	bool HDR = GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->SupportsHDR();
+	if ( HDR != g_bSupportsHDR_CachedValue || force )
 	{
-		uint32_t hdr_value = st2084 ? 1 : 0;
+		uint32_t hdr_value = HDR ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplaySupportsHDR, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&hdr_value, 1 );
-		g_bSupportsST2084_CachedValue = st2084;
+		g_bSupportsHDR_CachedValue = HDR;
 		if (needs_flush)
 			*needs_flush = true;
 	}
 
-	bool in_use = drm_get_vrr_in_use( &g_DRM );
+	bool in_use = GetBackend()->IsVRRActive();
 	if ( in_use != g_bVRRInUse_CachedValue || force )
 	{
 		uint32_t in_use_value = in_use ? 1 : 0;
@@ -7590,7 +7308,7 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 	// Keep this as a preference, starting with off.
 	if ( force )
 	{
-        bool wants_vrr = g_DRM.wants_vrr_enabled;
+        bool wants_vrr = g_bAllowVRR;
 		uint32_t enabled_value = wants_vrr ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
@@ -7604,7 +7322,7 @@ void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 	if (needs_flush)
 		*needs_flush = true;
 
-	if ( drm_get_screen_type(&g_DRM) == DRM_SCREEN_TYPE_INTERNAL )
+	if ( GetBackend()->GetCurrentConnector() && GetBackend()->GetCurrentConnector()->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL )
 	{
 		XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeDisplayModeListExternal);
 
@@ -7614,15 +7332,20 @@ void update_mode_atoms(xwayland_ctx_t *root_ctx, bool* needs_flush = nullptr)
 		return;
 	}
 
+	if ( !GetBackend()->GetCurrentConnector() )
+		return;
+
+	auto connectorModes = GetBackend()->GetCurrentConnector()->GetModes();
+
 	char modes[4096] = "";
 	int remaining_size = sizeof(modes) - 1;
 	int len = 0;
-	for (int i = 0; remaining_size > 0 && i < g_DRM.connector->connector->count_modes; i++)
+	for (int i = 0; remaining_size > 0 && i < (int)connectorModes.size(); i++)
 	{
-		const auto& mode = g_DRM.connector->connector->modes[i];
+		const auto& mode = connectorModes[i];
 		int mode_len = snprintf(&modes[len], remaining_size, "%s%dx%d@%d",
 			i == 0 ? "" : " ",
-			int(mode.hdisplay), int(mode.vdisplay), int(mode.vrefresh));
+			int(mode.uWidth), int(mode.uHeight), int(mode.uRefresh));
 		len += mode_len;
 		remaining_size -= mode_len;
 	}
@@ -7638,8 +7361,6 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 
 static bool g_bWasFSRActive = false;
-
-extern std::atomic<uint64_t> g_nCompletedPageFlipCount;
 
 void steamcompmgr_check_xdg(bool vblank)
 {
@@ -7667,25 +7388,22 @@ void steamcompmgr_check_xdg(bool vblank)
 
 void update_edid_prop()
 {
-	if ( !BIsNested() )
+	const char *filename = gamescope::GetPatchedEdidPath();
+	if (!filename)
+		return;
+
+	gamescope_xwayland_server_t *server = NULL;
+	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
-		const char *filename = drm_get_patched_edid_path();
-		if (!filename)
-			return;
-
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		XTextProperty text_property =
 		{
-			XTextProperty text_property =
-			{
-				.value = (unsigned char *)filename,
-				.encoding = server->ctx->atoms.utf8StringAtom,
-				.format = 8,
-				.nitems = strlen(filename),
-			};
+			.value = (unsigned char *)filename,
+			.encoding = server->ctx->atoms.utf8StringAtom,
+			.format = 8,
+			.nitems = strlen(filename),
+		};
 
-			XSetTextProperty( server->ctx->dpy, server->ctx->root, &text_property, server->ctx->atoms.gamescopeDisplayEdidPath );
-		}
+		XSetTextProperty( server->ctx->dpy, server->ctx->root, &text_property, server->ctx->atoms.gamescopeDisplayEdidPath );
 	}
 }
 
@@ -7697,7 +7415,7 @@ steamcompmgr_main(int argc, char **argv)
 	// Reset getopt() state
 	optind = 1;
 
-	bSteamCompMgrGrab = BIsNested() && g_bForceRelativeMouse;
+	bSteamCompMgrGrab = GetBackend()->GetNestedHints() && g_bForceRelativeMouse;
 
 	int o;
 	int opt_index = -1;
@@ -7748,10 +7466,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_FadeOutDuration = atoi(optarg);
 				} else if (strcmp(opt_name, "force-windows-fullscreen") == 0) {
 					bForceWindowsFullscreen = true;
-				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
-					g_nCursorScaleHeight = atoi(optarg);
 				} else if (strcmp(opt_name, "hdr-enabled") == 0) {
-					g_bHDREnabled = true;
+					cv_hdr_enabled = true;
 				} else if (strcmp(opt_name, "hdr-debug-force-support") == 0) {
 					g_bForceHDRSupportDebug = true;
  				} else if (strcmp(opt_name, "hdr-debug-force-output") == 0) {
@@ -7787,12 +7503,6 @@ steamcompmgr_main(int argc, char **argv)
 		subCommandArg = optind;
 	}
 
-	if ( pipe2( g_nudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
-	{
-		xwm_log.errorf_errno( "steamcompmgr: pipe2 failed" );
-		exit( 1 );
-	}
-
 	const char *pchEnableVkBasalt = getenv( "ENABLE_VKBASALT" );
 	if ( pchEnableVkBasalt != nullptr && pchEnableVkBasalt[0] == '1' )
 	{
@@ -7806,13 +7516,6 @@ steamcompmgr_main(int argc, char **argv)
 	currentOutputHeight = g_nPreferredOutputHeight;
 
 	init_runtime_info();
-#if HAVE_OPENVR
-	if ( BIsVRSession() )
-		vrsession_steam_mode( steamMode );
-#endif
-
-	int vblankFD = vblank_init();
-	assert( vblankFD >= 0 );
 
 	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
@@ -7846,27 +7549,18 @@ steamcompmgr_main(int argc, char **argv)
 		spawn_client( &argv[ subCommandArg ] );
 	}
 
-	// EVENT_VBLANK
-	pollfds.push_back(pollfd {
-		.fd = vblankFD,
-		.events = POLLIN,
-	});
-	// EVENT_NUDGE
-	pollfds.push_back(pollfd {
-			.fd = g_nudgePipe[ 0 ],
-			.events = POLLIN,
-	});
-	// EVENT_X11
-	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			pollfds.push_back(pollfd {
-				.fd = XConnectionNumber( server->ctx->dpy ),
-				.events = POLLIN,
-			});
+	bool vblank = false;
+	g_SteamCompMgrWaiter.AddWaitable( &GetVBlankTimer() );
+	GetVBlankTimer().ArmNextVBlank( true );
 
-			server->ctx->force_windows_fullscreen = bForceWindowsFullscreen;
+	{
+		gamescope_xwayland_server_t *pServer = NULL;
+		for (size_t i = 0; (pServer = wlserver_get_xwayland_server(i)); i++)
+		{
+			xwayland_ctx_t *pXWaylandCtx = pServer->ctx.get();
+			g_SteamCompMgrWaiter.AddWaitable( pXWaylandCtx );
+
+			pServer->ctx->force_windows_fullscreen = bForceWindowsFullscreen;
 		}
 	}
 
@@ -7874,67 +7568,38 @@ steamcompmgr_main(int argc, char **argv)
 	update_mode_atoms(root_ctx);
 	XFlush(root_ctx->dpy);
 
-	if ( !BIsNested() )
-	{
-		drm_update_patched_edid(&g_DRM);
-		update_edid_prop();
-	}
+	GetBackend()->PostInit();
+
+	update_edid_prop();
 
 	update_screenshot_color_mgmt();
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
 	// on DRM + the Vulkan side.
 	// ie. color.rgb = color.rgba * u_ctm[offsetLayerIdx];
-	s_scRGB709To2020Matrix = drm_create_ctm(&g_DRM, glm::mat3x4(glm::transpose(k_2020_from_709)));
+	s_scRGB709To2020Matrix = GetBackend()->CreateBackendBlob( glm::mat3x4( glm::transpose( k_2020_from_709 ) ) );
 
 	for (;;)
 	{
-		bool vblank = false;
+		vblank = false;
 
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 			{
-				assert(server);
-				if (x_events_queued(server->ctx.get()))
-					dispatch_x11(server->ctx.get());
+				assert(server->ctx);
+				if (server->ctx->HasQueuedEvents())
+					server->ctx->Dispatch();
 			}
 		}
 
-		if ( poll( pollfds.data(), pollfds.size(), -1 ) < 0)
+		g_SteamCompMgrWaiter.PollEvents();
+
+		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{
-			if ( errno == EAGAIN )
-				continue;
-
-			xwm_log.errorf_errno( "poll failed" );
-			break;
+			g_SteamCompMgrVBlankTime = *pendingVBlank;
+			vblank = true;
 		}
-
-		for (size_t i = EVENT_X11; i < pollfds.size(); i++)
-		{
-			if ( pollfds[ i ].revents & POLLHUP )
-			{
-				xwm_log.errorf( "Lost connection to the X11 server %zd", i - EVENT_X11 );
-				break;
-			}
-		}
-
-		assert( !( pollfds[ EVENT_VBLANK ].revents & POLLHUP ) );
-		assert( !( pollfds[ EVENT_NUDGE ].revents & POLLHUP ) );
-
-		for (size_t i = EVENT_X11; i < pollfds.size(); i++)
-		{
-			if ( pollfds[ i ].revents & POLLIN )
-			{
-				gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(i - EVENT_X11);
-				assert(server);
-				dispatch_x11( server->ctx.get() );
-			}
-		}
-		if ( pollfds[ EVENT_VBLANK ].revents & POLLIN )
-			vblank = dispatch_vblank( vblankFD );
-		if ( pollfds[ EVENT_NUDGE ].revents & POLLIN )
-			dispatch_nudge( g_nudgePipe[ 0 ] );
 
 		if ( g_bRun == false )
 		{
@@ -7967,17 +7632,14 @@ steamcompmgr_main(int argc, char **argv)
 
 		// If our DRM state is out-of-date, refresh it. This might update
 		// the output size.
-		if ( BIsNested() == false )
+		if ( GetBackend()->PollState() )
 		{
-			if ( drm_poll_state( &g_DRM ) )
-			{
-				hasRepaint = true;
+			hasRepaint = true;
 
-				update_mode_atoms(root_ctx, &flush_root);
-			}
+			update_mode_atoms(root_ctx, &flush_root);
 		}
 
-		g_bOutputHDREnabled = (g_bSupportsST2084_CachedValue || g_bForceHDR10OutputDebug) && g_bHDREnabled;
+		g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
 
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead
@@ -7996,7 +7658,8 @@ steamcompmgr_main(int argc, char **argv)
 				wlserver_unlock();
 			}
 
-			if ( BIsSDLSession() )
+			// XXX(JoshA): Remake this. It sucks.
+			if ( GetBackend()->UsesVulkanSwapchain() )
 			{
 				vulkan_remake_swapchain();
 
@@ -8005,14 +7668,6 @@ steamcompmgr_main(int argc, char **argv)
 			}
 			else
 			{
-				if ( !BIsNested() )
-				{
-					if (g_bOutputHDREnabled != currentHDROutput)
-					{
-						drm_set_hdr_state(&g_DRM, g_bOutputHDREnabled);
-					}
-				}
-
 				vulkan_remake_output_images();
 			}
 
@@ -8097,11 +7752,10 @@ steamcompmgr_main(int argc, char **argv)
 			int nRealRefresh = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
 			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefresh;
 			nTargetFPS = std::min<int>( nTargetFPS, nRealRefresh );
-			int nMultiplier = nRealRefresh / nTargetFPS;
+			int nVblankDivisor = nRealRefresh / nTargetFPS;
 
-			int nAppRefresh = nRealRefresh * nMultiplier;
 			g_SteamCompMgrAppRefreshCycle = 1'000'000'000ul / nRealRefresh;
-			g_SteamCompMgrLimitedAppRefreshCycle = 1'000'000'000ul / nAppRefresh;
+			g_SteamCompMgrLimitedAppRefreshCycle = 1'000'000'000ul / nRealRefresh * nVblankDivisor;
 		}
 
 		// Handle presentation-time stuff
@@ -8126,9 +7780,11 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( vblank )
 		{
+			wlserver_lock();
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				handle_presented_xwayland( server->ctx.get() );
+			wlserver_unlock();
 		}
 
 		//
@@ -8142,7 +7798,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		{
 			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
-			std::shared_ptr<wlserver_hdr_metadata> app_hdr_metadata = nullptr;
+			std::shared_ptr<gamescope::BackendBlob> app_hdr_metadata = nullptr;
 			if ( g_HeldCommits[HELD_COMMIT_BASE] )
 			{
 				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
@@ -8172,7 +7828,7 @@ steamcompmgr_main(int argc, char **argv)
 					std::vector<uint32_t> app_hdr_metadata_blob;
 					app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
 					memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
-					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->metadata, sizeof(hdr_metadata_infoframe));
+					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_metadata_infoframe>(), sizeof(hdr_metadata_infoframe));
 
 					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
 							(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
@@ -8208,9 +7864,14 @@ steamcompmgr_main(int argc, char **argv)
 			g_upscaleFilter = g_wantedUpscaleFilter;
 		}
 
+		// If we're in the middle of a fade, then keep us
+		// as needing a repaint.
+		if ( is_fading_out() )
+			hasRepaint = true;
+
 		static int nIgnoredOverlayRepaints = 0;
 
-		const bool bVRR = drm_get_vrr_in_use( &g_DRM );
+		const bool bVRR = GetBackend()->IsVRRActive();
 
 		// HACK: Disable tearing if we have an overlay to avoid stutters right now
 		// TODO: Fix properly.
@@ -8227,13 +7888,13 @@ steamcompmgr_main(int argc, char **argv)
 		// If we are compositing, always force sync flips because we currently wait
 		// for composition to finish before submitting.
 		// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
-		const bool bNeedsSyncFlip = bForceSyncFlip || g_bCurrentlyCompositing || nIgnoredOverlayRepaints;
-		const bool bDoAsyncFlip   = ( ((g_nAsyncFlipsEnabled >= 1) && g_bSupportsAsyncFlips && bSurfaceWantsAsync && !bHasOverlay) || bVRR ) && !bSteamOverlayOpen && !bNeedsSyncFlip;
+		const bool bNeedsSyncFlip = bForceSyncFlip || GetVBlankTimer().WasCompositing() || nIgnoredOverlayRepaints;
+		const bool bDoAsyncFlip   = ( ((g_nAsyncFlipsEnabled >= 1) && GetBackend()->SupportsTearing() && bSurfaceWantsAsync && !bHasOverlay) || bVRR ) && !bSteamOverlayOpen && !bNeedsSyncFlip;
 
 		bool bShouldPaint = false;
 		if ( bDoAsyncFlip )
 		{
-			if ( hasRepaint && !g_bCurrentlyCompositing )
+			if ( hasRepaint && !GetVBlankTimer().WasCompositing() )
 				bShouldPaint = true;
 		}
 		else
@@ -8242,16 +7903,14 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		// If we have a pending page flip and doing VRR, lets not do another...
-		if ( bVRR && g_nCompletedPageFlipCount != g_DRM.flipcount )
+		if ( bVRR && GetBackend()->PresentationFeedback().CurrentPresentsInFlight() != 0 )
 			bShouldPaint = false;
 
 		if ( !bShouldPaint && hasRepaintNonBasePlane && vblank )
 			nIgnoredOverlayRepaints++;
 
-#if HAVE_OPENVR
-		if ( BIsVRSession() && !vrsession_visible() )
+		if ( !GetBackend()->IsVisible() )
 			bShouldPaint = false;
-#endif
 
 		if ( bShouldPaint )
 		{
@@ -8260,20 +7919,24 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
+		}
 
-			// If we're in the middle of a fade, pump an event into the loop to
-			// make sure we keep pushing frames even if the app isn't updating.
-			if ( is_fading_out() )
-			{
-				nudge_steamcompmgr();
-			}
+		if ( vblank )
+		{
+			// Pre-emptively re-arm the vblank timer if it
+			// isn't already re-armed.
+			//
+			// Juuust in case pageflip handler doesn't happen
+			// so we don't stop vblanking forever.
+			GetVBlankTimer().ArmNextVBlank( true );
 		}
 
 		update_vrr_atoms(root_ctx, false, &flush_root);
 
 		if (global_focus.cursor)
 		{
-			global_focus.cursor->updatePosition();
+			global_focus.cursor->constrainPosition();
+			global_focus.cursor->checkSuspension();
 
 			if (global_focus.cursor->needs_server_flush())
 			{

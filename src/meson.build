@@ -8,18 +8,20 @@ dep_xxf86vm = dependency('xxf86vm')
 dep_xtst = dependency('xtst')
 dep_xres = dependency('xres')
 dep_xmu = dependency('xmu')
+dep_xi = dependency('xi')
 
-drm_dep = dependency('libdrm', version: '>= 2.4.113')
+drm_dep = dependency('libdrm', version: '>= 2.4.113', required: get_option('drm_backend'))
 
 wayland_server = dependency('wayland-server', version: '>=1.21')
 wayland_protos = dependency('wayland-protocols', version: '>=1.17')
 xkbcommon = dependency('xkbcommon')
 thread_dep = dependency('threads')
-cap_dep = dependency('libcap', required: false)
+cap_dep = dependency('libcap', required: get_option('rt_cap'))
 epoll_dep = dependency('epoll-shim', required: false)
 glm_dep = dependency('glm')
-sdl_dep = dependency('SDL2')
+sdl_dep = dependency('SDL2', required: get_option('sdl2_backend'))
 stb_dep = dependency('stb')
+avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_screenshots'))
 
 wlroots_dep = dependency(
   'wlroots',
@@ -34,13 +36,6 @@ displayinfo_dep = dependency(
   fallback: ['libdisplay-info', 'di_dep'],
   default_options: ['default_library=static'],
 )
-
-required_wlroots_features = ['xwayland', 'libinput_backend']
-foreach feat : required_wlroots_features
-  if wlroots_dep.get_variable('have_' + feat) != 'true'
-    error('Cannot use wlroots built without ' + feat + ' support')
-  endif
-endforeach
 
 glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
@@ -76,13 +71,6 @@ shader_src = [
 
 spirv_shaders = glsl_generator.process(shader_src)
 
-liftoff_dep = dependency(
-  'libliftoff',
-  version: ['>= 0.4.0', '< 0.5.0'],
-  fallback: ['libliftoff', 'liftoff'],
-  default_options: ['default_library=static'],
-)
-
 reshade_src = [
   'reshade/source/effect_codegen_spirv.cpp',
   'reshade/source/effect_expression.cpp',
@@ -99,21 +87,48 @@ reshade_include = include_directories([
   '../thirdparty/SPIRV-Headers/include/spirv/unified1'
 ])
 
+required_wlroots_features = ['xwayland']
+
 src = [
   'steamcompmgr.cpp',
+  'convar.cpp',
   'color_helpers.cpp',
   'main.cpp',
+  'edid.cpp',
+  'headless.cpp',
   'wlserver.cpp',
-  'drm.cpp',
-  'modegen.cpp',
-  'sdlwindow.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
   'log.cpp',
   'ime.cpp',
   'mangoapp.cpp',
   'reshade_effect_manager.cpp',
+  'backend.cpp',
 ]
+
+gamescope_cpp_args = []
+if drm_dep.found()
+  src += 'drm.cpp'
+  src += 'modegen.cpp'
+  required_wlroots_features += 'libinput_backend'
+  liftoff_dep = dependency(
+    'libliftoff',
+    version: ['>= 0.4.0', '< 0.5.0'],
+    fallback: ['libliftoff', 'liftoff'],
+    default_options: ['default_library=static'],
+  )
+else
+  liftoff_dep = dependency('', required: false)
+endif
+
+if sdl_dep.found()
+  src += 'sdlwindow.cpp'
+endif
+
+gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(avif_dep.found().to_int())
 
 src += spirv_shaders
 src += protocols_server_src
@@ -126,6 +141,12 @@ if openvr_dep.found()
   src += 'vr_session.cpp'
 endif
 
+foreach feat : required_wlroots_features
+  if wlroots_dep.get_variable('have_' + feat) != 'true'
+    error('Cannot use wlroots built without ' + feat + ' support')
+  endif
+endforeach
+
   executable(
     'gamescope',
     src, reshade_src,
@@ -135,9 +156,10 @@ endif
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor,
+      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi
     ],
     install: true,
+    cpp_args: gamescope_cpp_args,
   )
 
 
