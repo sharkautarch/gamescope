@@ -553,9 +553,10 @@ bool g_bForceDisableColorMgmt = false;
 // For now...
 int g_argc;
 char **g_argv;
-
+uint64_t g_startTime = 0;
 int main(int argc, char **argv)
 {
+	g_startTime = get_time_in_nanos();
 	g_argc = argc;
 	g_argv = argv;
 
@@ -721,44 +722,58 @@ int main(int argc, char **argv)
 		fprintf( stderr, "No CAP_SYS_NICE, falling back to regular-priority compute and threads.\nPerformance will be affected.\n" );
 	}
 #endif
+#define STRINGIFY_IMPL(in) #in
+#define STRINGIFY(in) (STRINGIFY_IMPL(in))
+#define ELAPSED_IMPL_IMPL(b) b
+#define ELAPSED_IMPL(a, b, c) printf(STRINGIFY(a (line ELAPSED_IMPL_IMPL(b)): %.2fms\n), c)
+#define ELAPSED(...) ELAPSED_IMPL(elapsed time, __LINE__, (get_time_in_nanos()-g_startTime)/1'000'000.0);
 
+	ELAPSED();
+	
 	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
 
 	if ( g_nCursorScaleHeight > 0 )
 	{
 		setenv( "XCURSOR_SIZE", "256", 1 );
 	}
-
+	ELAPSED();
 #if 0
 	while( !IsInDebugSession() )
 	{
 		usleep( 100 );
 	}
 #endif
-
+	ELAPSED();
 	raise_fd_limit();
-
+	ELAPSED();
+	
 	if ( gpuvis_trace_init() != -1 )
 	{
 		fprintf( stderr, "Tracing is enabled\n");
 	}
+	ELAPSED();
 
 	XInitThreads();
+	ELAPSED();
 	g_mainThread = pthread_self();
+	ELAPSED();
 
 	g_pOriginalDisplay = getenv("DISPLAY");
 	g_pOriginalWaylandDisplay = getenv("WAYLAND_DISPLAY");
+	ELAPSED();
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
+		ELAPSED();
 		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
 			eCurrentBackend = gamescope::GamescopeBackend::SDL;
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
 	}
-
+	ELAPSED();
 	if ( g_pOriginalWaylandDisplay != NULL )
 	{
+	ELAPSED();
         if (CheckWaylandPresentationTime())
         {
             // Default to SDL_VIDEODRIVER wayland under Wayland and force enable vk_khr_present_wait
@@ -775,7 +790,7 @@ int main(int argc, char **argv)
             setenv("SDL_VIDEODRIVER", "x11", 1);
         }
 	}
-
+	ELAPSED();
 	switch ( eCurrentBackend )
 	{
 #if HAVE_DRM
@@ -799,26 +814,33 @@ int main(int argc, char **argv)
 		default:
 			abort();
 	}
-
+	ELAPSED();
 	if ( !GetBackend() )
 	{
+		ELAPSED();
 		fprintf( stderr, "Failed to create backend.\n" );
 		return 1;
 	}
-
+	ELAPSED();
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
-
+	ELAPSED();
+	uint64_t before_formats_init = get_time_in_nanos();
 	if ( !vulkan_init_formats() )
 	{
 		fprintf( stderr, "vulkan_init_formats failed\n" );
 		return 1;
 	}
+	printf("vulkan_init_formats() duration: %.2fms\n", (get_time_in_nanos()-before_formats_init)/1'000'000.0);
 
+	uint64_t before_output_init = get_time_in_nanos();
 	if ( !vulkan_make_output() )
 	{
 		fprintf( stderr, "vulkan_make_output failed\n" );
 		return 1;
 	}
+	
+	printf("vulkan_make_output() duration: %.2fms\n", (get_time_in_nanos()-before_output_init)/1'000'000.0);
+	ELAPSED();
 
 	// Prevent our clients from connecting to the parent compositor
 	unsetenv("WAYLAND_DISPLAY");
@@ -854,12 +876,15 @@ int main(int argc, char **argv)
 	if ( g_nNestedWidth == 0 )
 		g_nNestedWidth = g_nNestedHeight * 16 / 9;
 
+	uint64_t before_wlserver_init = get_time_in_nanos();
 	if ( !wlserver_init() )
 	{
 		fprintf( stderr, "Failed to initialize wlserver\n" );
 		return 1;
 	}
-
+	printf("wlserver_init() duration: %.2fms\n", (get_time_in_nanos()-before_wlserver_init)/1'000'000.0);
+	ELAPSED();
+	
 	gamescope_xwayland_server_t *base_server = wlserver_get_xwayland_server(0);
 
 	setenv("DISPLAY", base_server->get_nested_display_name(), 1);
@@ -882,19 +907,23 @@ int main(int argc, char **argv)
 	{
 		setenv("STEAM_GAME_DISPLAY_0", base_server->get_nested_display_name(), 1);
 	}
+	
+	ELAPSED();
 	setenv("GAMESCOPE_WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 	if ( g_bExposeWayland )
 		setenv("WAYLAND_DISPLAY", wlserver_get_wl_display_name(), 1);
 
+	ELAPSED();
+	
 #if HAVE_PIPEWIRE
 	if ( !init_pipewire() )
 	{
 		fprintf( stderr, "Warning: failed to setup PipeWire, screen capture won't be available\n" );
 	}
 #endif
-
+	ELAPSED();
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
-
+	ELAPSED();
 	handle_signal_action.sa_handler = handle_signal;
 	sigaction(SIGHUP, &handle_signal_action, nullptr);
 	sigaction(SIGINT, &handle_signal_action, nullptr);
@@ -902,10 +931,11 @@ int main(int argc, char **argv)
 	sigaction(SIGTERM, &handle_signal_action, nullptr);
 	sigaction(SIGUSR1, &handle_signal_action, nullptr);
 	sigaction(SIGUSR2, &handle_signal_action, nullptr);
-
+	ELAPSED();
 	wlserver_run();
-
+	ELAPSED();
 	steamCompMgrThread.join();
+	ELAPSED();
 }
 
 static void steamCompMgrThreadRun(int argc, char **argv)

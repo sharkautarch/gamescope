@@ -313,6 +313,7 @@ extern bool env_to_bool(const char *env);
 
 bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 {
+	uint64_t start = get_time_in_nanos();
 	uint32_t deviceCount = 0;
 	vk.EnumeratePhysicalDevices(instance(), &deviceCount, nullptr);
 	std::vector<VkPhysicalDevice> physDevs(deviceCount);
@@ -387,7 +388,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 			}
 		}
 	}
-
+	vk_log.infof("selectPhysDev() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 	if (!m_physDev)
 	{
 		vk_log.errorf("failed to find physical device");
@@ -403,6 +404,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 
 bool CVulkanDevice::createDevice()
 {
+	uint64_t start = get_time_in_nanos();
 	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
 
 	uint32_t supportedExtensionCount;
@@ -435,8 +437,10 @@ bool CVulkanDevice::createDevice()
 
 	vk_log.infof( "physical device %s DRM format modifiers", m_bSupportsModifiers ? "supports" : "does not support" );
 
-	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) )
+	if ( !GetBackend()->ValidPhysicalDevice( physDev() ) ) {
+		vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		return false;
+	}
 
 #if HAVE_DRM
 	// XXX(JoshA): Move this to ValidPhysicalDevice.
@@ -453,10 +457,12 @@ bool CVulkanDevice::createDevice()
 		vk.GetPhysicalDeviceProperties2( physDev(), &props2 );
 
 		if ( !GetBackend()->UsesVulkanSwapchain() && !drmProps.hasPrimary ) {
+			vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 			vk_log.errorf( "physical device has no primary node" );
 			return false;
 		}
 		if ( !drmProps.hasRender ) {
+			vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 			vk_log.errorf( "physical device has no render node" );
 			return false;
 		}
@@ -464,6 +470,7 @@ bool CVulkanDevice::createDevice()
 		dev_t renderDevId = makedev( drmProps.renderMajor, drmProps.renderMinor );
 		drmDevice *drmDev = nullptr;
 		if (drmGetDeviceFromDevId(renderDevId, 0, &drmDev) != 0) {
+			vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 			vk_log.errorf( "drmGetDeviceFromDevId() failed" );
 			return false;
 		}
@@ -473,6 +480,7 @@ bool CVulkanDevice::createDevice()
 		m_drmRendererFd = open( drmRenderName, O_RDWR | O_CLOEXEC );
 		drmFreeDevice(&drmDev);
 		if ( m_drmRendererFd < 0 ) {
+			vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 			vk_log.errorf_errno( "failed to open DRM render node" );
 			return false;
 		}
@@ -485,6 +493,7 @@ bool CVulkanDevice::createDevice()
 	else
 #endif
 	{
+		vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_log.errorf( "physical device doesn't support VK_EXT_physical_device_drm" );
 		return false;
 	}
@@ -648,6 +657,7 @@ bool CVulkanDevice::createDevice()
 
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateDevice failed" );
 		return false;
 	}
@@ -662,6 +672,7 @@ bool CVulkanDevice::createDevice()
 	else
 		vk.GetDeviceQueue(device(), m_generalQueueFamily, 0, &m_generalQueue);
 
+	vk_log.infof("createDevice() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 	return true;
 }
 
@@ -703,6 +714,7 @@ static VkSamplerYcbcrRange colorspaceToYCBCRRange( EStreamColorspace colorspace 
 
 bool CVulkanDevice::createLayouts()
 {
+	uint64_t start = get_time_in_nanos();
 	VkFormatProperties nv12Properties;
 	vk.GetPhysicalDeviceFormatProperties(physDev(), VK_FORMAT_G8_B8R8_2PLANE_420_UNORM, &nv12Properties);
 	bool cosited = nv12Properties.optimalTilingFeatures & VK_FORMAT_FEATURE_COSITED_CHROMA_SAMPLES_BIT;
@@ -800,6 +812,7 @@ bool CVulkanDevice::createLayouts()
 	VkResult res = vk.CreateDescriptorSetLayout(device(), &descriptorSetLayoutCreateInfo, 0, &m_descriptorSetLayout);
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createLayouts() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateDescriptorSetLayout failed" );
 		return false;
 	}
@@ -813,15 +826,18 @@ bool CVulkanDevice::createLayouts()
 	res = vk.CreatePipelineLayout(device(), &pipelineLayoutCreateInfo, nullptr, &m_pipelineLayout);
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createLayouts() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreatePipelineLayout failed" );
 		return false;
 	}
 
+	vk_log.infof("createLayouts() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 	return true;
 }
 
 bool CVulkanDevice::createPools()
 {
+	uint64_t start = get_time_in_nanos();
 	VkCommandPoolCreateInfo commandPoolCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
 		.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
@@ -831,6 +847,7 @@ bool CVulkanDevice::createPools()
 	VkResult res = vk.CreateCommandPool(device(), &commandPoolCreateInfo, nullptr, &m_commandPool);
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createPools() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateCommandPool failed" );
 		return false;
 	}
@@ -844,6 +861,7 @@ bool CVulkanDevice::createPools()
 	res = vk.CreateCommandPool(device(), &generalCommandPoolCreateInfo, nullptr, &m_generalCommandPool);
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createPools() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateCommandPool failed" );
 		return false;
 	}
@@ -873,15 +891,17 @@ bool CVulkanDevice::createPools()
 	res = vk.CreateDescriptorPool(device(), &descriptorPoolCreateInfo, nullptr, &m_descriptorPool);
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createPools() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateDescriptorPool failed" );
 		return false;
 	}
-
+	vk_log.infof("createPools() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 	return true;
 }
 
 bool CVulkanDevice::createShaders()
 {
+	uint64_t start = get_time_in_nanos();
 	struct ShaderInfo_t
 	{
 		const uint32_t* spirv;
@@ -919,16 +939,20 @@ bool CVulkanDevice::createShaders()
 		VkResult res = vk.CreateShaderModule(device(), &shaderCreateInfo, nullptr, &m_shaderModules[i]);
 		if ( res != VK_SUCCESS )
 		{
+			vk_log.infof("createShaders() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 			vk_errorf( res, "vkCreateShaderModule failed" );
 			return false;
 		}
 	}
+	
+	vk_log.infof("createShaders() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 
 	return true;
 }
 
 bool CVulkanDevice::createScratchResources()
 {
+	uint64_t start = get_time_in_nanos();
 	std::vector<VkDescriptorSetLayout> descriptorSetLayouts(m_descriptorSets.size(), m_descriptorSetLayout);
 	
 	VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {
@@ -941,6 +965,7 @@ bool CVulkanDevice::createScratchResources()
 	VkResult res = vk.AllocateDescriptorSets(device(), &descriptorSetAllocateInfo, m_descriptorSets.data());
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createScratchResources() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_log.errorf( "vkAllocateDescriptorSets failed" );
 		return false;
 	}
@@ -956,6 +981,7 @@ bool CVulkanDevice::createScratchResources()
 	res = vk.CreateBuffer( device(), &bufferCreateInfo, nullptr, &m_uploadBuffer );
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createScratchResources() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkCreateBuffer failed" );
 		return false;
 	}
@@ -966,6 +992,7 @@ bool CVulkanDevice::createScratchResources()
 	uint32_t memTypeIndex =  findMemoryType(VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT|VK_MEMORY_PROPERTY_HOST_COHERENT_BIT|VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, memRequirements.memoryTypeBits );
 	if ( memTypeIndex == ~0u )
 	{
+		vk_log.infof("createScratchResources() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_log.errorf( "findMemoryType failed" );
 		return false;
 	}
@@ -983,6 +1010,7 @@ bool CVulkanDevice::createScratchResources()
 	res = vk.MapMemory( device(), m_uploadBufferMemory, 0, VK_WHOLE_SIZE, 0, (void**)&m_uploadBufferData );
 	if ( res != VK_SUCCESS )
 	{
+		vk_log.infof("createScratchResources() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 		vk_errorf( res, "vkMapMemory failed" );
 		return false;
 	}
@@ -998,6 +1026,7 @@ bool CVulkanDevice::createScratchResources()
 	};
 
 	res = vk.CreateSemaphore( device(), &semCreateInfo, NULL, &m_scratchTimelineSemaphore );
+	vk_log.infof("createScratchResources() duration: %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
 	if ( res != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateSemaphore failed" );
@@ -1125,7 +1154,7 @@ VkPipeline CVulkanDevice::compilePipeline(uint32_t layerCount, uint32_t ycbcrMas
 void CVulkanDevice::compileAllPipelines()
 {
 	pthread_setname_np( pthread_self(), "gamescope-shdr" );
-
+	uint64_t compile_start_time = get_time_in_nanos();
 	std::array<PipelineInfo_t, SHADER_TYPE_COUNT> pipelineInfos;
 #define SHADER(type, layer_count, max_ycbcr, blur_layers) pipelineInfos[SHADER_TYPE_##type] = {SHADER_TYPE_##type, layer_count, max_ycbcr, blur_layers}
 	SHADER(BLIT, k_nMaxLayers, k_nMaxYcbcrMask_ToPreCompile, 1);
@@ -1159,6 +1188,8 @@ void CVulkanDevice::compileAllPipelines()
 			}
 		}
 	}
+	vk_log.infof("compile time: %.2fms\n", (get_time_in_nanos()-compile_start_time)/1'000'000.0);
+	
 }
 
 extern bool g_bSteamIsActiveWindow;
@@ -3655,6 +3686,13 @@ extern uint32_t g_reshade_technique_idx;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
 {
+	static bool first_run = true;
+	
+	if (first_run) {
+		first_run=false;
+		vk_log.infof("Startup time: %.2fms\n", (get_time_in_nanos()-g_startTime)/1'000'000.0);
+	}
+	
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.

@@ -557,13 +557,15 @@ namespace gamescope
 
 		m_uUserEventIdBase = SDL_RegisterEvents( GAMESCOPE_SDL_EVENT_COUNT );
 
+		uint64_t SDL_Init_start = get_time_in_nanos();
 		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 		{
 			m_eSDLInit = SDLInitState::SDLInit_Failure;
 			m_eSDLInit.notify_all();
 			return;
 		}
-
+		printf("SDL_Init() duration: %.2fms\n", (get_time_in_nanos()-SDL_Init_start)/1'000'000.0);
+		uint64_t SDL_Vulkan_LoadLibrary_start = get_time_in_nanos();
 		if ( SDL_Vulkan_LoadLibrary( nullptr ) != 0 )
 		{
 			fprintf(stderr, "SDL_Vulkan_LoadLibrary failed: %s\n", SDL_GetError());
@@ -571,26 +573,32 @@ namespace gamescope
 			m_eSDLInit.notify_all();
 			return;
 		}
+		printf("SDL_Vulkan_LoadLibrary() duration: %.2fms\n", (get_time_in_nanos()-SDL_Vulkan_LoadLibrary_start)/1'000'000.0);
 
 		unsigned int uExtCount = 0;
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &uExtCount, nullptr );
 		m_pszInstanceExtensions.resize( uExtCount );
 		SDL_Vulkan_GetInstanceExtensions( nullptr, &uExtCount, m_pszInstanceExtensions.data() );
 
+		uint64_t m_Connector_init_start = get_time_in_nanos();
 		if ( !m_Connector.Init() )
 		{
 			m_eSDLInit = SDLInitState::SDLInit_Failure;
 			m_eSDLInit.notify_all();
 			return;
 		}
+		printf("m_Connector.Init() duration: %.2fms\n", (get_time_in_nanos()-m_Connector_init_start)/1'000'000.0);
 
+		uint64_t vulkan_init_start = get_time_in_nanos();
 		if ( !vulkan_init( vulkan_get_instance(), m_Connector.GetVulkanSurface() ) )
 		{
 			m_eSDLInit = SDLInitState::SDLInit_Failure;
 			m_eSDLInit.notify_all();
 			return;
 		}
+		printf("vulkan_init() duration: %.2fms\n", (get_time_in_nanos()-vulkan_init_start)/1'000'000.0);
 
+		uint64_t wlsession_init_start = get_time_in_nanos();
 		if ( !wlsession_init() )
 		{
 			fprintf( stderr, "Failed to initialize Wayland session\n" );
@@ -598,7 +606,9 @@ namespace gamescope
 			m_eSDLInit.notify_all();
 			return;
 		}
+		printf("wlsession_init() duration: %.2fms\n", (get_time_in_nanos()-wlsession_init_start)/1'000'000.0);
 
+		uint64_t remainder_time_start = get_time_in_nanos();
 		// Update g_nOutputWidthPts.
 		{
 			int width, height;
@@ -623,6 +633,7 @@ namespace gamescope
 
 		g_nOldNestedRefresh = g_nNestedRefresh;
 
+		printf("remainder SDL init time duration: %.2fms\n", (get_time_in_nanos()-remainder_time_start)/1'000'000.0);
 		m_eSDLInit = SDLInitState::SDLInit_Success;
 		m_eSDLInit.notify_all();
 
