@@ -170,7 +170,7 @@ namespace gamescope
 			return false;
 		}
 
-		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) override
+		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override
 		{
 			return std::make_shared<BackendBlob>( data );
 		}

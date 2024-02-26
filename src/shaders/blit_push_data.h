@@ -8,8 +8,7 @@ uniform layers_t {
     uint u_frameId;
     uint u_blur_radius;
 
-    uint8_t u_shaderFilter[VKR_MAX_LAYERS];
-    uint8_t u_padding[2];
+    uint u_shaderFilter;
 
     // hdr
     float u_linearToNits; // sdr -> hdr
@@ -17,3 +16,4 @@ uniform layers_t {
     float u_itmSdrNits;
     float u_itmTargetNits;
 };
+

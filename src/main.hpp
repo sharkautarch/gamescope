@@ -37,7 +37,7 @@ enum class GamescopeUpscaleFilter : uint32_t
     NIS,
     PIXEL,
 
-    FROM_VIEW = 255, // internal
+    FROM_VIEW = 0xF, // internal
 };
 
 enum class GamescopeUpscaleScaler : uint32_t

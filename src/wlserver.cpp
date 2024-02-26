@@ -881,6 +881,16 @@ static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *cl
 	steamcompmgr_set_app_refresh_cycle_override( display_type, fps );
 }
 
+static void gamescope_control_take_screenshot( struct wl_client *client, struct wl_resource *resource, const char *path, uint32_t type, uint32_t flags )
+{
+	gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+	{
+		.szScreenshotPath = path,
+		.eScreenshotType  = (gamescope_control_screenshot_type)type,
+		.uScreenshotFlags = flags,
+	} );
+}
+
 static void gamescope_control_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
 	wl_resource_destroy( resource );
@@ -889,6 +899,7 @@ static void gamescope_control_handle_destroy( struct wl_client *client, struct w
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
+	.take_screenshot = gamescope_control_take_screenshot,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -959,7 +970,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 2;
+	uint32_t version = 3;
 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
 }
 

@@ -647,6 +647,8 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
 // input is from 0->1
 // TODO: use tone-mapping for white, black, contrast ratio
 
+bool g_bUseSourceEOTFForShaper = false;
+
 template <typename T>
 inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
 {
@@ -658,8 +660,10 @@ inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping
     T flLinear = flGain * calcEOTFToLinear( input, source, tonemapping );
     flLinear = tonemapping.apply( flLinear );
 
-    return calcLinearToEOTF( flLinear, dest, tonemapping );
+    return calcLinearToEOTF( flLinear, g_bUseSourceEOTFForShaper ? source : dest, tonemapping );
 }
+
+bool g_bHuePreservationWhenClipping = false;
 
 void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	lut3d_t * pLut3d, int nLutEdgeSize3d,
@@ -777,6 +781,18 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 
                     // Apply tonemapping
                     destColorLinear = tonemapping.apply( destColorLinear );
+
+                    // Hue preservation
+                    if ( g_bHuePreservationWhenClipping )
+                    {
+                        float flMax = std::max( std::max( destColorLinear.r, destColorLinear.g ), destColorLinear.b );
+                        // TODO: Don't use g22_luminance here or in tonemapping, use whatever maxContentLightLevel is for the connector.
+                        if ( flMax > tonemapping.g22_luminance + 1.0f )
+                        {
+                            destColorLinear /= flMax;
+                            destColorLinear *= tonemapping.g22_luminance;
+                        }
+                    }
 
                     // Apply dest EOTF
                     glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, destEOTF, tonemapping );

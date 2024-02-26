@@ -142,13 +142,13 @@ namespace gamescope
         virtual void DirtyState( bool bForce = false, bool bForceModeset = false ) = 0;
         virtual bool PollState() = 0;
 
-        virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) = 0;
+        virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) = 0;
         template <typename T>
         std::shared_ptr<BackendBlob> CreateBackendBlob( const T& thing )
         {
             const uint8_t *pBegin = reinterpret_cast<const uint8_t *>( &thing );
             const uint8_t *pEnd = pBegin + sizeof( T );
-            return CreateBackendBlob( std::span<const uint8_t>( pBegin, pEnd ) );
+            return CreateBackendBlob( typeid( T ), std::span<const uint8_t>( pBegin, pEnd ) );
         }
 
         // For DRM, this is

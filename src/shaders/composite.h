@@ -1,5 +1,7 @@
 #include "colorimetry.h"
 
+#include "shaderfilter.h"
+
 vec4 sampleRegular(sampler2D tex, vec2 coord, uint colorspace) {
     vec4 color = textureLod(tex, coord, 0);
     color.rgb = colorspace_plane_degamma_tf(color.rgb, colorspace);
@@ -162,12 +164,12 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
 
     uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
     vec4 color;
-    if (u_shaderFilter[offsetLayerIdx] == filter_pixel) {
+    if (get_layer_shaderfilter(offsetLayerIdx) == filter_pixel) {
         vec2 output_res = texSize / u_scale[offsetLayerIdx];
         vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
         color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : vec2(1.0f) / texSize, extent, colorspace, unnormalized);
     }
-    else if (u_shaderFilter[offsetLayerIdx] == filter_linear_emulated) {
+    else if (get_layer_shaderfilter(offsetLayerIdx) == filter_linear_emulated) {
         color = sampleBilinear(layerSampler, coord, colorspace, unnormalized);
     }
     else {

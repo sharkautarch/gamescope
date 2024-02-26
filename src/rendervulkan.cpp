@@ -3361,8 +3361,7 @@ struct BlitPushData_t
 	uint32_t frameId;
 	uint32_t blurRadius;
 
-	uint8_t u_shaderFilter[k_nMaxLayers];
-    uint8_t u_padding[2];
+	uint32_t u_shaderFilter;
 
     float u_linearToNits; // unset
     float u_nitsToLinear; // unset
@@ -3371,15 +3370,17 @@ struct BlitPushData_t
 
 	explicit BlitPushData_t(const struct FrameInfo_t *frameInfo)
 	{
+		u_shaderFilter = 0;
+
 		for (int i = 0; i < frameInfo->layerCount; i++) {
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
             if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
-                u_shaderFilter[i] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+                u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter[i] = (uint32_t)layer->filter;
+                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
 
 			if (layer->ctm)
 			{
@@ -3410,7 +3411,7 @@ struct BlitPushData_t
 		scale[0] = { blit_scale, blit_scale };
 		offset[0] = { 0.5f, 0.5f };
 		opacity[0] = 1.0f;
-        u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::LINEAR;
+        u_shaderFilter = (uint32_t)GamescopeUpscaleFilter::LINEAR;
 		ctm[0] = glm::mat3x4
 		{
 			1, 0, 0, 0,
@@ -3489,8 +3490,7 @@ struct RcasPushData_t
 	uint32_t u_frameId;
 	uint32_t u_c1;
 
-	uint8_t u_shaderFilter[k_nMaxLayers];
-    uint8_t u_padding[2];
+	uint32_t u_shaderFilter;
 
     float u_linearToNits; // unset
     float u_nitsToLinear; // unset
@@ -3506,15 +3506,16 @@ struct RcasPushData_t
 		u_borderMask = frameInfo->borderMask() >> 1u;
 		u_frameId = s_frameId++;
 		u_c1 = tmp.x;
+		u_shaderFilter = 0;
 
 		for (int i = 0; i < frameInfo->layerCount; i++)
 		{
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
-                u_shaderFilter[i] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
+            if (i == 0 || layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+                u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
-                u_shaderFilter[i] = (uint32_t)layer->filter;
+                u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);
 
 			if (layer->ctm)
 			{
@@ -3532,7 +3533,6 @@ struct RcasPushData_t
 
 			u_opacity[i] = frameInfo->layers[i].opacity;
 		}
-		u_shaderFilter[0] = (uint32_t)GamescopeUpscaleFilter::FROM_VIEW;
 
 		u_linearToNits = g_flInternalDisplayBrightnessNits;
 		u_nitsToLinear = 1.0f / g_flInternalDisplayBrightnessNits;

@@ -352,6 +352,9 @@ update_color_mgmt()
 		&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
 		&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
 
+	g_ColorMgmt.pending.flInternalDisplayBrightness =
+		GetBackend()->GetCurrentConnector()->GetHDRInfo().uMaxContentLightLevel;
+
 #ifdef COLOR_MGMT_MICROBENCH
 	struct timespec t0, t1;
 #else
@@ -1921,9 +1924,9 @@ bool MouseCursor::getTexture()
 		}
 	}
 
-	for (int i = 0; i < image->height; i++)
+	for (uint32_t i = 0; i < surfaceHeight; i++)
 	{
-		for (int j = 0; j < image->width; j++)
+		for (uint32_t j = 0; j < surfaceWidth; j++)
 		{
 			if ( cursorBuffer[i * surfaceWidth + j] & 0xff000000 )
 			{

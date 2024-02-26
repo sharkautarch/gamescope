@@ -27,6 +27,9 @@ extern bool steamMode;
 extern int g_argc;
 extern char **g_argv;
 
+extern int g_nPreferredOutputWidth;
+extern int g_nPreferredOutputHeight;
+
 static LogScope openvr_log("openvr");
 
 static bool GetVulkanInstanceExtensionsRequired( std::vector< std::string > &outInstanceExtensionList );
@@ -234,6 +237,35 @@ namespace gamescope
 
 		virtual bool Init() override
 		{
+            // Setup nested stuff.
+
+			g_nOutputWidth = g_nPreferredOutputWidth;
+			g_nOutputHeight = g_nPreferredOutputHeight;
+
+			if ( g_nOutputHeight == 0 )
+			{
+				if ( g_nOutputWidth != 0 )
+				{
+					fprintf( stderr, "Cannot specify -W without -H\n" );
+					return false;
+				}
+				g_nOutputHeight = 720;
+			}
+			if ( g_nOutputWidth == 0 )
+				g_nOutputWidth = g_nOutputHeight * 16 / 9;
+
+			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
+			{
+				return false;
+			}
+
+			if ( !wlsession_init() )
+			{
+				fprintf( stderr, "Failed to initialize Wayland session\n" );
+				return false;
+			}
+
+            //
             vr::EVRInitError error = vr::VRInitError_None;
             VR_Init(&error, vr::VRApplication_Background);
 
@@ -434,7 +466,7 @@ namespace gamescope
 			return false;
 		}
 
-		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) override
+		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override
 		{
 			return std::make_shared<BackendBlob>( data );
 		}
