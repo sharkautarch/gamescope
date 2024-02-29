@@ -604,6 +604,7 @@ bool set_color_3dlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
@@ -631,6 +632,7 @@ bool set_color_shaperlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
@@ -7831,7 +7833,7 @@ steamcompmgr_main(int argc, char **argv)
 					std::vector<uint32_t> app_hdr_metadata_blob;
 					app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
 					memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
-					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_metadata_infoframe>(), sizeof(hdr_metadata_infoframe));
+					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_output_metadata>().hdmi_metadata_type1, sizeof(hdr_metadata_infoframe));
 
 					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
 							(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
