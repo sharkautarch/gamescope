@@ -1314,7 +1314,12 @@ void CVulkanCmdBuffer::begin()
 
 void CVulkanCmdBuffer::end()
 {
-	insertBarrier(true);
+	const barrier_info_t barrier_info = {
+		.task_type = pipeline_task::end
+	};
+
+	insertBarrier(&barrier_info);
+	
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
@@ -1385,7 +1390,7 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
 {
 	for (auto src : m_boundTextures)
 	{
@@ -1394,7 +1399,16 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	}
 	assert(m_target != nullptr);
 	prepareDestImage(m_target);
-	insertBarrier();
+
+	const barrier_info_t barrier_info = {
+		.task_type = pipeline_task::shader,
+		.shader_sync_info = {
+			.curr_sync_point = curr_dispatch_no,
+			.total_sync_points = total_dispatches
+		}
+	};
+
+	insertBarrier(&barrier_info);
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 	
@@ -1552,7 +1566,12 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 	m_textureRefs.emplace(dst.get(), dst);
 	prepareSrcImage(src.get());
 	prepareDestImage(dst.get());
-	insertBarrier();
+	
+	const barrier_info_t barrier_info = {
+		.task_type = pipeline_task::copy,
+	};
+
+	insertBarrier(&barrier_info);
 
 	VkImageCopy region = {
 		.srcSubresource = {
@@ -1579,7 +1598,13 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 {
 	m_textureRefs.emplace(dst.get(), dst);
 	prepareDestImage(dst.get());
-	insertBarrier();
+	
+	const barrier_info_t barrier_info = {
+		.task_type = pipeline_task::copy,
+	};
+
+	insertBarrier(&barrier_info);
+
 	VkBufferImageCopy region = {
 		.bufferOffset = offset,
 		.bufferRowLength = stride,
@@ -1638,7 +1663,7 @@ void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
 	result->second.dirty = true;
 }
 
-void CVulkanCmdBuffer::insertBarrier(bool flush)
+void CVulkanCmdBuffer::insertBarrier(const barrier_info_t * const barrier_info)
 {
 	std::vector<VkImageMemoryBarrier> barriers;
 
@@ -1650,6 +1675,89 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		.levelCount = 1,
 		.layerCount = 1
 	};
+
+	
+	VkFlags srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0;
+	VkAccessFlags src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
+
+	VkFlags dstStageMask = 0;
+	VkAccessFlags dst_write_bits = 0;
+	VkAccessFlags dst_read_bits = 0;
+
+	bool flush = false;
+	assert( barrier_info != nullptr);
+	
+	switch (barrier_info->task_type) {
+		case (pipeline_task::reshade): {
+			if (barrier_info->reshade_target == reshade_target::init) {
+				srcStageMask = dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+				dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+				dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+			} else {
+				dstStageMask |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				dst_read_bits |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+			}
+			break;
+		}
+		case (pipeline_task::shader): {
+
+			const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
+			//const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
+			const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
+
+#ifdef DEBUG_BARRIER
+			printf("\n pipeline_task::shader\n");
+			printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
+#endif
+
+			src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
+ 
+			dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
+			/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
+			 * shader sampler read, when multipleShaders == true && isLast == true
+			 */
+
+			dst_write_bits = VK_ACCESS_SHADER_WRITE_BIT;
+
+			srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+
+			dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+			break;
+
+		} case (pipeline_task::copy): {
+#ifdef DEBUG_BARRIER
+			printf("\n pipeline_task::copy\n");
+#endif
+
+			dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+			dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+			dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			break;
+
+		} case (pipeline_task::end): {
+			flush = true;
+
+#ifdef DEBUG_BARRIER
+			printf("\n pipeline_task::end\n");
+#endif
+			dst_read_bits = dst_write_bits = 0;
+			srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+			break;
+		}
+		default:
+		{
+			__builtin_unreachable();
+			break;
+		}
+	}
+	
+	if (srcStageMask == 0)
+		srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+	if (dstStageMask == 0)
+		dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
 
 	for (auto& pair : m_textureState)
 	{
@@ -1663,24 +1771,39 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
 			continue;
 
-		const VkAccessFlags write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-		const VkAccessFlags read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
 
 		if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
 			image->queueFamily = m_queueFamily;
-
+			
+		const VkAccessFlags src_read_bits = 0u; //*_READ on .srcAccessMask for CmdPipelineBarrier is always the same as a no-op
+							//https://github.com/KhronosGroup/Vulkan-Docs/issues/131 
 		VkImageMemoryBarrier memoryBarrier =
 		{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = state.dirty ? write_bits : 0u,
-			.dstAccessMask = flush ? 0u : read_bits | write_bits,
-			.oldLayout = (state.discarded || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.srcAccessMask = ( state.dirty ? (src_write_bits | src_read_bits) : 0u)
+					| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
+
+			.dstAccessMask = dst_read_bits | dst_write_bits,
+			.oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 			.newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
 			.image = image->vkImage(),
 			.subresourceRange = subResRange
 		};
+
+/*#ifdef DEBUG_BARRIER
+		char buf[256] = ".oldLayout = ";
+		strcat(buf, string_VkImageLayout(memoryBarrier.oldLayout));
+		const char * next = "\n.newLayout = ";
+		strcat(buf, next);
+		strcat(buf, string_VkImageLayout(memoryBarrier.newLayout));
+		const char * next2 = "\n";
+		strcat(buf, next2);
+		printf(buf);
+#endif*/
+
+
 
 		barriers.push_back(memoryBarrier);
 
@@ -1690,8 +1813,11 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 	}
 
 	// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+	// ^ Done ^_^
+	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, srcStageMask, dstStageMask,
 									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+
+	m_previousCopy = (barrier_info->task_type == pipeline_task::copy);
 }
 
 CVulkanDevice g_device;
@@ -3664,6 +3790,18 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
+
+
+	unsigned int total_dispatches = 1;
+	if ( frameInfo->useFSRLayer0 || frameInfo->useNISLayer0 || frameInfo->blurLayer0 )
+		total_dispatches = 2;
+	
+	if ( pPipewireTexture != nullptr )
+		total_dispatches++;
+
+	unsigned int curr_dispatch_no = 1;
+
+
 	if ( frameInfo->useFSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
@@ -3684,7 +3822,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 
 		int pixelsPerGroup = 16;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
@@ -3695,7 +3833,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else if ( frameInfo->useNISLayer0 )
 	{
@@ -3726,7 +3864,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		int pixelsPerGroupX = 32;
 		int pixelsPerGroupY = 24;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY));
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY), 1, total_dispatches, curr_dispatch_no++);
 
 		struct FrameInfo_t nisFrameInfo = *frameInfo;
 		nisFrameInfo.layers[0].tex = g_output.tmpOutput;
@@ -3740,7 +3878,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
@@ -3766,7 +3904,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 
 		bool useSrgbView = frameInfo->layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 
@@ -3779,7 +3917,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
 		cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else
 	{
@@ -3790,7 +3928,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 
 		const int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 
 	if ( pPipewireTexture != nullptr )
@@ -3836,7 +3974,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 			// For ycbcr, we operate on 2 pixels at a time, so use the half-extent.
 			const int dispatchSize = ycbcr ? pixelsPerGroup * 2 : pixelsPerGroup;
 
-			cmdBuffer->dispatch(div_roundup(pPipewireTexture->width(), dispatchSize), div_roundup(pPipewireTexture->height(), dispatchSize));
+			cmdBuffer->dispatch(div_roundup(pPipewireTexture->width(), dispatchSize), div_roundup(pPipewireTexture->height(), dispatchSize), 1, total_dispatches, curr_dispatch_no++);
 		}
 	}
 
