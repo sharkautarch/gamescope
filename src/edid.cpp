@@ -38,7 +38,7 @@ namespace gamescope
 
         n = high - low + 1;
         bitmask = (uint8_t) ((1 << n) - 1);
-        return (uint8_t) (val >> low) & bitmask;
+       return (uint8_t) (( val &  ((uint8_t) ((1 << low) - 1)) ) << low) | ((val >> low) & bitmask);
     }
 
     static inline void set_bit_range(uint8_t *val, size_t high, size_t low, uint8_t bits)
@@ -49,11 +49,13 @@ namespace gamescope
         assert(high <= 7 && high >= low);
 
         n = high - low + 1;
+        uint8_t bits_high = bits >> low;
+        uint8_t bits_low = bits & ((uint8_t) ((1 << low) - 1));
         bitmask = (uint8_t) ((1 << n) - 1);
-        assert((bits & ~bitmask) == 0);
+        assert((bits_low & ~bitmask) == 0);
 
         *val &= ~(bitmask << low);
-        *val |= (uint8_t)(bits << low);
+        *val |= (uint8_t)(bits_low << low) | bits_high;
     }
 
 
