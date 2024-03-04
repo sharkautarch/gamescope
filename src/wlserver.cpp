@@ -881,6 +881,16 @@ static void gamescope_control_set_app_target_refresh_cycle( struct wl_client *cl
 	steamcompmgr_set_app_refresh_cycle_override( display_type, fps );
 }
 
+static void gamescope_control_take_screenshot( struct wl_client *client, struct wl_resource *resource, const char *path, uint32_t type, uint32_t flags )
+{
+	gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+	{
+		.szScreenshotPath = path,
+		.eScreenshotType  = (gamescope_control_screenshot_type)type,
+		.uScreenshotFlags = flags,
+	} );
+}
+
 static void gamescope_control_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
 	wl_resource_destroy( resource );
@@ -889,6 +899,7 @@ static void gamescope_control_handle_destroy( struct wl_client *client, struct w
 static const struct gamescope_control_interface gamescope_control_impl = {
 	.destroy = gamescope_control_handle_destroy,
 	.set_app_target_refresh_cycle = gamescope_control_set_app_target_refresh_cycle,
+	.take_screenshot = gamescope_control_take_screenshot,
 };
 
 static uint32_t get_conn_display_info_flags()
@@ -927,6 +938,11 @@ void wlserver_send_gamescope_control( wl_resource *control )
 		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, size );
 		memcpy( ptr, pConn->GetValidDynamicRefreshRates().data(), size );
 	}
+	else if ( g_nOutputRefresh > 0 )
+	{
+		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, sizeof(uint32_t) );
+		*ptr = (uint32_t)g_nOutputRefresh;
+	}
 	gamescope_control_send_active_display_info( control, pConn->GetName(), pConn->GetMake(), pConn->GetModel(), flags, &display_rates );
 	wl_array_release(&display_rates);
 }
@@ -944,6 +960,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_RESHADE_SHADERS, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DISPLAY_INFO, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_PIXEL_FILTER, 1, 0 );
+	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_MURA_CORRECTION, 1, 0 );
 	gamescope_control_send_feature_support( resource, GAMESCOPE_CONTROL_FEATURE_DONE, 0, 0 );
 
 	wlserver_send_gamescope_control( resource );
@@ -953,7 +970,7 @@ static void gamescope_control_bind( struct wl_client *client, void *data, uint32
 
 static void create_gamescope_control( void )
 {
-	uint32_t version = 2;
+	uint32_t version = 3;
 	wl_global_create( wlserver.display, &gamescope_control_interface, version, NULL, gamescope_control_bind );
 }
 
@@ -1903,7 +1920,7 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 }
 
-void wlserver_mousemotion( int x, int y, uint32_t time )
+void wlserver_mousemotion( double x, double y, uint32_t time )
 {
 	wlserver_perform_rel_pointer_motion( x, y );
 }

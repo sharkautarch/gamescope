@@ -751,7 +751,9 @@ int main(int argc, char **argv)
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
-		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
+		if ( g_pOriginalWaylandDisplay != NULL )
+			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
+		else if ( g_pOriginalDisplay != NULL )
 			eCurrentBackend = gamescope::GamescopeBackend::SDL;
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
@@ -795,6 +797,10 @@ int main(int argc, char **argv)
 #endif
 		case gamescope::GamescopeBackend::Headless:
 			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+
+		case gamescope::GamescopeBackend::Wayland:
+			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
 			break;
 		default:
 			abort();

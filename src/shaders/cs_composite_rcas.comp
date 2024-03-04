@@ -1,7 +1,6 @@
 #version 460
 
 #extension GL_GOOGLE_include_directive : require
-#extension GL_EXT_shader_explicit_arithmetic_types_int8 : require
 #extension GL_EXT_scalar_block_layout : require
 
 #include "descriptor_set.h"
@@ -22,8 +21,7 @@ uniform layers_t {
     uint u_frameId;
     uint u_c1;
 
-	uint8_t u_shaderFilter[VKR_MAX_LAYERS];
-    uint8_t u_padding[2];
+	uint u_shaderFilter;
 
     // hdr
     float u_linearToNits;

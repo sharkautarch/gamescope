@@ -127,7 +127,7 @@ namespace gamescope
         virtual void DirtyState( bool bForce = false, bool bForceModeset = false ) override;
         virtual bool PollState() override;
 
-		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) override;
+		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
         virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
         virtual void LockBackendFb( uint32_t uFbId ) override;
@@ -390,7 +390,7 @@ namespace gamescope
 		return false;
 	}
 
-	std::shared_ptr<BackendBlob> CSDLBackend::CreateBackendBlob( std::span<const uint8_t> data )
+	std::shared_ptr<BackendBlob> CSDLBackend::CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data )
 	{
 		return std::make_shared<BackendBlob>( data );
 	}
@@ -503,7 +503,7 @@ namespace gamescope
 		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
 	}
 
-	std::optional<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
+	std::optional<INestedHints::CursorInfo> GetX11HostCursor()
 	{
 		if ( !g_pOriginalDisplay )
 			return std::nullopt;
@@ -536,7 +536,7 @@ namespace gamescope
 			}
 		}
 
-		return CursorInfo
+		return INestedHints::CursorInfo
 		{
 			.pPixels   = std::move( cursorData ),
 			.uWidth    = image->width,
@@ -544,6 +544,11 @@ namespace gamescope
 			.uXHotspot = image->xhot,
 			.uYHotspot = image->yhot,
 		};
+	}
+
+	std::optional<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
+	{
+		return GetX11HostCursor();
 	}
 
 	void CSDLBackend::OnBackendBlobDestroyed( BackendBlob *pBlob )
@@ -556,6 +561,9 @@ namespace gamescope
 		pthread_setname_np( pthread_self(), "gamescope-sdl" );
 
 		m_uUserEventIdBase = SDL_RegisterEvents( GAMESCOPE_SDL_EVENT_COUNT );
+
+		SDL_SetHint( SDL_HINT_APP_NAME, "Gamescope" );
+		SDL_SetHint( SDL_HINT_VIDEO_ALLOW_SCREENSAVER, "1" );
 
 		if ( SDL_Init( SDL_INIT_VIDEO | SDL_INIT_EVENTS ) != 0 )
 		{
@@ -613,11 +621,10 @@ namespace gamescope
 			g_nOutputHeight = height;
 		}
 
-		bool bRelativeMouse = false;
 		if ( g_bForceRelativeMouse )
 		{
 			SDL_SetRelativeMouseMode( SDL_TRUE );
-			bRelativeMouse = true;
+			m_bApplicationGrabbed = true;
 		}
 
 		SDL_SetHint( SDL_HINT_TOUCH_MOUSE_EVENTS, "0" );
@@ -651,7 +658,7 @@ namespace gamescope
 
 				case SDL_MOUSEMOTION:
 				{
-					if ( bRelativeMouse )
+					if ( m_bApplicationGrabbed )
 					{
 						if ( g_bWindowFocused )
 						{
@@ -880,6 +887,10 @@ namespace gamescope
 						if ( g_bGrabbed )
 							szTitle += " (grabbed)";
 						SDL_SetWindowTitle( m_Connector.GetSDLWindow(), szTitle.c_str() );
+
+						szTitle = "Title: " + szTitle;
+						SDL_SetHint(SDL_HINT_SCREENSAVER_INHIBIT_ACTIVITY_NAME, szTitle.c_str() );
+						SDL_DisableScreenSaver();
 					}
 					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_ICON ) )
 					{

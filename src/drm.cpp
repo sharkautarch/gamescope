@@ -50,6 +50,7 @@
 
 #include "gamescope-control-protocol.h"
 
+static constexpr bool k_bUseCursorPlane = false;
 
 namespace gamescope
 {
@@ -2484,6 +2485,39 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 bool g_bForceAsyncFlips = false;
 
+void drm_rollback( struct drm_t *drm )
+{
+	drm->pending = drm->current;
+
+	for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
+	{
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->Rollback();
+		}
+	}
+
+	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
+	{
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pPlane->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->Rollback();
+		}
+	}
+
+	for ( auto &iter : drm->connectors )
+	{
+		gamescope::CDRMConnector *pConnector = &iter.second;
+		for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pConnector->GetProperties() )
+		{
+			if ( oProperty )
+				oProperty->Rollback();
+		}
+	}
+}
+
 /* Prepares an atomic commit for the provided scene-graph. Returns 0 on success,
  * negative errno on failure or if the scene-graph can't be presented directly. */
 int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameInfo )
@@ -2661,6 +2695,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	}
 
 	if ( ret != 0 ) {
+		drm_rollback( drm );
+
 		drmModeAtomicFree( drm->req );
 		drm->req = nullptr;
 
@@ -3063,7 +3099,7 @@ namespace gamescope
 			bNeedsFullComposite |= pFrameInfo->useNISLayer0;
 			bNeedsFullComposite |= pFrameInfo->blurLayer0;
 			bNeedsFullComposite |= bNeedsCompositeFromFilter;
-			bNeedsFullComposite |= bDrewCursor;
+			bNeedsFullComposite |= !k_bUseCursorPlane && bDrewCursor;
 			bNeedsFullComposite |= g_bColorSliderInUse;
 			bNeedsFullComposite |= pFrameInfo->bFadingOut;
 			bNeedsFullComposite |= !g_reshade_effect.empty();
@@ -3073,6 +3109,11 @@ namespace gamescope
 				bNeedsFullComposite |= g_bHDRItmEnable;
 				if ( !SupportsColorManagement() )
 					bNeedsFullComposite |= ( pFrameInfo->layerCount > 1 || pFrameInfo->layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
+			}
+			else
+			{
+				if ( !SupportsColorManagement() )
+					bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
 			}
 
 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
@@ -3182,6 +3223,8 @@ namespace gamescope
 			vulkan_wait( *oCompositeResult, true );
 
 			FrameInfo_t presentCompFrameInfo = {};
+			presentCompFrameInfo.allowVRR = pFrameInfo->allowVRR;
+			presentCompFrameInfo.outputEncodingEOTF = pFrameInfo->outputEncodingEOTF;
 
 			if ( bNeedsFullComposite )
 			{
@@ -3200,7 +3243,7 @@ namespace gamescope
 
 				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
 				baseLayer->ctm = nullptr;
-				baseLayer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
 				m_bWasPartialCompsiting = false;
 			}
@@ -3318,11 +3361,27 @@ namespace gamescope
 			return drm_poll_state( &g_DRM );
 		}
 
-		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( std::span<const uint8_t> data ) override
+		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override
 		{
 			uint32_t uBlob = 0;
-			if ( drmModeCreatePropertyBlob( g_DRM.fd, data.data(), data.size(), &uBlob ) != 0 )
-				return nullptr;
+			if ( type == typeid( glm::mat3x4 ) )
+			{
+				assert( data.size() == sizeof( glm::mat3x4 ) );
+
+				drm_color_ctm2 ctm2;
+				const float *pData = reinterpret_cast<const float *>( data.data() );
+				for ( uint32_t i = 0; i < 12; i++ )
+					ctm2.matrix[i] = drm_calc_s31_32( pData[i] );
+
+				fprintf( stderr, " !!!! MAKING CTM BLOB!!!!!!\n ");
+				if ( drmModeCreatePropertyBlob( g_DRM.fd, reinterpret_cast<const void *>( &ctm2 ), sizeof( ctm2 ), &uBlob ) != 0 )
+					return nullptr;
+			}
+			else
+			{
+				if ( drmModeCreatePropertyBlob( g_DRM.fd, data.data(), data.size(), &uBlob ) != 0 )
+					return nullptr;
+			}
 
 			return std::make_shared<BackendBlob>( data, uBlob, true );
 		}
@@ -3416,6 +3475,9 @@ namespace gamescope
 
 		virtual glm::uvec2 CursorSurfaceSize( glm::uvec2 uvecSize ) const override
 		{
+			if ( !k_bUseCursorPlane )
+				return uvecSize;
+
 			return glm::uvec2{ g_DRM.cursor_width, g_DRM.cursor_height };
 		}
 
@@ -3503,35 +3565,7 @@ namespace gamescope
 					abort();
 				}
 
-				drm->pending = drm->current;
-
-				for ( std::unique_ptr< gamescope::CDRMCRTC > &pCRTC : drm->crtcs )
-				{
-					for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pCRTC->GetProperties() )
-					{
-						if ( oProperty )
-							oProperty->Rollback();
-					}
-				}
-
-				for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
-				{
-					for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pPlane->GetProperties() )
-					{
-						if ( oProperty )
-							oProperty->Rollback();
-					}
-				}
-
-				for ( auto &iter : drm->connectors )
-				{
-					gamescope::CDRMConnector *pConnector = &iter.second;
-					for ( std::optional<gamescope::CDRMAtomicProperty> &oProperty : pConnector->GetProperties() )
-					{
-						if ( oProperty )
-							oProperty->Rollback();
-					}
-				}
+				drm_rollback( drm );
 
 				// Undo refcount if the commit didn't actually work
 				for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )

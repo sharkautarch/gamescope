@@ -41,6 +41,7 @@
       <entry name="display_info" value="2"/>
       <entry name="pixel_filter" value="3"/>
       <entry name="refresh_cycle_only_change_refresh_rate" value="4"/>
+      <entry name="mura_correction" value="5"/>
     </enum>
 
     <event name="feature_support">

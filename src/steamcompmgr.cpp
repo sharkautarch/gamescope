@@ -352,6 +352,9 @@ update_color_mgmt()
 		&g_ColorMgmt.pending.displayColorimetry, &g_ColorMgmt.pending.displayEOTF,
 		&g_ColorMgmt.pending.outputEncodingColorimetry, &g_ColorMgmt.pending.outputEncodingEOTF );
 
+	g_ColorMgmt.pending.flInternalDisplayBrightness =
+		GetBackend()->GetCurrentConnector()->GetHDRInfo().uMaxContentLightLevel;
+
 #ifdef COLOR_MGMT_MICROBENCH
 	struct timespec t0, t1;
 #else
@@ -601,6 +604,7 @@ bool set_color_3dlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
@@ -628,6 +632,7 @@ bool set_color_shaperlut_override(const char *path)
 	if (!f) {
 		return true;
 	}
+	defer( fclose(f) );
 
 	fseek(f, 0, SEEK_END);
 	long fsize = ftell(f);
@@ -1921,9 +1926,9 @@ bool MouseCursor::getTexture()
 		}
 	}
 
-	for (int i = 0; i < image->height; i++)
+	for (uint32_t i = 0; i < surfaceHeight; i++)
 	{
-		for (int j = 0; j < image->width; j++)
+		for (uint32_t j = 0; j < surfaceWidth; j++)
 		{
 			if ( cursorBuffer[i * surfaceWidth + j] & 0xff000000 )
 			{
@@ -1938,7 +1943,7 @@ bool MouseCursor::getTexture()
 
 	m_imageEmpty = bNoCursor;
 
-	if ( !GetBackend()->GetNestedHints() || !g_bForceRelativeMouse )
+	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
 	{
 		if ( GetBackend()->GetNestedHints() )
 			GetBackend()->GetNestedHints()->SetRelativeMouseMode( m_imageEmpty );
@@ -2573,10 +2578,10 @@ paint_all(bool async)
 		if ( overlay == global_focus.inputFocusWindow )
 			update_touch_scaling( &frameInfo );
 	}
-	else
+	else if ( !GetBackend()->UsesVulkanSwapchain() && GetBackend()->IsSessionBased() )
 	{
 		auto tex = vulkan_get_hacky_blank_texture();
-		if ( !GetBackend()->UsesVulkanSwapchain() && tex != nullptr )
+		if ( tex != nullptr )
 		{
 			// HACK! HACK HACK HACK
 			// To avoid stutter when toggling the overlay on 
@@ -7544,11 +7549,6 @@ steamcompmgr_main(int argc, char **argv)
 		readyPipeFD = -1;
 	}
 
-	if ( subCommandArg >= 0 )
-	{
-		spawn_client( &argv[ subCommandArg ] );
-	}
-
 	bool vblank = false;
 	g_SteamCompMgrWaiter.AddWaitable( &GetVBlankTimer() );
 	GetVBlankTimer().ArmNextVBlank( true );
@@ -7568,11 +7568,17 @@ steamcompmgr_main(int argc, char **argv)
 	update_mode_atoms(root_ctx);
 	XFlush(root_ctx->dpy);
 
-	GetBackend()->PostInit();
+	if ( !GetBackend()->PostInit() )
+		return;
 
 	update_edid_prop();
 
 	update_screenshot_color_mgmt();
+
+	if ( subCommandArg >= 0 )
+	{
+		spawn_client( &argv[ subCommandArg ] );
+	}
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
 	// on DRM + the Vulkan side.
@@ -7828,7 +7834,7 @@ steamcompmgr_main(int argc, char **argv)
 					std::vector<uint32_t> app_hdr_metadata_blob;
 					app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
 					memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
-					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_metadata_infoframe>(), sizeof(hdr_metadata_infoframe));
+					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_output_metadata>().hdmi_metadata_type1, sizeof(hdr_metadata_infoframe));
 
 					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
 							(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
