@@ -1946,7 +1946,7 @@ void wlserver_mousebutton( int button, bool press, uint32_t time )
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 }
 
-void wlserver_mousewheel( int x, int y, uint32_t time )
+void wlserver_mousewheel( double x, double y, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 

@@ -209,7 +209,7 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 )
 void wlserver_mousemotion( double x, double y, uint32_t time );
 void wlserver_mousewarp( int x, int y, uint32_t time );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
-void wlserver_mousewheel( int x, int y, uint32_t time );
+void wlserver_mousewheel( double x, double y, uint32_t time );
 
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time );
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
@@ -282,3 +282,4 @@ void wlserver_send_gamescope_control( wl_resource *control );
 
 bool wlsession_active();
 
+void wlserver_mousewheel2( int32_t nDiscreteX, int32_t nDiscreteY, double flX, double flY, uint32_t uTime );

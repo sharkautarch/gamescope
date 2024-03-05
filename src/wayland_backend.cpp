@@ -11,6 +11,8 @@
 #include <unordered_map>
 #include <csignal>
 #include <sys/mman.h>
+#include <linux/input-event-codes.h>
+#include <xkbcommon/xkbcommon.h>
 
 #include "wlr_begin.hpp"
 #include <wayland-client.h>
@@ -178,6 +180,39 @@ namespace gamescope
         .preferred_metadata = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FrogColorManagedSurface_PreferredMetadata ),
     };
 
+    enum WaylandModifierIndex
+    {
+        GAMESCOPE_WAYLAND_MOD_CTRL,
+        GAMESCOPE_WAYLAND_MOD_SHIFT,
+        GAMESCOPE_WAYLAND_MOD_ALT,
+        GAMESCOPE_WAYLAND_MOD_META, // Super
+        GAMESCOPE_WAYLAND_MOD_NUM,
+        GAMESCOPE_WAYLAND_MOD_CAPS,
+
+        GAMESCOPE_WAYLAND_MOD_COUNT,
+    };
+
+    constexpr const char *WaylandModifierToXkbModifierName( WaylandModifierIndex eIndex )
+    {
+        switch ( eIndex )
+        {
+            case GAMESCOPE_WAYLAND_MOD_CTRL:
+                return XKB_MOD_NAME_CTRL;
+            case GAMESCOPE_WAYLAND_MOD_SHIFT:
+                return XKB_MOD_NAME_SHIFT;
+            case GAMESCOPE_WAYLAND_MOD_ALT:
+                return XKB_MOD_NAME_ALT;
+            case GAMESCOPE_WAYLAND_MOD_META:
+                return XKB_MOD_NAME_LOGO;
+            case GAMESCOPE_WAYLAND_MOD_NUM:
+                return XKB_MOD_NAME_NUM;
+            case GAMESCOPE_WAYLAND_MOD_CAPS:
+                return XKB_MOD_NAME_CAPS;
+            default:
+                return "Unknown";
+        }
+    }
+
     struct WaylandOutputInfo
     {
         int32_t nRefresh = 60;
@@ -292,6 +327,7 @@ namespace gamescope
         void Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource );
         void Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis );
         void Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete );
+        void Wayland_Pointer_Axis_Value120( wl_pointer *pPointer, uint32_t uAxis, int32_t nValue120 );
         void Wayland_Pointer_Frame( wl_pointer *pPointer );
         static const wl_pointer_listener s_PointerListener;
 
@@ -345,6 +381,17 @@ namespace gamescope
         bool m_bKeyboardEntered = false;
         std::shared_ptr<INestedHints::CursorInfo> m_pCursorInfo;
         wl_surface *m_pCursorSurface = nullptr;
+
+        xkb_context *m_pXkbContext = nullptr;
+        xkb_keymap *m_pXkbKeymap = nullptr;
+
+        uint32_t m_uKeyModifiers = 0;
+        uint32_t m_uModMask[ GAMESCOPE_WAYLAND_MOD_COUNT ];
+
+        double m_flScrollAccum[2] = { 0.0, 0.0 };
+        uint32_t m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL;
+
+        uint32_t m_uFakeTimestamp = 0;
     };
     const wl_seat_listener CWaylandBackend::s_SeatListener =
     {
@@ -362,6 +409,7 @@ namespace gamescope
         .axis_source   = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_Pointer_Axis_Source ),
         .axis_stop     = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_Pointer_Axis_Stop ),
         .axis_discrete = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_Pointer_Axis_Discrete ),
+        .axis_value120 = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_Pointer_Axis_Value120 ),
     };
     const wl_keyboard_listener CWaylandBackend::s_KeyboardListener =
     {
@@ -641,12 +689,15 @@ namespace gamescope
         uint64_t ulTime = ( ( ( uint64_t( uTVSecHi ) << 32ul ) | uTVSecLo ) * 1'000'000'000lu ) +
                           ( uint64_t( uTVNSec ) );
 
-        // TODO: Someday move g_nOutputRefresh to MHz...
-        int nRefresh = ( 1'000'000'000 + uRefresh - 1 ) / uRefresh;
-        if ( nRefresh && nRefresh != g_nOutputRefresh )
+        if ( uRefresh )
         {
-            xdg_log.infof( "Changed refresh to: %d", nRefresh );
-            g_nOutputRefresh = nRefresh;
+            // TODO: Someday move g_nOutputRefresh to MHz...
+            int nRefresh = ( 1'000'000'000 + uRefresh - 1 ) / uRefresh;
+            if ( nRefresh && nRefresh != g_nOutputRefresh )
+            {
+                xdg_log.infof( "Changed refresh to: %d", nRefresh );
+                g_nOutputRefresh = nRefresh;
+            }
         }
 
         GetVBlankTimer().MarkVBlank( ulTime, true );
@@ -724,6 +775,12 @@ namespace gamescope
         m_uSurfaceSize.x = g_nOutputWidth;
         m_uSurfaceSize.y = g_nOutputHeight;
 
+        if ( !( m_pXkbContext = xkb_context_new( XKB_CONTEXT_NO_FLAGS ) ) )
+        {
+            xdg_log.errorf( "Couldn't create xkb context." );
+            return false;
+        }
+
         if ( !( m_pDisplay = wl_display_connect( nullptr ) ) )
         {
             xdg_log.errorf( "Couldn't connect to Wayland display." );
@@ -784,6 +841,11 @@ namespace gamescope
         if ( cv_hdr_enabled && m_Connector.GetHDRInfo().bExposeHDRSupport )
         {
             setenv( "DXVK_HDR", "1", false );
+        }
+
+        if ( g_bFullscreen )
+        {
+            xdg_toplevel_set_fullscreen( m_Planes[0].GetXdgTopLevel(), nullptr );
         }
 
         if ( m_pSinglePixelBufferManager )
@@ -1276,9 +1338,9 @@ namespace gamescope
         {
             m_pViewporter = (wp_viewporter *)wl_registry_bind( pRegistry, uName, &wp_viewporter_interface, 1u );
         }
-        else if ( !strcmp( pInterface, wl_seat_interface.name ) )
+        else if ( !strcmp( pInterface, wl_seat_interface.name ) && uVersion >= 8u )
         {
-            m_pSeat = (wl_seat *)wl_registry_bind( m_pRegistry, uName, &wl_seat_interface, 7 );
+            m_pSeat = (wl_seat *)wl_registry_bind( m_pRegistry, uName, &wl_seat_interface, 8u );
             wl_seat_add_listener( m_pSeat, &s_SeatListener, this );
         }
         else if ( !strcmp( pInterface, wp_presentation_interface.name ) )
@@ -1399,7 +1461,7 @@ namespace gamescope
             return;
 
         wlserver_lock();
-        wlserver_touchmotion( wl_fixed_to_double( fSurfaceX ) / double( m_uSurfaceSize.x ), wl_fixed_to_double( fSurfaceY ) / double( m_uSurfaceSize.y ), 0, uTime );
+        wlserver_touchmotion( wl_fixed_to_double( fSurfaceX ) / double( m_uSurfaceSize.x ), wl_fixed_to_double( fSurfaceY ) / double( m_uSurfaceSize.y ), 0, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
     void CWaylandBackend::Wayland_Pointer_Button( wl_pointer *pPointer, uint32_t uSerial, uint32_t uTime, uint32_t uButton, uint32_t uState )
@@ -1409,15 +1471,15 @@ namespace gamescope
             return;
 
         wlserver_lock();
-        wlserver_mousebutton( uButton, uState == WL_POINTER_BUTTON_STATE_PRESSED, uTime );
+        wlserver_mousebutton( uButton, uState == WL_POINTER_BUTTON_STATE_PRESSED, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
     void CWaylandBackend::Wayland_Pointer_Axis( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis, wl_fixed_t fValue )
     {
-        // XXX(JoshA): TODO scroll wheel, there's so much stuff!
     }
     void CWaylandBackend::Wayland_Pointer_Axis_Source( wl_pointer *pPointer, uint32_t uAxisSource )
     {
+        m_uAxisSource = uAxisSource;
     }
     void CWaylandBackend::Wayland_Pointer_Axis_Stop( wl_pointer *pPointer, uint32_t uTime, uint32_t uAxis )
     {
@@ -1425,17 +1487,67 @@ namespace gamescope
     void CWaylandBackend::Wayland_Pointer_Axis_Discrete( wl_pointer *pPointer, uint32_t uAxis, int32_t nDiscrete )
     {
     }
+    void CWaylandBackend::Wayland_Pointer_Axis_Value120( wl_pointer *pPointer, uint32_t uAxis, int32_t nValue120 )
+    {
+        if ( !m_bKeyboardEntered )
+            return;
+
+        assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
+
+        // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
+        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0f;
+    }
     void CWaylandBackend::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {
-        // We could handle it here....... but why?
+        defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
+        defer( m_flScrollAccum[0] = 0.0 );
+        defer( m_flScrollAccum[1] = 0.0 );
+
+        if ( !m_bKeyboardEntered )
+            return;
+
+        if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
+            return;
+
+        if ( m_flScrollAccum[0] == 0.0 && m_flScrollAccum[1] == 0.0 )
+            return;
+
+        wlserver_lock();
+        xdg_log.infof( "m_flScrollAccum[1]: %g ", m_flScrollAccum[1] );
+        wlserver_mousewheel( m_flScrollAccum[0], m_flScrollAccum[1], ++m_uFakeTimestamp );
+        wlserver_unlock();
     }
 
     // Keyboard
 
     void CWaylandBackend::Wayland_Keyboard_Keymap( wl_keyboard *pKeyboard, uint32_t uFormat, int32_t nFd, uint32_t uSize )
     {
-        // We are not doing anything with the keymap, we pass keycodes thru.
+        // We are not doing much with the keymap, we pass keycodes thru.
         // Ideally we'd use this to influence our keymap to clients, eg. x server.
+
+        defer( close( nFd ) );
+        assert( uFormat == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 );
+
+        char *pMap = (char *)mmap( nullptr, uSize, PROT_READ, MAP_SHARED, nFd, 0 );
+        if ( !pMap || pMap == MAP_FAILED )
+        {
+            xdg_log.errorf( "Failed to map keymap fd." );
+            return;
+        }
+        defer( munmap( pMap, uSize ) );
+
+        xkb_keymap *pKeymap = xkb_keymap_new_from_string( m_pXkbContext, pMap, XKB_KEYMAP_FORMAT_TEXT_V1, XKB_KEYMAP_COMPILE_NO_FLAGS );
+        if ( !pKeymap )
+        {
+            xdg_log.errorf( "Failed to create xkb_keymap" );
+            return;
+        }
+
+        xkb_keymap_unref( m_pXkbKeymap );
+        m_pXkbKeymap = pKeymap;
+
+        for ( uint32_t i = 0; i < GAMESCOPE_WAYLAND_MOD_COUNT; i++ )
+            m_uModMask[ i ] = 1u << xkb_keymap_mod_get_index( m_pXkbKeymap, WaylandModifierToXkbModifierName( ( WaylandModifierIndex ) i ) );
     }
     void CWaylandBackend::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
@@ -1450,14 +1562,101 @@ namespace gamescope
         if ( !m_bKeyboardEntered )
             return;
 
+        if ( m_uKeyModifiers & m_uModMask[ GAMESCOPE_WAYLAND_MOD_META ] )
+        {
+            switch ( uKey )
+            {
+                case KEY_F:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        if ( !g_bFullscreen )
+                            xdg_toplevel_set_fullscreen( m_Planes[0].GetXdgTopLevel(), nullptr );
+                        else
+                            xdg_toplevel_unset_fullscreen( m_Planes[0].GetXdgTopLevel() );
+
+                        g_bFullscreen = !g_bFullscreen;
+                    }
+                    return;
+                }
+
+                case KEY_N:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::PIXEL;
+                    }
+                    return;
+                }
+
+                case KEY_B:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_wantedUpscaleFilter = GamescopeUpscaleFilter::LINEAR;
+                    }
+                    return;
+                }
+
+                case KEY_U:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::FSR ) ?
+                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::FSR;
+                    }
+                    return;
+                }
+
+                case KEY_Y:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_wantedUpscaleFilter = ( g_wantedUpscaleFilter == GamescopeUpscaleFilter::NIS ) ?
+                            GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NIS;
+                    }
+                    return;
+                }
+
+                case KEY_I:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_upscaleFilterSharpness = std::min( 20, g_upscaleFilterSharpness + 1 );
+                    }
+                    return;
+                }
+
+                case KEY_O:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        g_upscaleFilterSharpness = std::max( 0, g_upscaleFilterSharpness - 1 );
+                    }
+                    return;
+                }
+
+                case KEY_S:
+                {
+                    if ( uState == WL_KEYBOARD_KEY_STATE_RELEASED )
+                    {
+                        gamescope::CScreenshotManager::Get().TakeScreenshot( true );
+                    }
+                    return;
+                }
+
+                default:
+                    break;
+            }
+        }
+
         wlserver_lock();
-        wlserver_key( uKey, uState == WL_KEYBOARD_KEY_STATE_PRESSED, uTime );
+        wlserver_key( uKey, uState == WL_KEYBOARD_KEY_STATE_PRESSED, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
     void CWaylandBackend::Wayland_Keyboard_Modifiers( wl_keyboard *pKeyboard, uint32_t uSerial, uint32_t uModsDepressed, uint32_t uModsLatched, uint32_t uModsLocked, uint32_t uGroup )
     {
-        // This seems to already be handled fine by xserver getting ctrl keycode etc.
-        // Come back to me if there is something that doesn't work as expected.
+        m_uKeyModifiers = uModsDepressed | uModsLatched | uModsLocked;
     }
     void CWaylandBackend::Wayland_Keyboard_RepeatInfo( wl_keyboard *pKeyboard, int32_t nRate, int32_t nDelay )
     {
@@ -1472,7 +1671,7 @@ namespace gamescope
             return;
 
         wlserver_lock();
-        wlserver_mousemotion( wl_fixed_to_double( fDxUnaccel ), wl_fixed_to_double( fDyUnaccel ), uTimeLo );
+        wlserver_mousemotion( wl_fixed_to_double( fDxUnaccel ), wl_fixed_to_double( fDyUnaccel ), ++m_uFakeTimestamp );
         wlserver_unlock();
     }
 
