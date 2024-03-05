@@ -91,6 +91,7 @@ static const mat3x4& colorspace_to_conversion_from_srgb_matrix(EStreamColorspace
 
 PFN_vkGetInstanceProcAddr g_pfn_vkGetInstanceProcAddr;
 PFN_vkCreateInstance g_pfn_vkCreateInstance;
+PFN_vkDestroyInstance g_pfn_vkDestroyInstance;
 
 static VkResult vulkan_load_module()
 {
@@ -108,6 +109,10 @@ static VkResult vulkan_load_module()
 
 		g_pfn_vkCreateInstance = (PFN_vkCreateInstance) g_pfn_vkGetInstanceProcAddr( nullptr, "vkCreateInstance" );
 		if ( !g_pfn_vkCreateInstance )
+			return VK_ERROR_INITIALIZATION_FAILED;
+			
+		g_pfn_vkDestroyInstance = (PFN_vkDestroyInstance) g_pfn_vkGetInstanceProcAddr( nullptr, "vkDestroyInstance" );
+		if ( !g_pfn_vkDestroyInstance )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		return VK_SUCCESS;
@@ -401,6 +406,53 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 	return true;
 }
 
+void CVulkanDevice::prepare_tmp_dev(VkInstance tmp_instance)
+{
+	//g_output.surface = VK_NULL_HANDLE;
+	#define VK_FUNC(x) vk.x = (PFN_vk##x) g_pfn_vkGetInstanceProcAddr(tmp_instance, "vk"#x);
+	VULKAN_INSTANCE_FUNCTIONS
+	#undef VK_FUNC
+
+
+	m_instance = tmp_instance;
+
+	selectPhysDev(VK_NULL_HANDLE);
+}
+
+bool CVulkanDevice::_checkForPresentWaitExt()
+{
+	uint32_t supportedExtensionCount;
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, NULL );
+
+	std::vector<VkExtensionProperties> supportedExts(supportedExtensionCount);
+	vk.EnumerateDeviceExtensionProperties( physDev(), NULL, &supportedExtensionCount, supportedExts.data() );
+
+	bool bSupports_present_wait = false, bSupports_present_id = false;
+
+	for ( uint32_t i = 0; i < supportedExtensionCount; ++i )
+	{
+		if ( strcmp(supportedExts[i].extensionName, VK_KHR_PRESENT_ID_EXTENSION_NAME) == 0 )
+			bSupports_present_id = true;
+		else if ( strcmp(supportedExts[i].extensionName, VK_KHR_PRESENT_WAIT_EXTENSION_NAME) == 0)
+			bSupports_present_wait = true;
+	}
+
+	return bSupports_present_wait && bSupports_present_id;
+}
+
+bool checkForPresentWaitExt()
+{
+	VkInstance tmp_instance = vulkan_get_instance(true);
+	CVulkanDevice tmp_dev;
+	tmp_dev.prepare_tmp_dev(tmp_instance); //doesn't actually call vkCreateDevice(), just prepares CVulkanDevice object
+
+	g_bSupportsPresentWait = tmp_dev._checkForPresentWaitExt();
+	
+	g_pfn_vkDestroyInstance(tmp_instance, 0);
+	
+	return g_bSupportsPresentWait;
+}
+
 bool CVulkanDevice::createDevice()
 {
 	vk.GetPhysicalDeviceMemoryProperties( physDev(), &m_memoryProperties );
@@ -535,14 +587,21 @@ bool CVulkanDevice::createDevice()
 	};
 
 	std::vector< const char * > enabledExtensions;
+	
+	auto append_if_supported = [bSupportsPresentWait=g_bSupportsPresentWait](std::vector<const char *>* dst, std::span<const char * const> src) {
+		static constexpr std::array<const char* const,2> checking_for = { VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME };
+		for (auto& ext : src) { 
+			if (bSupportsPresentWait || ( std::find(checking_for.begin(), checking_for.end(), ext) == checking_for.end() )  )
+				dst->push_back(ext);
+		}
+	};
 
 	if ( GetBackend()->UsesVulkanSwapchain() )
 	{
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_EXTENSION_NAME );
 		enabledExtensions.push_back( VK_KHR_SWAPCHAIN_MUTABLE_FORMAT_EXTENSION_NAME );
 
-		enabledExtensions.push_back( VK_KHR_PRESENT_ID_EXTENSION_NAME );
-		enabledExtensions.push_back( VK_KHR_PRESENT_WAIT_EXTENSION_NAME );
+		append_if_supported(&enabledExtensions, {{VK_KHR_PRESENT_ID_EXTENSION_NAME, VK_KHR_PRESENT_WAIT_EXTENSION_NAME}} );
 	}
 
 	if ( m_bSupportsModifiers )
@@ -562,8 +621,7 @@ bool CVulkanDevice::createDevice()
 	if ( supportsHDRMetadata )
 		enabledExtensions.push_back( VK_EXT_HDR_METADATA_EXTENSION_NAME );
 
-	for ( auto& extension : GetBackend()->GetDeviceExtensions( physDev() ) )
-		enabledExtensions.push_back( extension );
+	append_if_supported(&enabledExtensions, GetBackend()->GetDeviceExtensions( physDev() ) );
 
 #if 0
 	VkPhysicalDeviceMaintenance5FeaturesKHR maintenance5 = {
@@ -586,7 +644,7 @@ bool CVulkanDevice::createDevice()
 	};
 	
 	VkPhysicalDeviceProperties props;
-	vkGetPhysicalDeviceProperties(physDev(), &props);
+	vk.GetPhysicalDeviceProperties(physDev(), &props);
 	m_vkApiVer = props.apiVersion;
 	if (VK_API_VERSION_MINOR(m_vkApiVer) >= 3)
 		presentWaitFeatures.pNext = &features13;
@@ -603,11 +661,13 @@ bool CVulkanDevice::createDevice()
 
 	VkPhysicalDeviceFeatures2 features2 = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_FEATURES_2,
-		.pNext = &presentIdFeatures,
 		.features = {
 			.shaderInt16 = m_bSupportsFp16,
 		},
 	};
+	
+	if (g_bSupportsPresentWait)
+		features2.pNext = &presentIdFeatures;
 
 	VkDeviceCreateInfo deviceCreateInfo = {
 		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -2800,16 +2860,22 @@ void vulkan_present_to_window( void )
 
 	VkPresentInfoKHR presentInfo = {
 		.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-		.pNext = &presentIdInfo,
 		.swapchainCount = 1,
 		.pSwapchains = &g_output.swapChain,
 		.pImageIndices = &g_output.nOutImage,
 	};
+	
+	bool bSupportsPresentWait = g_bSupportsPresentWait;
+	
+	if (bSupportsPresentWait)
+		presentInfo.pNext = &presentIdInfo;
 
 	if ( g_device.vk.QueuePresentKHR( g_device.queue(), &presentInfo ) == VK_SUCCESS )
 	{
-		g_currentPresentWaitId = presentId;
-		g_currentPresentWaitId.notify_all();
+		if (bSupportsPresentWait) {
+			g_currentPresentWaitId = presentId;
+			g_currentPresentWaitId.notify_all();
+		}
 	}
 	else
 		vulkan_remake_swapchain();
@@ -3030,24 +3096,32 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 bool vulkan_remake_swapchain( void )
 {
-	std::unique_lock lock(present_wait_lock);
-	g_currentPresentWaitId = 0;
-	g_currentPresentWaitId.notify_all();
+	bool bRet;
 
-	VulkanOutput_t *pOutput = &g_output;
-	g_device.waitIdle();
-	g_device.vk.QueueWaitIdle( g_device.queue() );
+	auto doit = [&](std::function<void(void)> f) {
+		VulkanOutput_t *pOutput = &g_output;
+		g_device.waitIdle();
+		f();
+		pOutput->outputImages.clear();
+		g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
+		
+		// Delete screenshot image to be remade if needed
+		for (auto& pScreenshotImage : pOutput->pScreenshotImages)
+			pScreenshotImage = nullptr;
 
-	pOutput->outputImages.clear();
-
-	g_device.vk.DestroySwapchainKHR( g_device.device(), pOutput->swapChain, nullptr );
-
-	// Delete screenshot image to be remade if needed
-	for (auto& pScreenshotImage : pOutput->pScreenshotImages)
-		pScreenshotImage = nullptr;
-
-	bool bRet = vulkan_make_swapchain( pOutput );
-	assert( bRet ); // Something has gone horribly wrong!
+		bRet = vulkan_make_swapchain( pOutput );
+		assert( bRet ); // Something has gone horribly wrong!
+	};
+	
+	if (g_bSupportsPresentWait) {
+		std::unique_lock lock(present_wait_lock);
+		g_currentPresentWaitId = 0;
+		g_currentPresentWaitId.notify_all();
+		doit( [&](){g_device.vk.QueueWaitIdle( g_device.queue() );});
+	} else {
+		doit([&](){return;});
+	}
+	
 	return bRet;
 }
 
@@ -3271,9 +3345,9 @@ static bool init_nis_data()
 	return true;
 }
 
-VkInstance vulkan_get_instance( void )
-{
-	static VkInstance s_pVkInstance = []() -> VkInstance
+VkInstance vulkan_get_instance( bool isTemp )
+{ 
+	auto make_instance = [](bool isTemp) -> VkInstance
 	{
 		VkResult result = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -3283,10 +3357,10 @@ VkInstance vulkan_get_instance( void )
 			return nullptr;
 		}
 
-		auto instanceExtensions = GetBackend()->GetInstanceExtensions();
 		
 		uint32_t pApiVersion = 0;
-		if (vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion") == NULL) {
+		PFN_vkEnumerateInstanceVersion vkEnumerateInstanceVersion;
+		if ( (vkEnumerateInstanceVersion = (PFN_vkEnumerateInstanceVersion) g_pfn_vkGetInstanceProcAddr(NULL, "vkEnumerateInstanceVersion")) == NULL) {
 			vk_log.errorf("ERROR: gamescope requires vulkan >= 1.2, instance only supports vulkan 1.0");
 			return nullptr;
 		}
@@ -3307,12 +3381,16 @@ VkInstance vulkan_get_instance( void )
 			.apiVersion         = VK_API_VERSION_MINOR(pApiVersion) > 3 ? VK_API_VERSION_1_3 : pApiVersion, //limit version to 1.3 in case vulkan 1.4 ever comes out
 		};
 
-		const VkInstanceCreateInfo createInfo = {
+		VkInstanceCreateInfo createInfo = {
 			.sType                   = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
 			.pApplicationInfo        = &appInfo,
-			.enabledExtensionCount   = (uint32_t)instanceExtensions.size(),
-			.ppEnabledExtensionNames = instanceExtensions.data(),
 		};
+		
+		if (!isTemp) {
+			auto instanceExtensions = GetBackend()->GetInstanceExtensions();
+			createInfo.enabledExtensionCount   = (uint32_t)instanceExtensions.size();
+			createInfo.ppEnabledExtensionNames = instanceExtensions.data();
+		}
 
 		VkInstance instance = nullptr;
 		result = g_pfn_vkCreateInstance(&createInfo, 0, &instance);
@@ -3322,7 +3400,13 @@ VkInstance vulkan_get_instance( void )
 		}
 
 		return instance;
-	}();
+	};
+	
+	if (isTemp) {
+		return make_instance(true);
+	}
+	
+	static VkInstance s_pVkInstance = make_instance(false);
 
 	return s_pVkInstance;
 }
@@ -3335,7 +3419,7 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 	if (!init_nis_data())
 		return false;
 
-	if ( GetBackend()->UsesVulkanSwapchain() )
+	if ( GetBackend()->UsesVulkanSwapchain() && g_bSupportsPresentWait )
 	{
 		std::thread present_wait_thread( present_wait_thread_func );
 		present_wait_thread.detach();

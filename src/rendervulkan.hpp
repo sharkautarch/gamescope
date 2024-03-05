@@ -375,7 +375,7 @@ namespace CompositeDebugFlag
 	static constexpr uint32_t Tonemap_Reinhard = 1u << 7;
 };
 
-VkInstance vulkan_get_instance(void);
+VkInstance vulkan_get_instance(bool isTemp = false);
 bool vulkan_init(VkInstance instance, VkSurfaceKHR surface);
 bool vulkan_init_formats(void);
 bool vulkan_make_output();
@@ -701,9 +701,11 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(WaitSemaphores) \
 	VK_FUNC(SetHdrMetadataEXT)
 
-define VULKAN_1_3_DEVICE_FUNCTIONS \
+#define VULKAN_1_3_DEVICE_FUNCTIONS \
 	VK_FUNC(CmdBeginRendering) \
 	VK_FUNC(CmdEndRendering)
+
+bool checkForPresentWaitExt();
 
 template<typename T, typename U = T>
 constexpr T align(T what, U to) {
@@ -715,9 +717,13 @@ class CVulkanDevice
 public:
 	bool m_supportsReshade = true;
 	bool BInit(VkInstance instance, VkSurfaceKHR surface);
-
+	bool BSupportsPresentWait();
+	
 	VkSampler sampler(SamplerState key);
 	VkPipeline pipeline(ShaderType type, uint32_t layerCount = 1, uint32_t ycbcrMask = 0, uint32_t blur_layers = 0, uint32_t colorspace_mask = 0, uint32_t output_eotf = EOTF_Gamma22, bool itm_enable = false);
+	
+	bool checkForPresentWaitExt();
+	
 	int32_t findMemoryType( VkMemoryPropertyFlags properties, uint32_t requiredTypeBits );
 	std::unique_ptr<CVulkanCmdBuffer> commandBuffer();
 	uint64_t submit( std::unique_ptr<CVulkanCmdBuffer> cmdBuf);
@@ -782,6 +788,10 @@ public:
 
 protected:
 	friend class CVulkanCmdBuffer;
+	
+	void prepare_tmp_dev(VkInstance tmp_instance);
+	bool _checkForPresentWaitExt();
+	friend bool checkForPresentWaitExt();
 
 	bool selectPhysDev(VkSurfaceKHR surface);
 	bool createDevice();

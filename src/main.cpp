@@ -554,6 +554,8 @@ bool g_bForceDisableColorMgmt = false;
 int g_argc;
 char **g_argv;
 
+bool g_bSupportsPresentWait = true;
+
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -758,10 +760,13 @@ int main(int argc, char **argv)
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
 	}
+	
+	const bool bSupportsPresentWait = checkForPresentWaitExt();
 
 	if ( g_pOriginalWaylandDisplay != NULL )
 	{
-        if (CheckWaylandPresentationTime())
+        const bool bCompositor_supports_present_wait = CheckWaylandPresentationTime();
+        if (bCompositor_supports_present_wait && bSupportsPresentWait)
         {
             // Default to SDL_VIDEODRIVER wayland under Wayland and force enable vk_khr_present_wait
             // (not enabled by default in Mesa because instance does not know if Wayland
@@ -769,14 +774,30 @@ int main(int argc, char **argv)
             setenv("vk_khr_present_wait", "true", 0);
             setenv("SDL_VIDEODRIVER", "wayland", 0);
         }
-        else
+        else if (bSupportsPresentWait)
         {
             fprintf(stderr,
                 "Your Wayland compositor does NOT support wp_presentation/presentation-time which is required for VK_KHR_present_wait and VK_KHR_present_id.\n"
                 "Please complain to your compositor vendor for support. Falling back to X11 window with less accurate present wait.\n");
             setenv("SDL_VIDEODRIVER", "x11", 1);
         }
+        else if (!bSupportsPresentWait)
+        {
+        	fprintf(stderr,
+        		"Notice: GPU device does not support present_wait extension\n"
+        		"continuing with present_wait disabled.\n\n");
+        	 setenv("vk_khr_present_wait", "false", 1);
+        	 if (bCompositor_supports_present_wait)
+        	 	 setenv("SDL_VIDEODRIVER", "wayland", 0); //doing this for consistency, shouldn't cause any issues
+        }
 	}
+	else if (!bSupportsPresentWait)
+    {
+    	fprintf(stderr,
+    		"Notice: GPU device does not support present_wait extension\n"
+    		"continuing with present_wait disabled.\n\n");
+    	 setenv("vk_khr_present_wait", "false", 1);
+    }
 
 	switch ( eCurrentBackend )
 	{
