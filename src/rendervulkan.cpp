@@ -1453,13 +1453,13 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 	
 	bool bYcbcr = m_target->isYcbcr();
-	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
+	size_t wDescLen = 4 + (bYcbcr ? 1 : 0);
 	VkWriteDescriptorSet writeDescriptorSets[wDescLen];
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
-	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> shaperLutDescriptor = {};
-	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> lut3DDescriptor = {};
+	//std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> shaperLutDescriptor = {};
+	//std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> lut3DDescriptor = {};
 	VkDescriptorBufferInfo scratchDescriptor = {};
 
 	writeDescriptorSets[0] = {
@@ -1515,7 +1515,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		};
 	}
 
-	writeDescriptorSets[++offset] = {
+	/*writeDescriptorSets[++offset] = {
 		.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
 		.dstSet = descriptorSet,
 		.dstBinding = 5,
@@ -1533,7 +1533,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		.descriptorCount = lut3DDescriptor.size(),
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		.pImageInfo = lut3DDescriptor.data(),
-	};
+	};*/
 
 	scratchDescriptor.buffer = m_device->m_uploadBuffer;
 	scratchDescriptor.offset = m_renderBufferOffset;
@@ -1555,7 +1555,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 			imageDescriptors[i].imageView = view;
 	}
 
-	for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
+	/*for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
 	{
 		SamplerState linearState;
 		linearState.bNearest = false;
@@ -1573,7 +1573,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
-	}
+	}*/
 
 	if (!bYcbcr)
 	{
