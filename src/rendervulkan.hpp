@@ -897,7 +897,7 @@ public:
 	void bindTarget(std::shared_ptr<CVulkanTexture> target);
 	void clearState();
 	template<class PushData, class... Args>
-	void uploadConstants(Args&&... args);
+	inline void __attribute__((no_stack_protector,nothrow)) uploadConstants(Args&&... args) noexcept;
 	void bindPipeline(VkPipeline pipeline);
 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1, unsigned int total_dispatches = 1, unsigned int curr_dispatch_no = 1);
 	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
