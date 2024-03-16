@@ -53,7 +53,7 @@ void mangoapp_update( uint64_t visible_frametime, uint64_t app_frametime_ns, uin
     msgsnd(msgid, &mangoapp_msg_v1, sizeof(mangoapp_msg_v1) - sizeof(mangoapp_msg_v1.hdr.msg_type), IPC_NOWAIT);
 }
 
-extern uint64_t g_uCurrentBasePlaneCommitID;
+extern uint32_t g_uCurrentBasePlaneCommitID;
 extern bool g_bCurrentBasePlaneIsFifo;
 void mangoapp_output_update( uint64_t vblanktime )
 {
@@ -62,7 +62,7 @@ void mangoapp_output_update( uint64_t vblanktime )
         return;
     }
 
-	static uint64_t s_uLastBasePlaneCommitID = 0;
+	static uint32_t s_uLastBasePlaneCommitID = 0;
 	if ( s_uLastBasePlaneCommitID != g_uCurrentBasePlaneCommitID )
 	{
 		static uint64_t s_uLastBasePlaneUpdateVBlankTime = vblanktime;

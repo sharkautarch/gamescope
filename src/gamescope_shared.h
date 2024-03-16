@@ -1,5 +1,11 @@
 #pragma once
 
+#ifdef __clang__
+	#define __ASSUME__(statement) __builtin_assume( (statement) );
+#else
+	#define __ASSUME__(statement) __attribute__(( assume( (statement) ) ));
+#endif
+
 namespace gamescope
 {
 	class BackendBlob;

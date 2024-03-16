@@ -138,7 +138,7 @@ extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
-uint64_t g_lastWinSeq = 0;
+uint32_t g_lastWinSeq = 0;
 
 static std::shared_ptr<gamescope::BackendBlob> s_scRGB709To2020Matrix;
 
@@ -688,12 +688,12 @@ gamescope::CAsyncWaiter<std::shared_ptr<commit_t>> g_ImageWaiter{ "gamescope_img
 
 struct commit_t : public gamescope::IWaitable
 {
-	commit_t()
+	__attribute__((no_stack_protector,nothrow)) commit_t() noexcept
 	{
-		static uint64_t maxCommmitID = 0;
+		static uint32_t maxCommmitID = 0;
 		commitID = ++maxCommmitID;
 	}
-    ~commit_t()
+    __attribute__((no_stack_protector,nothrow)) ~commit_t() noexcept
     {
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
@@ -731,21 +731,21 @@ struct commit_t : public gamescope::IWaitable
 	struct wlr_buffer *buf = nullptr;
 	uint32_t fb_id = 0;
 	std::shared_ptr<CVulkanTexture> vulkanTex;
-	uint64_t commitID = 0;
+	uint32_t commitID = 0;
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
 	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
-	uint64_t win_seq = 0;
+	uint32_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
 	uint64_t earliest_present_time = 0;
-	uint64_t present_margin = 0;
+	uint32_t present_margin = 0;
 
 	// For waitable:
 	int GetFD() final
@@ -908,7 +908,7 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
-uint64_t g_uCurrentBasePlaneCommitID = 0;
+uint32_t g_uCurrentBasePlaneCommitID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
@@ -6190,7 +6190,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
+bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint32_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime ) noexcept
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -6198,10 +6198,10 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 	{
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
-			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
+			gpuvis_trace_printf( "commit %u done", w->commit_queue[ j ]->commitID );
 			w->commit_queue[ j ]->done = true;
-			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
-			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
+			w->commit_queue[ j ]->earliest_present_time = presentMargin + earliestLatchTime;
+			w->commit_queue[ j ]->present_margin = presentMargin;
 			bFoundWindow = true;
 
 			// Window just got a new available commit, determine if that's worth a repaint
@@ -6277,45 +6277,70 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 	return false;
 }
 
+inline __attribute__((pure)) uint32_t next_pow2(const uint32_t x) { //from: https://jameshfisher.com/2018/03/30/round-up-power-2/
+	__ASSUME__( (x + (x<2)) > ( x + ((x<2) - 1) ) ) // prevent compiler from caring about unsigned int overflow here (from going too high)
+	return 1<<(32 - __builtin_clz(x + (x<2) - 1));
+}
+
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
+void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	static std::vector< CommitDoneEntry_t > commits_before_their_time;
-	commits_before_their_time.clear();
-	commits_before_their_time.reserve( 32 );
+	static uint32_t cap = 4u;
+	__ASSUME__( (cap % 2 == 0 && cap > 1))
+	CommitDoneEntry_t commits_before_their_time[cap];
 
 	// windows in FIFO mode we got a new frame to present for this vblank
-	static std::unordered_set< uint64_t > fifo_win_seqs;
-	fifo_win_seqs.clear();
-	fifo_win_seqs.reserve( 32 );
+	std::unordered_set< uint32_t > fifo_win_seqs(8);
 
 	uint64_t now = get_time_in_nanos();
 
 	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
 
+	auto move_to_end = [](CommitDoneEntry_t& __restrict__ entry
+						   , const uint32_t index
+						   , const uint32_t cap
+						   , CommitDoneEntry_t* __restrict__ arr) -> bool {
+			if (index > cap-1u) {
+				return false;
+			}
+			
+			arr[index] = std::move(entry);
+			return true;
+	};
+
+	uint32_t index = 0;
+	uint32_t num_attempted_moved_commits = 0;
 	// very fast loop yes
-	for ( auto& entry : ctx->doneCommits.listCommitsDone )
+	for ( auto & __restrict__ entry : ctx->doneCommits.listCommitsDone )
 	{
 		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
-			commits_before_their_time.push_back( entry );
+			num_attempted_moved_commits++;
+			if (!move_to_end(entry, index, cap, commits_before_their_time))
+				break; //todo: spill to heap here instead of breaking
+				
+			index++;
 			continue;
 		}
 
-		if (!entry.earliestPresentTime)
+		if (!entry.presentMargin)
 		{
-			entry.earliestPresentTime = next_refresh_time;
+			entry.presentMargin = next_refresh_time - now;
 			entry.earliestLatchTime = now;
 		}
 
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
-			commits_before_their_time.push_back( entry );
+			num_attempted_moved_commits++;
+			if (!move_to_end(entry, index, cap, commits_before_their_time))
+				break; //todo: spill to heap here instead of breaking
+				
+			index++;
 			continue;
 		}
 
@@ -6323,7 +6348,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 		{
 			if (w->seq != entry.winSeq)
 				continue;
-			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			if (handle_done_commit(w, ctx, entry.commitID, entry.presentMargin, entry.earliestLatchTime))
 			{
 				if (entry.fifo)
 					fifo_win_seqs.insert(entry.winSeq);
@@ -6332,10 +6357,19 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
+	if ( index > 0 ) {
+		__ASSUME__( num_attempted_moved_commits + cap/2 >= num_attempted_moved_commits
+							  && num_attempted_moved_commits + cap/2 >= cap/2)
+		cap = next_pow2(num_attempted_moved_commits+cap/2);
+		ctx->doneCommits.listCommitsDone.resize(index);
+		memcpy(reinterpret_cast<void*>(ctx->doneCommits.listCommitsDone.data()), reinterpret_cast<void*>(commits_before_their_time), sizeof(commits_before_their_time[0])*index);	
+	} else {
+		ctx->doneCommits.listCommitsDone.clear();
+	}
+	
 }
 
-void handle_done_commits_xdg()
+void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexcept
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
@@ -6349,9 +6383,9 @@ void handle_done_commits_xdg()
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
-		if (!entry.earliestPresentTime)
+		if (!entry.presentMargin)
 		{
-			entry.earliestPresentTime = next_refresh_time;
+			entry.presentMargin = next_refresh_time - now;
 			entry.earliestLatchTime = now;
 		}
 
@@ -6363,7 +6397,7 @@ void handle_done_commits_xdg()
 
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
 		{
-			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.presentMargin, entry.earliestLatchTime))
 				break;
 		}
 	}
@@ -6521,7 +6555,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
 									( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
 
-		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+		gpuvis_trace_printf( "pushing wait for commit %u win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			g_ImageWaiter.AddWaitable( newCommit.get() );

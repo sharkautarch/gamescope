@@ -94,7 +94,7 @@ struct steamcompmgr_xdg_win_t
 struct steamcompmgr_win_t {
 	unsigned int	opacity;
 
-	uint64_t seq;
+	uint32_t seq;
 
 	std::shared_ptr<std::string> title;
 	bool utf8_title;
