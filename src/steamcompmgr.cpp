@@ -75,6 +75,7 @@
 #include <signal.h>
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
+#include "parallel_hashmap/phmap.h"
 #include "waitable.h"
 
 #include "main.hpp"
@@ -6295,7 +6296,7 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 	CommitDoneEntry_t commits_before_their_time[cap];
 
 	// windows in FIFO mode we got a new frame to present for this vblank
-	std::unordered_set< uint32_t > fifo_win_seqs(8);
+	phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
 
 	uint64_t now = get_time_in_nanos();
 
