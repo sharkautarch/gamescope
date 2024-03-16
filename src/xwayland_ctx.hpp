@@ -36,15 +36,17 @@ struct focus_t
 	bool			outdatedInteractiveFocus;
 };
 
+#pragma pack(push, 1)
 struct CommitDoneEntry_t
 {
-	uint32_t __attribute__((packed)) winSeq;
+	uint32_t winSeq;
 	uint32_t commitID;
 	uint64_t desiredPresentTime;
 	bool fifo;
-	uint16_t __attribute__((packed, aligned(16))) presentMargin;
+	uint16_t presentMargin;
 	uint64_t earliestLatchTime;
 };
+#pragma pack(pop)
 
 struct CommitDoneList_t
 {
