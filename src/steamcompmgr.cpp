@@ -6310,7 +6310,7 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 				return false;
 			}
 			
-			arr[index] = std::move(entry);
+			arr[index] = entry;
 			return true;
 	};
 
@@ -6362,8 +6362,12 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 		__ASSUME__( num_attempted_moved_commits + cap/2 >= num_attempted_moved_commits
 							  && num_attempted_moved_commits + cap/2 >= cap/2)
 		cap = next_pow2(num_attempted_moved_commits+cap/2);
-		ctx->doneCommits.listCommitsDone.resize(index);
-		memcpy(reinterpret_cast<void*>(ctx->doneCommits.listCommitsDone.data()), reinterpret_cast<void*>(commits_before_their_time), sizeof(commits_before_their_time[0])*index);	
+		if (index != 1) {
+			ctx->doneCommits.listCommitsDone.resize(index);
+			memcpy(reinterpret_cast<void*>(ctx->doneCommits.listCommitsDone.data()), reinterpret_cast<void*>(commits_before_their_time), sizeof(commits_before_their_time[0])*index);
+		} else {
+			ctx->doneCommits.listCommitsDone.resize(index, commits_before_their_time[0]);
+		}	
 	} else {
 		ctx->doneCommits.listCommitsDone.clear();
 	}
