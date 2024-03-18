@@ -691,7 +691,7 @@ struct commit_t : public gamescope::IWaitable
 {
 	__attribute__((no_stack_protector,nothrow)) commit_t() noexcept
 	{
-		static uint32_t maxCommmitID = 0;
+		static uint64_t maxCommmitID = 0;
 		commitID = ++maxCommmitID;
 	}
     __attribute__((no_stack_protector,nothrow)) ~commit_t() noexcept
@@ -732,7 +732,7 @@ struct commit_t : public gamescope::IWaitable
 	struct wlr_buffer *buf = nullptr;
 	uint32_t fb_id = 0;
 	std::shared_ptr<CVulkanTexture> vulkanTex;
-	uint32_t commitID = 0;
+	uint64_t commitID = 0;
 	bool done = false;
 	bool async = false;
 	bool fifo = false;
@@ -909,7 +909,7 @@ std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
-uint32_t g_uCurrentBasePlaneCommitID = 0;
+uint64_t g_uCurrentBasePlaneCommitID = 0;
 bool g_bCurrentBasePlaneIsFifo = false;
 
 static int g_nSteamCompMgrTargetFPS = 0;
@@ -6191,7 +6191,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint32_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime ) noexcept
+bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime ) noexcept
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -6199,7 +6199,7 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 	{
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
-			gpuvis_trace_printf( "commit %u done", w->commit_queue[ j ]->commitID );
+			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
 			w->commit_queue[ j ]->done = true;
 			w->commit_queue[ j ]->earliest_present_time = presentMargin + earliestLatchTime;
 			w->commit_queue[ j ]->present_margin = presentMargin;
@@ -6278,11 +6278,6 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 	return false;
 }
 
-inline __attribute__((pure)) uint32_t next_pow2(const uint32_t x) { //from: https://jameshfisher.com/2018/03/30/round-up-power-2/
-	__ASSUME__( (x + (x<2)) > ( x + ((x<2) - 1) ) ) // prevent compiler from caring about unsigned int overflow here (from going too high)
-	return 1<<(32 - __builtin_clz(x + (x<2) - 1));
-}
-
 // TODO: Merge these two functions.
 void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
@@ -6291,41 +6286,25 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	static uint32_t cap = 4u;
-	__ASSUME__( (cap % 2 == 0 && cap > 1))
-	CommitDoneEntry_t commits_before_their_time[cap];
+	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
+		vec[index] = std::move(entry);
+	};
 
 	// windows in FIFO mode we got a new frame to present for this vblank
-	phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
-
+	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
+	fifo_win_seqs.clear();
+	
 	uint64_t now = get_time_in_nanos();
 
 	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
 
-	auto move_to_end = [](CommitDoneEntry_t& __restrict__ entry
-						   , const uint32_t index
-						   , const uint32_t cap
-						   , CommitDoneEntry_t* __restrict__ arr) -> bool {
-			if (index > cap-1u) {
-				return false;
-			}
-			
-			arr[index] = entry;
-			return true;
-	};
-
 	uint32_t index = 0;
-	uint32_t num_attempted_moved_commits = 0;
 	// very fast loop yes
-	for ( auto & __restrict__ entry : ctx->doneCommits.listCommitsDone )
+	for ( auto & entry : ctx->doneCommits.listCommitsDone )
 	{
 		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
-			num_attempted_moved_commits++;
-			if (!move_to_end(entry, index, cap, commits_before_their_time))
-				break; //todo: spill to heap here instead of breaking
-				
-			index++;
+			commits_before_their_time(ctx->doneCommits.listCommitsDone, entry, index++);
 			continue;
 		}
 
@@ -6337,11 +6316,7 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
-			num_attempted_moved_commits++;
-			if (!move_to_end(entry, index, cap, commits_before_their_time))
-				break; //todo: spill to heap here instead of breaking
-				
-			index++;
+			commits_before_their_time(ctx->doneCommits.listCommitsDone, entry, index++);
 			continue;
 		}
 
@@ -6359,15 +6334,13 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 	}
 
 	if ( index > 0 ) {
-		__ASSUME__( num_attempted_moved_commits + cap/2 >= num_attempted_moved_commits
-							  && num_attempted_moved_commits + cap/2 >= cap/2)
-		cap = next_pow2(num_attempted_moved_commits+cap/2);
-		if (index != 1) {
-			ctx->doneCommits.listCommitsDone.resize(index);
-			memcpy(reinterpret_cast<void*>(ctx->doneCommits.listCommitsDone.data()), reinterpret_cast<void*>(commits_before_their_time), sizeof(commits_before_their_time[0])*index);
-		} else {
-			ctx->doneCommits.listCommitsDone.resize(index, commits_before_their_time[0]);
-		}	
+		auto start = ctx->doneCommits.listCommitsDone.begin();
+		std::advance(start, index);
+		auto end = ctx->doneCommits.listCommitsDone.end();
+		//using erase() instead of resize(), because using resize() causes the compiler
+		//to add code that checks if vector size would increase and do reallocation in that case.
+		//We know w/ 100% certainty that the vector's size can't increase here, but the compiler is dumb dumb...
+		ctx->doneCommits.listCommitsDone.erase(start, end);
 	} else {
 		ctx->doneCommits.listCommitsDone.clear();
 	}
@@ -6381,10 +6354,13 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexc
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	std::vector< CommitDoneEntry_t > commits_before_their_time;
+	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
+		vec[index] = std::move(entry);
+	};
 
 	uint64_t now = get_time_in_nanos();
 
+	uint32_t index = 0;
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
@@ -6396,7 +6372,7 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexc
 
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
-			commits_before_their_time.push_back( entry );
+			commits_before_their_time(g_steamcompmgr_xdg_done_commits.listCommitsDone, entry, index++);
 			break;
 		}
 
@@ -6406,8 +6382,17 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexc
 				break;
 		}
 	}
-
-	g_steamcompmgr_xdg_done_commits.listCommitsDone = std::move( commits_before_their_time );
+	if (index > 0) {
+		//using erase() instead of resize(), because using resize() causes the compiler
+		//to add code that checks if vector size would increase and do reallocation in that case.
+		//We know w/ 100% certainty that the vector's size can't increase here, but the compiler is dumb dumb...
+		auto start = g_steamcompmgr_xdg_done_commits.listCommitsDone.begin();
+		std::advance(start, index);
+		auto end = g_steamcompmgr_xdg_done_commits.listCommitsDone.end();
+		g_steamcompmgr_xdg_done_commits.listCommitsDone.erase(start, end);
+	} else {
+		g_steamcompmgr_xdg_done_commits.listCommitsDone.clear();
+	}
 }
 
 void handle_presented_for_window( steamcompmgr_win_t* w )
@@ -6560,7 +6545,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
 									( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
 
-		gpuvis_trace_printf( "pushing wait for commit %u win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
 			g_ImageWaiter.AddWaitable( newCommit.get() );
