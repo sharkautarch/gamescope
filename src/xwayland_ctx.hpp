@@ -36,7 +36,6 @@ struct focus_t
 	bool			outdatedInteractiveFocus;
 };
 
-#pragma pack(push, 1)
 struct CommitDoneEntry_t
 {
 	uint32_t winSeq;
@@ -46,7 +45,6 @@ struct CommitDoneEntry_t
 	uint16_t presentMargin;
 	uint64_t earliestLatchTime;
 };
-#pragma pack(pop)
 
 struct CommitDoneList_t
 {
