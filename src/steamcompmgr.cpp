@@ -6281,6 +6281,10 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 // TODO: Merge these two functions.
 void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
+	// windows in FIFO mode we got a new frame to present for this vblank
+	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
+	fifo_win_seqs.clear();
+	
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
@@ -6289,10 +6293,6 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
 		vec[index] = std::move(entry);
 	};
-
-	// windows in FIFO mode we got a new frame to present for this vblank
-	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
-	fifo_win_seqs.clear();
 	
 	uint64_t now = get_time_in_nanos();
 
