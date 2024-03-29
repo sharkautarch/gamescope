@@ -32,6 +32,14 @@ namespace GamescopeWSILayer {
   static uint64_t timespecToNanos(struct timespec& spec) {
     return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
   }
+  
+  static uint64_t get_time_in_nanos()
+  {
+	timespec ts;
+	// Kernel reports page flips with CLOCK_MONOTONIC.
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return timespec_to_nanos(ts);
+  }
 
   [[maybe_unused]] static uint64_t getTimeMonotonic() {
     timespec ts;
@@ -974,8 +982,10 @@ namespace GamescopeWSILayer {
             abort();
             continue;
           }
-
+		  
+		  uint64_t start = get_time_in_nanos();
           const bool canBypass = gamescopeSurface->canBypassXWayland();
+          fprintf(stderr, "canBypassXWayland(): %.2fms\n", (get_time_in_nanos()-start)/1'000'000.0);
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
             UpdateSwapchainResult(canBypass ? VK_SUBOPTIMAL_KHR : VK_ERROR_OUT_OF_DATE_KHR);
         }
