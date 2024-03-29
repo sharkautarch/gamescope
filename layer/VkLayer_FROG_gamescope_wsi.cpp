@@ -38,7 +38,7 @@ namespace GamescopeWSILayer {
 	timespec ts;
 	// Kernel reports page flips with CLOCK_MONOTONIC.
 	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return timespec_to_nanos(ts);
+	return timespecToNanos(ts);
   }
 
   [[maybe_unused]] static uint64_t getTimeMonotonic() {
