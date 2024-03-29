@@ -989,7 +989,7 @@ namespace GamescopeWSILayer {
 		  uint64_t start = get_time_in_nanos();
           const bool canBypass = gamescopeSurface->canBypassXWayland();
           durations[counter]=(get_time_in_nanos()-start)/1024ul;
-          fprintf(stderr, "canBypassXWayland(): %.2fms\n",  durations[counter]/1'000'000.0);
+          fprintf(stderr, "canBypassXWayland(): %.2fms\n",  (durations[counter]*1024ul)/1'000'000.0);
           if (++counter == 32) {
           	counter=0;
           	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms\n\n\n\n\n", ( (durations.sum()*1024ul) / (32ul) )/1'000'000.0);
