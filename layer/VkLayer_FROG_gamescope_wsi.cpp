@@ -1003,7 +1003,7 @@ namespace GamescopeWSILayer {
           	
           	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
           	\nmin duration jitter:%.2fms,\
-          	\nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, min/nsPerMs, max/nsPerMs);
+          	\nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, (*min)/nsPerMs, (*max)/nsPerMs);
           }
           
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
