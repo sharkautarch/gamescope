@@ -997,9 +997,9 @@ namespace GamescopeWSILayer {
           	counter=0;
           	uint64_t mean = ( (durations.sum()) / (32ul) );
           	std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
-          	auto& begin = std::begin(durations);
-          	begin.next();
-          	auto [min, max] = std::minmax_element(begin, std::end(durations));
+          	const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+          	const std::valarray<uint64_t> selection = durations[selectTheseIndices];
+          	auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
           	
           	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
           	\nmin duration jitter:%.2fms,\
