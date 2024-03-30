@@ -997,7 +997,7 @@ namespace GamescopeWSILayer {
           	counter=0;
           	int64_t mean = ( (durations.sum()) / (32l) );
           	std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
-          	const std::valarray<int64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+          	const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
           	const std::valarray<int64_t> selection = durations[selectTheseIndices];
           	auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
           	
