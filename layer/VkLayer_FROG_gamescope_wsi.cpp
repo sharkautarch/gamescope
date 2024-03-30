@@ -15,6 +15,8 @@
 #include <unordered_map>
 #include <optional>
 #include <valarray>
+#include <ranges>
+#include <numeric>
 #include <poll.h>
 // For limiter file.
 #include <time.h>
@@ -989,10 +991,19 @@ namespace GamescopeWSILayer {
 		  uint64_t start = get_time_in_nanos();
           const bool canBypass = gamescopeSurface->canBypassXWayland();
           durations[counter]=(get_time_in_nanos()-start);
-          fprintf(stderr, "canBypassXWayland(): %.2fms\n",  (durations[counter])/1'000'000.0);
+          static constexpr float nsPerMs = 1'000'000.0;
+          fprintf(stderr, "canBypassXWayland(): %.2fms\n",  (durations[counter])/nsPerMs);
           if (++counter == 32) {
           	counter=0;
-          	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms\n\n\n\n\n", ( (durations.sum()) / (32ul) )/1'000'000.0);
+          	uint64_t mean = ( (durations.sum()) / (32ul) );
+          	std::adjacent_difference(durations.begin(), durations.end(), durations.begin());
+          	static constexpr std::valarray<uint64_t> selectTheseIndices = std::views::iota(1,32);
+          	const std::valarray<uint64_t> selection = durations[selectTheseIndices];
+          	auto [min, max] = std::minmax_element(selection.begin(), selection.end());
+          	
+          	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
+          	\nmin duration jitter:%.2fms,\
+          	\nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, min/nsPerMs, max/nsPerMs);
           }
           
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
