@@ -100,6 +100,7 @@ static VkResult vulkan_load_module()
 		void* pModule = dlopen( "libvulkan.so.1", RTLD_NOW | RTLD_LOCAL );
 		if ( !pModule )
 			pModule = dlopen( "libvulkan.so", RTLD_NOW | RTLD_LOCAL );
+			
 		if ( !pModule )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
@@ -109,10 +110,6 @@ static VkResult vulkan_load_module()
 
 		g_pfn_vkCreateInstance = (PFN_vkCreateInstance) g_pfn_vkGetInstanceProcAddr( nullptr, "vkCreateInstance" );
 		if ( !g_pfn_vkCreateInstance )
-			return VK_ERROR_INITIALIZATION_FAILED;
-			
-		g_pfn_vkDestroyInstance = (PFN_vkDestroyInstance) g_pfn_vkGetInstanceProcAddr( nullptr, "vkDestroyInstance" );
-		if ( !g_pfn_vkDestroyInstance )
 			return VK_ERROR_INITIALIZATION_FAILED;
 
 		return VK_SUCCESS;
@@ -3398,6 +3395,10 @@ VkInstance vulkan_get_instance( bool isTemp )
 		{
 			vk_errorf( result, "vkCreateInstance failed" );
 		}
+		
+		g_pfn_vkDestroyInstance = (PFN_vkDestroyInstance) g_pfn_vkGetInstanceProcAddr( instance, "vkDestroyInstance" );
+		if ( !g_pfn_vkDestroyInstance )
+			vk_log.errorf("failed to get address to vkDestroyInstance\n");
 
 		return instance;
 	};
