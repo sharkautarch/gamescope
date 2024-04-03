@@ -678,7 +678,6 @@ bool CVulkanDevice::createDevice()
 	VkPhysicalDeviceVulkan12Features vulkan12Features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = std::exchange(features2.pNext, &vulkan12Features),
-		.uniformAndStorageBuffer8BitAccess = VK_TRUE,
 		.shaderFloat16 = m_bSupportsFp16,
 		.scalarBlockLayout = VK_TRUE,
 		.timelineSemaphore = VK_TRUE,
