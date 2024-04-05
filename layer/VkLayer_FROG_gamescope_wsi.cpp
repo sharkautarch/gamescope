@@ -34,14 +34,6 @@ namespace GamescopeWSILayer {
   static uint64_t timespecToNanos(struct timespec& spec) {
     return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
   }
-  
-  static uint64_t get_time_in_nanos()
-  {
-	timespec ts;
-	// Kernel reports page flips with CLOCK_MONOTONIC.
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return timespecToNanos(ts);
-  }
 
   [[maybe_unused]] static uint64_t getTimeMonotonic() {
     timespec ts;
@@ -179,6 +171,7 @@ namespace GamescopeWSILayer {
       }
 
       auto toplevelRect = xcb::getWindowRect(connection, *toplevelWindow);
+
       if (!toplevelRect) {
         fprintf(stderr, "[Gamescope WSI] canBypassXWayland: failed to get window info for window 0x%x.\n", window);
         return false;
@@ -960,6 +953,36 @@ namespace GamescopeWSILayer {
 
       VkResult result = pDispatch->QueuePresentKHR(queue, pPresentInfo);
 
+	  std::vector<xcb_connection_t*> conns(pPresentInfo->swapchainCount);
+	  std::vector<xcb_window_t> windows(pPresentInfo->swapchainCount);
+	  
+	  int vector_size = 0;
+	  bool need_resize = false;
+	  for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
+	  	VkSwapchainKHR swapchain = pPresentInfo->pSwapchains[i];
+	  	if (auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain)) {
+	  		 auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+          	 if (!gamescopeSurface) {
+          	 	need_resize = true;
+            	fprintf(stderr, "[Gamescope WSI] QueuePresentKHR: Surface for swapchain %u was already destroyed. (App use after free).\n", i);
+            	abort();
+            	continue;
+          	}
+          	vector_size++;
+          	conns.emplace_back(gamescopeSurface->connection);
+          	windows.emplace_back(gamescopeSurface->window);
+        } else {
+        	need_resize = true;
+        }
+      }
+      
+      if (need_resize) {
+      	conns.resize(vector_size);
+      	windows.resize(vector_size);
+      }
+      
+      xcb::Prefetcher prefetcher(conns, windows);
+      
       for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
         VkSwapchainKHR swapchain = pPresentInfo->pSwapchains[i];
 
@@ -971,7 +994,6 @@ namespace GamescopeWSILayer {
         };
 
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain)) {
-
           if ((limiterOverride == 1 && gamescopeSwapchain->presentMode != VK_PRESENT_MODE_FIFO_KHR) ||
               (limiterOverride != 1 && gamescopeSwapchain->presentMode != gamescopeSwapchain->originalPresentMode)) {
               fprintf(stderr, "[Gamescope WSI] Forcing swapchain recreation as frame limiter changed.\n");
@@ -984,31 +1006,33 @@ namespace GamescopeWSILayer {
             abort();
             continue;
           }
-          
+
           static std::valarray<int64_t> durations(32);
           static uint64_t counter = 0; 
-		  
-		  uint64_t start = get_time_in_nanos();
+          
+          uint64_t start = getTimeMonotonic();
           const bool canBypass = gamescopeSurface->canBypassXWayland();
-          durations[counter]=static_cast<int64_t>(get_time_in_nanos()-start);
+          durations[counter]=static_cast<int64_t>(getTimeMonotonic()-start);
           static constexpr float nsPerMs = 1'000'000.0;
           fprintf(stderr, "canBypassXWayland(): %.2fms\n",  (durations[counter])/nsPerMs);
           if (++counter == 32) {
-          	counter=0;
-          	int64_t mean = ( (durations.sum()) / (32l) );
-          	std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
-          	const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-          	const std::valarray<int64_t> selection = durations[selectTheseIndices];
-          	auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
-          	
-          	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
-          	\nmin duration jitter:%.2fms,\
-          	\nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, (*min)/nsPerMs, (*max)/nsPerMs);
+            counter=0;
+            int64_t mean = ( (durations.sum()) / (32l) );
+            std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
+            const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+            const std::valarray<int64_t> selection = durations[selectTheseIndices];
+            auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
+            
+            fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
+            \nmin duration jitter:%.2fms,\
+            \nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, (*min)/nsPerMs, (*max)/nsPerMs);
           }
           
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
             UpdateSwapchainResult(canBypass ? VK_SUBOPTIMAL_KHR : VK_ERROR_OUT_OF_DATE_KHR);
         }
+        
+        prefetcher.next();
       }
 
       return result;
