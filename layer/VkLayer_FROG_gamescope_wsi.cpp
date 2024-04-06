@@ -34,14 +34,6 @@ namespace GamescopeWSILayer {
   static uint64_t timespecToNanos(struct timespec& spec) {
     return spec.tv_sec * 1'000'000'000ul + spec.tv_nsec;
   }
-  
-  static uint64_t get_time_in_nanos()
-  {
-	timespec ts;
-	// Kernel reports page flips with CLOCK_MONOTONIC.
-	clock_gettime(CLOCK_MONOTONIC, &ts);
-	return timespecToNanos(ts);
-  }
 
   [[maybe_unused]] static uint64_t getTimeMonotonic() {
     timespec ts;
@@ -984,26 +976,27 @@ namespace GamescopeWSILayer {
             abort();
             continue;
           }
-          
+
           static std::valarray<int64_t> durations(32);
           static uint64_t counter = 0; 
-		  
-		  uint64_t start = get_time_in_nanos();
+          
+          uint64_t start = getTimeMonotonic();
+          xcb::Prefetcher prefetcher(gamescopeSurface->connection, gamescopeSurface->window);
           const bool canBypass = gamescopeSurface->canBypassXWayland();
-          durations[counter]=static_cast<int64_t>(get_time_in_nanos()-start);
+          durations[counter]=static_cast<int64_t>(getTimeMonotonic()-start);
           static constexpr float nsPerMs = 1'000'000.0;
           fprintf(stderr, "canBypassXWayland(): %.2fms\n",  (durations[counter])/nsPerMs);
           if (++counter == 32) {
-          	counter=0;
-          	int64_t mean = ( (durations.sum()) / (32l) );
-          	std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
-          	const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
-          	const std::valarray<int64_t> selection = durations[selectTheseIndices];
-          	auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
-          	
-          	fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
-          	\nmin duration jitter:%.2fms,\
-          	\nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, (*min)/nsPerMs, (*max)/nsPerMs);
+            counter=0;
+            int64_t mean = ( (durations.sum()) / (32l) );
+            std::adjacent_difference(std::begin(durations), std::end(durations), std::begin(durations));
+            const std::valarray<uint64_t> selectTheseIndices = {1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31};
+            const std::valarray<int64_t> selection = durations[selectTheseIndices];
+            auto [min, max] = std::minmax_element(std::begin(selection), std::end(selection));
+            
+            fprintf(stderr, "\n\n\n\ncanBypassXWayland() average duration:%.2fms,\
+            \nmin duration jitter:%.2fms,\
+            \nmax duration jitter:%.2fms\n\n\n\n\n", mean/nsPerMs, (*min)/nsPerMs, (*max)/nsPerMs);
           }
           
           if (canBypass != gamescopeSwapchain->isBypassingXWayland)
