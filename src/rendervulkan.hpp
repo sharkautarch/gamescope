@@ -15,6 +15,7 @@
 #include "main.hpp"
 #include "color_helpers.h"
 #include "gamescope_shared.h"
+#include "backend.h"
 
 #include "shaders/descriptor_set_constants.h"
 
@@ -861,14 +862,9 @@ typedef enum class reshade_target {
 } reshade_target_t;
 
 
-typedef struct {
-	pipeline_task_t task_type;
-
-	union {
+typedef union {
 		shader_sync_info_t shader_sync_info;
 		reshade_target_t reshade_target;
-	};
-		
 } barrier_info_t;
 
 //#define DEBUG_BARRIER 1
@@ -908,7 +904,164 @@ public:
 	void prepareDestImage(CVulkanTexture *image);
 	void discardImage(CVulkanTexture *image);
 	void markDirty(CVulkanTexture *image);
-	void insertBarrier(const barrier_info_t * const barrier_info = nullptr);
+	
+	template <int task = 0>
+	void insertBarrier(const barrier_info_t * const barrier_info = nullptr)
+	{
+		std::vector<VkImageMemoryBarrier> barriers;
+
+		uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
+
+		VkImageSubresourceRange subResRange =
+		{
+			.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+			.levelCount = 1,
+			.layerCount = 1
+		};
+
+		
+		VkFlags srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0;
+		VkAccessFlags src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
+
+		VkFlags dstStageMask = 0;
+		VkAccessFlags dst_write_bits = 0;
+		VkAccessFlags dst_read_bits = 0;
+
+		bool flush = false;
+		assert( barrier_info != nullptr);
+		
+		switch (task) {
+			case ( static_cast<int>(pipeline_task::reshade) ): {
+				if (barrier_info->reshade_target == reshade_target::init) {
+					srcStageMask = dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+					dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+					dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+				} else {
+					dstStageMask |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+					dst_read_bits |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+				}
+				break;
+			}
+			case ( static_cast<int>(pipeline_task::shader) ): {
+
+				const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
+				//const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
+				const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
+
+	#ifdef DEBUG_BARRIER
+				printf("\n pipeline_task::shader\n");
+				printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
+	#endif
+
+				src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
+	 
+				dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
+				/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
+				 * shader sampler read, when multipleShaders == true && isLast == true
+				 */
+
+				dst_write_bits = VK_ACCESS_SHADER_WRITE_BIT;
+
+				srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+
+				dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+
+				break;
+
+			} case ( static_cast<int>(pipeline_task::copy) ): {
+	#ifdef DEBUG_BARRIER
+				printf("\n pipeline_task::copy\n");
+	#endif
+
+				dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
+				dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+
+				dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				break;
+
+			} case ( static_cast<int>(pipeline_task::end) ): {
+				flush = true;
+
+	#ifdef DEBUG_BARRIER
+				printf("\n pipeline_task::end\n");
+	#endif
+				dst_read_bits = dst_write_bits = 0;
+				srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				break;
+			}
+			default:
+			{
+				__builtin_unreachable();
+				break;
+			}
+		}
+		
+		if (srcStageMask == 0)
+			srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		if (dstStageMask == 0)
+			dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
+
+
+		for (auto& pair : m_textureState)
+		{
+			CVulkanTexture *image = pair.first;
+			TextureState& state = pair.second;
+			assert(!flush || !state.needsImport);
+
+			bool isExport = flush && state.needsExport;
+			bool isPresent = flush && state.needsPresentLayout;
+
+			if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
+				continue;
+
+
+			if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
+				image->queueFamily = m_queueFamily;
+				
+			const VkAccessFlags src_read_bits = 0u; //*_READ on .srcAccessMask for CmdPipelineBarrier is always the same as a no-op
+								//https://github.com/KhronosGroup/Vulkan-Docs/issues/131 
+			VkImageMemoryBarrier memoryBarrier =
+			{
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+				.srcAccessMask = ( state.dirty ? (src_write_bits | src_read_bits) : 0u)
+						| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
+
+				.dstAccessMask = dst_read_bits | dst_write_bits,
+				.oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout =  isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
+				.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
+				.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
+				.image = image->vkImage(),
+				.subresourceRange = subResRange
+			};
+
+	/*#ifdef DEBUG_BARRIER
+			char buf[256] = ".oldLayout = ";
+			strcat(buf, string_VkImageLayout(memoryBarrier.oldLayout));
+			const char * next = "\n.newLayout = ";
+			strcat(buf, next);
+			strcat(buf, string_VkImageLayout(memoryBarrier.newLayout));
+			const char * next2 = "\n";
+			strcat(buf, next2);
+			printf(buf);
+	#endif*/
+
+
+
+			barriers.push_back(memoryBarrier);
+
+			state.discarded = false;
+			state.dirty = false;
+			state.needsImport = false;
+		}
+
+		// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
+		// ^ Done ^_^
+		m_device->vk.CmdPipelineBarrier(m_cmdBuffer, srcStageMask, dstStageMask,
+										0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+
+		m_previousCopy = ( task == static_cast<int>(pipeline_task::copy) );
+	}
 
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
