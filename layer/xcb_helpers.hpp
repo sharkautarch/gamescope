@@ -7,6 +7,16 @@
 
 namespace xcb {
 
+  typedef struct {
+    xcb_query_tree_cookie_t q_tree;
+    xcb_get_geometry_cookie_t geo;
+    xcb_window_t window;
+    std::tuple<xcb_query_tree_reply_t*, xcb_get_geometry_reply_t*> cached_replies;
+  } cookie_cache_t;
+
+  static thread_local constinit bool g_cache_bIsValid = false; //thread_local just incase g_cache could otherwise be accessed by one thread, while it is being deleted by another thread
+  static constinit cookie_cache_t g_cache = {};
+  
   struct ReplyDeleter {
     template <typename T>
     void operator()(T* ptr) const {
@@ -16,7 +26,61 @@ namespace xcb {
 
   template <typename T>
   using Reply = std::unique_ptr<T, ReplyDeleter>;
+  
+  
+  Reply<xcb_query_tree_reply_t> CachedReply(xcb_connection_t* connection, xcb_query_tree_cookie_t cookie)
+  {
+    xcb_query_tree_reply_t* reply_copied = reinterpret_cast<xcb_query_tree_reply_t*>(malloc(sizeof(xcb_query_tree_reply_t)));
+    if (std::get<0>(g_cache.cached_replies) == nullptr) {
+        std::get<0>(g_cache.cached_replies) = xcb_query_tree_reply(connection, cookie, nullptr);
+    }
 
+    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<0>(g_cache.cached_replies)), sizeof(xcb_query_tree_reply_t));
+
+    return Reply<xcb_query_tree_reply_t>{reply_copied};;
+  }
+
+  Reply<xcb_get_geometry_reply_t> CachedReply(xcb_connection_t* connection, xcb_get_geometry_cookie_t cookie)
+  {
+    xcb_get_geometry_reply_t* reply_copied = reinterpret_cast<xcb_get_geometry_reply_t*>(malloc(sizeof(xcb_get_geometry_reply_t)));
+    if (std::get<1>(g_cache.cached_replies) == nullptr) {
+        std::get<1>(g_cache.cached_replies) = xcb_get_geometry_reply(connection, cookie, nullptr);
+    }
+
+    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<1>(g_cache.cached_replies)), sizeof(xcb_get_geometry_reply_t));
+
+    return Reply<xcb_get_geometry_reply_t>{reply_copied};
+  }
+
+  class Prefetcher
+  {
+  	//Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR
+  	
+  	//The g_class struct has a thread local g_cache_bIsValid boolean, 
+  	//to prevent any issue with another thread calling another GamescopeWSILayer:: function which calls an xcb:: func 
+  	//that might otherwise access g_cache while g_cache is being cleared at the end of GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR()
+    public:
+        Prefetcher() = delete;
+        explicit Prefetcher(xcb_connection_t* connection, xcb_window_t window) {
+            g_cache.q_tree = xcb_query_tree(connection, window);
+            g_cache.geo = xcb_get_geometry(connection, window);
+            g_cache.window = window;
+            g_cache_bIsValid = true;
+        }
+
+        ~Prefetcher() {
+            g_cache_bIsValid = false;
+            if (std::get<0>(g_cache.cached_replies)) {
+                free(std::get<0>(g_cache.cached_replies));
+                std::get<0>(g_cache.cached_replies) = nullptr;
+            }
+            if (std::get<1>(g_cache.cached_replies)) {
+                free(std::get<1>(g_cache.cached_replies));
+                std::get<1>(g_cache.cached_replies) = nullptr;
+            }
+        }
+  };
+ 
   static std::optional<xcb_atom_t> getAtom(xcb_connection_t* connection, std::string_view name) {
     xcb_intern_atom_cookie_t cookie = xcb_intern_atom(connection, false, name.length(), name.data());
     auto reply = Reply<xcb_intern_atom_reply_t>{ xcb_intern_atom_reply(connection, cookie, nullptr) };
@@ -61,8 +125,11 @@ namespace xcb {
 
   static std::optional<xcb_window_t> getToplevelWindow(xcb_connection_t* connection, xcb_window_t window) {
     for (;;) {
-      xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
-      auto reply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
+      const bool tryCached = (g_cache_bIsValid && g_cache.window == window);
+
+      xcb_query_tree_cookie_t cookie = tryCached ? g_cache.q_tree : xcb_query_tree(connection, window);
+
+      auto reply = tryCached ? CachedReply(connection, cookie) : Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
 
       if (!reply) {
         fprintf(stderr, "[Gamescope WSI] getToplevelWindow: xcb_query_tree failed for window 0x%x.\n", window);
@@ -77,8 +144,11 @@ namespace xcb {
   }
 
   static std::optional<VkRect2D> getWindowRect(xcb_connection_t* connection, xcb_window_t window) {
-    xcb_get_geometry_cookie_t cookie = xcb_get_geometry(connection, window);
-    auto reply = Reply<xcb_get_geometry_reply_t>{ xcb_get_geometry_reply(connection, cookie, nullptr) };
+    const bool tryCached = (g_cache_bIsValid && g_cache.window == window);
+
+    xcb_get_geometry_cookie_t cookie = tryCached ? g_cache.geo : xcb_get_geometry(connection, window);
+
+    auto reply = tryCached ? CachedReply(connection, cookie) : Reply<xcb_get_geometry_reply_t>{ xcb_get_geometry_reply(connection, cookie, nullptr) };
     if (!reply) {
       fprintf(stderr, "[Gamescope WSI] getWindowRect: xcb_get_geometry failed for window 0x%x.\n", window);
       return std::nullopt;
@@ -112,8 +182,11 @@ namespace xcb {
   static std::optional<VkExtent2D> getLargestObscuringChildWindowSize(xcb_connection_t* connection, xcb_window_t window) {
     VkExtent2D largestExtent = {};
 
-    xcb_query_tree_cookie_t cookie = xcb_query_tree(connection, window);
-    auto reply = Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
+    const bool tryCached = (g_cache_bIsValid && g_cache.window == window);
+
+    xcb_query_tree_cookie_t cookie = tryCached ? g_cache.q_tree : xcb_query_tree(connection, window);
+
+    auto reply = tryCached ? CachedReply(connection, cookie) : Reply<xcb_query_tree_reply_t>{ xcb_query_tree_reply(connection, cookie, nullptr) };
 
     if (!reply) {
       fprintf(stderr, "[Gamescope WSI] getLargestObscuringWindowSize: xcb_query_tree failed for window 0x%x.\n", window);
