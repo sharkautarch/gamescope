@@ -8,10 +8,10 @@
 namespace xcb {
 
   typedef struct {
+  	xcb_window_t window;
+  	xcb_get_geometry_cookie_t geo;
     xcb_query_tree_cookie_t q_tree;
-    xcb_get_geometry_cookie_t geo;
-    xcb_window_t window;
-    std::tuple<xcb_query_tree_reply_t*, xcb_get_geometry_reply_t*> cached_replies;
+    std::tuple<xcb_get_geometry_reply_t*, xcb_query_tree_reply_t*> cached_replies;
   } cookie_cache_t;
 
   static thread_local constinit bool g_cache_bIsValid = false; //thread_local just incase g_cache could otherwise be accessed by one thread, while it is being deleted by another thread
@@ -27,29 +27,29 @@ namespace xcb {
   template <typename T>
   using Reply = std::unique_ptr<T, ReplyDeleter>;
   
-  
-  Reply<xcb_query_tree_reply_t> CachedReply(xcb_connection_t* connection, xcb_query_tree_cookie_t cookie)
-  {
-    xcb_query_tree_reply_t* reply_copied = reinterpret_cast<xcb_query_tree_reply_t*>(malloc(sizeof(xcb_query_tree_reply_t)));
-    if (std::get<0>(g_cache.cached_replies) == nullptr) {
-        std::get<0>(g_cache.cached_replies) = xcb_query_tree_reply(connection, cookie, nullptr);
-    }
-
-    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<0>(g_cache.cached_replies)), sizeof(xcb_query_tree_reply_t));
-
-    return Reply<xcb_query_tree_reply_t>{reply_copied};;
-  }
 
   Reply<xcb_get_geometry_reply_t> CachedReply(xcb_connection_t* connection, xcb_get_geometry_cookie_t cookie)
   {
     xcb_get_geometry_reply_t* reply_copied = reinterpret_cast<xcb_get_geometry_reply_t*>(malloc(sizeof(xcb_get_geometry_reply_t)));
-    if (std::get<1>(g_cache.cached_replies) == nullptr) {
-        std::get<1>(g_cache.cached_replies) = xcb_get_geometry_reply(connection, cookie, nullptr);
+    if (std::get<0>(g_cache.cached_replies) == nullptr) {
+        std::get<0>(g_cache.cached_replies) = xcb_get_geometry_reply(connection, cookie, nullptr);
     }
 
-    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<1>(g_cache.cached_replies)), sizeof(xcb_get_geometry_reply_t));
+    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<0>(g_cache.cached_replies)), sizeof(xcb_get_geometry_reply_t));
 
     return Reply<xcb_get_geometry_reply_t>{reply_copied};
+  }
+  
+  Reply<xcb_query_tree_reply_t> CachedReply(xcb_connection_t* connection, xcb_query_tree_cookie_t cookie)
+  {
+    xcb_query_tree_reply_t* reply_copied = reinterpret_cast<xcb_query_tree_reply_t*>(malloc(sizeof(xcb_query_tree_reply_t)));
+    if (std::get<1>(g_cache.cached_replies) == nullptr) {
+        std::get<1>(g_cache.cached_replies) = xcb_query_tree_reply(connection, cookie, nullptr);
+    }
+
+    memcpy(reinterpret_cast<void*>(reply_copied), reinterpret_cast<void*>(std::get<1>(g_cache.cached_replies)), sizeof(xcb_query_tree_reply_t));
+
+    return Reply<xcb_query_tree_reply_t>{reply_copied};;
   }
 
   class Prefetcher
@@ -62,9 +62,11 @@ namespace xcb {
     public:
         Prefetcher() = delete;
         explicit Prefetcher(xcb_connection_t* connection, xcb_window_t window) {
-            g_cache.q_tree = xcb_query_tree(connection, window);
-            g_cache.geo = xcb_get_geometry(connection, window);
-            g_cache.window = window;
+        	g_cache = {
+        		.window = window,
+        		.geo = xcb_get_geometry(connection, window),
+        		.q_tree = xcb_query_tree(connection, window)
+        	};
             g_cache_bIsValid = true;
         }
 
