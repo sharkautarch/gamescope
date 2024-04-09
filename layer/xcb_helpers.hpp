@@ -8,8 +8,8 @@
 namespace xcb {
 
   typedef struct {
-  	xcb_window_t window;
-  	xcb_get_geometry_cookie_t geo;
+    xcb_window_t window;
+    xcb_get_geometry_cookie_t geo;
     xcb_query_tree_cookie_t q_tree;
     std::tuple<xcb_get_geometry_reply_t*, xcb_query_tree_reply_t*> cached_replies;
   } cookie_cache_t;
@@ -54,19 +54,19 @@ namespace xcb {
 
   class Prefetcher
   {
-  	//Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR
-  	
-  	//The g_class struct has a thread local g_cache_bIsValid boolean, 
-  	//to prevent any issue with another thread calling another GamescopeWSILayer:: function which calls an xcb:: func 
-  	//that might otherwise access g_cache while g_cache is being cleared at the end of GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR()
+    //Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR
+    
+    //The g_class struct has a thread local g_cache_bIsValid boolean, 
+    //to prevent any issue with another thread calling another GamescopeWSILayer:: function which calls an xcb:: func 
+    //that might otherwise access g_cache while g_cache is being cleared at the end of GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR()
     public:
         Prefetcher() = delete;
         explicit Prefetcher(xcb_connection_t* connection, xcb_window_t window) {
-        	g_cache = {
-        		.window = window,
-        		.geo = xcb_get_geometry(connection, window),
-        		.q_tree = xcb_query_tree(connection, window)
-        	};
+            g_cache = {
+                .window = window,
+                .geo = xcb_get_geometry(connection, window),
+                .q_tree = xcb_query_tree(connection, window)
+            };
             g_cache_bIsValid = true;
         }
 
