@@ -75,6 +75,7 @@
 #include <signal.h>
 #include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
+#include "parallel_hashmap/phmap.h"
 #include "waitable.h"
 
 #include "main.hpp"
@@ -138,7 +139,7 @@ extern float g_flInternalDisplayBrightnessNits;
 extern float g_flHDRItmSdrNits;
 extern float g_flHDRItmTargetNits;
 
-uint64_t g_lastWinSeq = 0;
+uint32_t g_lastWinSeq = 0;
 
 static std::shared_ptr<gamescope::BackendBlob> s_scRGB709To2020Matrix;
 
@@ -688,12 +689,12 @@ gamescope::CAsyncWaiter<std::shared_ptr<commit_t>> g_ImageWaiter{ "gamescope_img
 
 struct commit_t : public gamescope::IWaitable
 {
-	commit_t()
+	__attribute__((no_stack_protector,nothrow)) commit_t() noexcept
 	{
 		static uint64_t maxCommmitID = 0;
 		commitID = ++maxCommmitID;
 	}
-    ~commit_t()
+    __attribute__((no_stack_protector,nothrow)) ~commit_t() noexcept
     {
 		{
 			std::unique_lock lock( m_WaitableCommitStateMutex );
@@ -738,14 +739,14 @@ struct commit_t : public gamescope::IWaitable
 	bool is_steam = false;
 	std::optional<wlserver_vk_swapchain_feedback> feedback = std::nullopt;
 
-	uint64_t win_seq = 0;
+	uint32_t win_seq = 0;
 	struct wlr_surface *surf = nullptr;
 	std::vector<struct wl_resource*> presentation_feedbacks;
 
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
 	uint64_t earliest_present_time = 0;
-	uint64_t present_margin = 0;
+	uint32_t present_margin = 0;
 
 	// For waitable:
 	int GetFD() final
@@ -6190,7 +6191,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
+bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime ) noexcept
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -6200,8 +6201,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		{
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
 			w->commit_queue[ j ]->done = true;
-			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
-			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
+			w->commit_queue[ j ]->earliest_present_time = presentMargin + earliestLatchTime;
+			w->commit_queue[ j ]->present_margin = presentMargin;
 			bFoundWindow = true;
 
 			// Window just got a new available commit, determine if that's worth a repaint
@@ -6278,8 +6279,12 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 }
 
 // TODO: Merge these two functions.
-void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
+void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
+		// windows in FIFO mode we got a new frame to present for this vblank
+	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
+	fifo_win_seqs.clear();
+
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
@@ -6294,6 +6299,10 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	fifo_win_seqs.clear();
 	fifo_win_seqs.reserve( 32 );
 
+	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
+		vec[index] = std::move(entry);
+	};
+
 	uint64_t now = get_time_in_nanos();
 
 	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
@@ -6303,19 +6312,19 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	{
 		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
-			commits_before_their_time.push_back( entry );
+			commits_before_their_time(ctx->doneCommits.listCommitsDone, entry, index++);
 			continue;
 		}
 
-		if (!entry.earliestPresentTime)
+		if (!entry.presentMargin)
 		{
-			entry.earliestPresentTime = next_refresh_time;
+			entry.presentMargin = next_refresh_time - now;
 			entry.earliestLatchTime = now;
 		}
 
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
-			commits_before_their_time.push_back( entry );
+			commits_before_their_time(ctx->doneCommits.listCommitsDone, entry, index++);
 			continue;
 		}
 
@@ -6323,7 +6332,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 		{
 			if (w->seq != entry.winSeq)
 				continue;
-			if (handle_done_commit(w, ctx, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			if (handle_done_commit(w, ctx, entry.commitID, entry.presentMargin, entry.earliestLatchTime))
 			{
 				if (entry.fifo)
 					fifo_win_seqs.insert(entry.winSeq);
@@ -6332,43 +6341,65 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 		}
 	}
 
-	ctx->doneCommits.listCommitsDone.swap( commits_before_their_time );
+	if ( index > 0 ) {
+		auto start = ctx->doneCommits.listCommitsDone.begin();
+		std::advance(start, index);
+		auto end = ctx->doneCommits.listCommitsDone.end();
+		//using erase() instead of resize(), because using resize() causes the compiler
+		//to add code that checks if vector size would increase and do reallocation in that case.
+		//We know w/ 100% certainty that the vector's size can't increase here, but the compiler is dumb dumb...
+		ctx->doneCommits.listCommitsDone.erase(start, end);
+	} else {
+		ctx->doneCommits.listCommitsDone.clear();
+	}
 }
 
-void handle_done_commits_xdg()
+void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexcept
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	std::vector< CommitDoneEntry_t > commits_before_their_time;
+	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
+		vec[index] = std::move(entry);
+	};
 
 	uint64_t now = get_time_in_nanos();
 
+	uint32_t index = 0;
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
-		if (!entry.earliestPresentTime)
+		if (!entry.presentMargin)
 		{
-			entry.earliestPresentTime = next_refresh_time;
+			entry.presentMargin = next_refresh_time - now;
 			entry.earliestLatchTime = now;
 		}
 
 		if ( entry.desiredPresentTime > next_refresh_time )
 		{
-			commits_before_their_time.push_back( entry );
+			commits_before_their_time(g_steamcompmgr_xdg_done_commits.listCommitsDone, entry, index++);
 			break;
 		}
 
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
 		{
-			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.presentMargin, entry.earliestLatchTime))
 				break;
 		}
 	}
-
-	g_steamcompmgr_xdg_done_commits.listCommitsDone = std::move( commits_before_their_time );
+	if (index > 0) {
+		//using erase() instead of resize(), because using resize() causes the compiler
+		//to add code that checks if vector size would increase and do reallocation in that case.
+		//We know w/ 100% certainty that the vector's size can't increase here, but the compiler is dumb dumb...
+		auto start = g_steamcompmgr_xdg_done_commits.listCommitsDone.begin();
+		std::advance(start, index);
+		auto end = g_steamcompmgr_xdg_done_commits.listCommitsDone.end();
+		g_steamcompmgr_xdg_done_commits.listCommitsDone.erase(start, end);
+	} else {
+		g_steamcompmgr_xdg_done_commits.listCommitsDone.clear();
+	}
 }
 
 void handle_presented_for_window( steamcompmgr_win_t* w )

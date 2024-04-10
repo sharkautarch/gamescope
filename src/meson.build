@@ -87,6 +87,10 @@ reshade_include = include_directories([
   '../thirdparty/SPIRV-Headers/include/spirv/unified1'
 ])
 
+phmap_include = include_directories([
+	'../subprojects/parallel-hashmap/'
+])
+
 required_wlroots_features = ['xwayland']
 
 src = [
@@ -150,7 +154,7 @@ endforeach
   executable(
     'gamescope',
     src, reshade_src,
-    include_directories : [reshade_include],
+    include_directories : [reshade_include, phmap_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,

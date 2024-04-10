@@ -19,3 +19,6 @@
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
+[submodule "subprojects/parallel-hashmap"]
+	path = subprojects/parallel-hashmap
+	url = https://github.com/greg7mdp/parallel-hashmap.git
