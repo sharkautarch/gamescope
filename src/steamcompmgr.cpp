@@ -6281,34 +6281,26 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 // TODO: Merge these two functions.
 void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
-		// windows in FIFO mode we got a new frame to present for this vblank
+	// windows in FIFO mode we got a new frame to present for this vblank
 	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
 	fifo_win_seqs.clear();
-
+	
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	static std::vector< CommitDoneEntry_t > commits_before_their_time;
-	commits_before_their_time.clear();
-	commits_before_their_time.reserve( 32 );
-
-	// windows in FIFO mode we got a new frame to present for this vblank
-	static std::unordered_set< uint64_t > fifo_win_seqs;
-	fifo_win_seqs.clear();
-	fifo_win_seqs.reserve( 32 );
-
 	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
 		vec[index] = std::move(entry);
 	};
-
+	
 	uint64_t now = get_time_in_nanos();
 
 	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
 
+	uint32_t index = 0;
 	// very fast loop yes
-	for ( auto& entry : ctx->doneCommits.listCommitsDone )
+	for ( auto & entry : ctx->doneCommits.listCommitsDone )
 	{
 		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
 		{
@@ -6352,6 +6344,7 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( x
 	} else {
 		ctx->doneCommits.listCommitsDone.clear();
 	}
+	
 }
 
 void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexcept
