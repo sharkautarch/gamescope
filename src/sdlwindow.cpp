@@ -115,10 +115,10 @@ namespace gamescope
 		// IBackend
 		/////////////
 
-		virtual void latchWait() override;
-		virtual void releaseLatch() override;
+		virtual void __attribute__((cold)) latchWait() override;
+		virtual void __attribute__((cold)) releaseLatch() override;
 		virtual bool Init() override;
-		virtual bool PostInit() override;
+		virtual bool __attribute__((cold)) PostInit() override;
 		virtual std::span<const char *const> GetInstanceExtensions() const override;
 		virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override;
 		virtual VkImageLayout GetPresentLayout() const override;

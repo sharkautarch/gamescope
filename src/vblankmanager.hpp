@@ -61,7 +61,7 @@ namespace gamescope
 
         bool UsingTimerFD() const;
         int GetFD() final;
-        void OnPollIn() final;
+        void __attribute__((hot)) OnPollIn() final;
     private:
         void VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone );
 

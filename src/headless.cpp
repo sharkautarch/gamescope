@@ -129,7 +129,7 @@ namespace gamescope
 			return true;
 		}
 
-		virtual bool PostInit() override
+		virtual bool __attribute__((cold)) PostInit() override
 		{
 			return true;
 		}

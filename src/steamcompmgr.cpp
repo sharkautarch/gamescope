@@ -407,7 +407,7 @@ update_color_mgmt()
 }
 
 static void
-update_screenshot_color_mgmt()
+__attribute__((cold)) update_screenshot_color_mgmt()
 {
 	create_color_mgmt_luts(k_ScreenshotColorMgmt, g_ScreenshotColorMgmtLuts);
 	create_color_mgmt_luts(k_ScreenshotColorMgmtHDR, g_ScreenshotColorMgmtLutsHDR);
@@ -595,7 +595,7 @@ bool set_mura_scale(float new_scale)
 	return diff;
 }
 
-bool set_color_3dlut_override(const char *path)
+bool __attribute__((cold)) set_color_3dlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmt.pending.externalDirtyCtr++;
@@ -623,7 +623,7 @@ bool set_color_3dlut_override(const char *path)
 	return true;
 }
 
-bool set_color_shaperlut_override(const char *path)
+bool __attribute__((cold)) set_color_shaperlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmt.pending.externalDirtyCtr++;
@@ -2418,7 +2418,7 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 	focusedWindowOffsetY = frameInfo->layers[ frameInfo->layerCount - 1 ].offset.y;
 }
 
-static void
+static void __attribute__((hot))
 paint_all(bool async)
 {
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
@@ -5142,7 +5142,7 @@ update_runtime_info()
 }
 
 static void
-init_runtime_info()
+__attribute__((cold, noinline)) init_runtime_info()
 {
 	const char *path = getenv( "GAMESCOPE_LIMITER_FILE" );
 	if ( !path )
@@ -6279,7 +6279,7 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 }
 
 // TODO: Merge these two functions.
-void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
+void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
 {
 	// windows in FIFO mode we got a new frame to present for this vblank
 	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
@@ -6587,7 +6587,7 @@ void check_new_xdg_res()
 
 pid_t child_pid = 0;
 
-static void
+static void __attribute__((cold))
 spawn_client( char **argv )
 {
 #if defined(__linux__)
@@ -6972,7 +6972,7 @@ xwayland_ctx_t g_ctx;
 
 static bool setup_error_handlers = false;
 
-void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
+void __attribute__((cold)) init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
 {
 	assert(!xwayland_server->ctx);
 	xwayland_server->ctx = std::make_unique<xwayland_ctx_t>();
@@ -7415,7 +7415,7 @@ void steamcompmgr_check_xdg(bool vblank)
 	check_new_xdg_res();
 }
 
-void update_edid_prop()
+void __attribute__((cold)) update_edid_prop()
 {
 	const char *filename = gamescope::GetPatchedEdidPath();
 	if (!filename)

@@ -250,7 +250,7 @@ namespace gamescope
 		return UsingTimerFD() ? ITimerWaitable::GetFD() : m_nNudgePipe[ 0 ];
 	}
 
-	void CVBlankTimer::OnPollIn()
+	void __attribute__((hot)) CVBlankTimer::OnPollIn()
 	{
 		if ( UsingTimerFD() )
 		{

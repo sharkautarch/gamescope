@@ -374,7 +374,7 @@ namespace gamescope
             return true;
 		}
 
-		virtual bool PostInit() override
+		virtual bool __attribute__((cold)) PostInit() override
 		{
 			m_pIME = create_local_ime();
             if ( !m_pIME )
