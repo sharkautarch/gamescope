@@ -17,7 +17,7 @@ namespace gamescope
     class ConCommand;
 
     template <typename T>
-    inline std::optional<T> Parse( std::string_view chars )
+    inline __attribute__((cold)) std::optional<T> Parse( std::string_view chars )
     {
         T obj;
         auto result = std::from_chars( chars.begin(), chars.end(), obj );
@@ -28,7 +28,7 @@ namespace gamescope
     }
 
     template <>
-    inline std::optional<bool> Parse( std::string_view chars )
+    inline __attribute__((cold)) std::optional<bool> Parse( std::string_view chars )
     {
         std::optional<uint32_t> oNumber = Parse<uint32_t>( chars );
         if ( oNumber )
@@ -56,7 +56,7 @@ namespace gamescope
         using ConCommandFunc = std::function<void( std::span<std::string_view> )>;
 
     public:
-        ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func )
+        __attribute__((cold)) ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func )
             : m_pszName{ pszName }
             , m_pszDescription{ pszDescription }
             , m_Func{ func }
@@ -65,18 +65,18 @@ namespace gamescope
             GetCommands()[ std::string( pszName ) ] = this;
         }
 
-        ~ConCommand()
+        __attribute__((cold)) ~ConCommand()
         {
             GetCommands().erase( GetCommands().find( m_pszName ) );
         }
 
-        void Invoke( std::span<std::string_view> args )
+        void __attribute__((cold)) Invoke( std::span<std::string_view> args )
         {
             if ( m_Func )
                 m_Func( args );
         }
 
-        static Dict<ConCommand *>& GetCommands();
+        static Dict<ConCommand *>& __attribute__((cold)) GetCommands();
     protected:
         std::string_view m_pszName;
         std::string_view m_pszDescription;
@@ -88,20 +88,20 @@ namespace gamescope
     {
         using ConVarCallbackFunc = std::function<void()>;
     public:
-        ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr )
+        __attribute__((cold)) ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr )
             : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); } )
             , m_Value{ defaultValue }
             , m_Callback{ func }
         {
         }
 
-        const T& Get() const
+        const T& __attribute__((cold)) Get() const
         {
             return m_Value;
         }
 
         template <typename J>
-        void SetValue( const J &newValue )
+        void __attribute__((cold)) SetValue( const J &newValue )
         {
             m_Value = T{ newValue };
 
@@ -114,15 +114,15 @@ namespace gamescope
         }
 
         template <typename J>
-        ConVar<T>& operator =( const J &newValue ) { SetValue<J>( newValue ); return *this; }
+        ConVar<T>& __attribute__((cold)) operator =( const J &newValue ) { SetValue<J>( newValue ); return *this; }
 
-        operator T() const { return m_Value; }
+        operator __attribute__((cold)) T() const { return m_Value; }
 
-        template <typename J> bool operator == ( const J &other ) const { return m_Value ==  other; }
-        template <typename J> bool operator != ( const J &other ) const { return m_Value !=  other; }
-        template <typename J> bool operator <=>( const J &other ) const { return m_Value <=> other; }
+        template <typename J> bool __attribute__((cold)) operator == ( const J &other ) const { return m_Value ==  other; }
+        template <typename J> bool __attribute__((cold)) operator != ( const J &other ) const { return m_Value !=  other; }
+        template <typename J> bool __attribute__((cold)) operator <=>( const J &other ) const { return m_Value <=> other; }
 
-        void InvokeFunc( std::span<std::string_view> pArgs )
+        void __attribute__((cold)) InvokeFunc( std::span<std::string_view> pArgs )
         {
             if ( pArgs.size() != 2 )
                 return;

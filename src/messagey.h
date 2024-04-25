@@ -77,13 +77,13 @@ namespace messagey {
         char str[256];
     };
 
-    inline ErrorData* GetErrBuf()
+    inline ErrorData* __attribute__((cold)) GetErrBuf()
     {
         static thread_local ErrorData err;
         return &err;
     }
 
-    inline ErrorData* GetError()
+    inline ErrorData* __attribute__((cold)) GetError()
     {
         ErrorData *err = GetErrBuf();
         if (!err->valid)
@@ -91,7 +91,7 @@ namespace messagey {
         return err;
     }
 
-    inline int SetError(const char *fmt, ...)
+    inline int __attribute__((cold)) SetError(const char *fmt, ...)
     {
         if (fmt != nullptr) {
             va_list ap;
@@ -107,7 +107,7 @@ namespace messagey {
         return -1;
     }
 
-    inline int Show(const MessageBoxData *messageboxdata, int *buttonid)
+    inline int __attribute__((cold)) Show(const MessageBoxData *messageboxdata, int *buttonid)
     {
         int fd_pipe[2]; /* fd_pipe[0]: read end of pipe, fd_pipe[1]: write end of pipe */
         pid_t pid1;
@@ -255,7 +255,7 @@ namespace messagey {
         }
     }
 
-    inline int ShowSimple(const char *message, const char *caption, MessageBoxFlags flags, int *buttonid)
+    inline int __attribute__((cold)) ShowSimple(const char *message, const char *caption, MessageBoxFlags flags, int *buttonid)
     {
         int buttonCount = 0;
         MessageBoxButtonData buttons[2];
