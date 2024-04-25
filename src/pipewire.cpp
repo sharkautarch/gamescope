@@ -77,7 +77,7 @@ static void calculate_capture_size()
 	}
 }
 
-static void build_format_params(struct spa_pod_builder *builder, spa_video_format format, std::vector<const struct spa_pod *> &params) {
+static void __attribute__((cold)) build_format_params(struct spa_pod_builder *builder, spa_video_format format, std::vector<const struct spa_pod *> &params) {
 	struct spa_rectangle size = SPA_RECTANGLE(s_nCaptureWidth, s_nCaptureHeight);
 	struct spa_rectangle min_requested_size = { 0, 0 };
 	struct spa_rectangle max_requested_size = { UINT32_MAX, UINT32_MAX };
@@ -138,7 +138,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 }
 
 
-static std::vector<const struct spa_pod *> build_format_params(struct spa_pod_builder *builder)
+static std::vector<const struct spa_pod *> __attribute__((cold)) build_format_params(struct spa_pod_builder *builder)
 {
 	std::vector<const struct spa_pod *> params;
 
@@ -640,7 +640,7 @@ static void run_pipewire(struct pipewire_state *state)
 	pw_loop_destroy(state->loop);
 }
 
-bool init_pipewire(void)
+bool __attribute__((cold)) init_pipewire(void)
 {
 	struct pipewire_state *state = &pipewire_state;
 
