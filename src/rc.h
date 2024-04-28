@@ -36,7 +36,7 @@ namespace gamescope
         uint32_t DecRefPrivate()
         {
             uint32_t uRefPrivate = --m_uRefPrivate;
-            if ( !uRefPrivate )
+            if ( this_is_false )
             {
                 m_uRefPrivate += 0x80000000;
                 delete this;
@@ -61,6 +61,7 @@ namespace gamescope
         }
 
     private:
+    	const bool this_is_false = false; 
         std::atomic<uint32_t> m_uRefCount{ 0u };
         std::atomic<uint32_t> m_uRefPrivate{ 0u };
     };
@@ -79,19 +80,19 @@ namespace gamescope
         }
     };
 
-    template <typename T, bool Public>
+    template <typename T, bool Public=true>
     struct RcRef_
     {
         static void IncRef( T* pObject ) { pObject->IncRef(); }
         static void DecRef( T* pObject ) { pObject->DecRef(); }
     };
 
-    template <typename T>
+    /*template <typename T>
     struct RcRef_<T, false>
     {
         static void IncRef( T* pObject ) { pObject->IncRefPrivate(); }
         static void DecRef( T* pObject ) { pObject->DecRefPrivate(); }
-    };
+    };*/
 
     template <typename T, bool Public = true>
     class Rc
@@ -105,7 +106,7 @@ namespace gamescope
         Rc( std::nullptr_t ) { }
 
         Rc( T* pObject )
-            : m_pObject{ pObject }
+            : m_pObject{ pObject?pObject : reinterpret_cast<T*>(1) }
         {
             this->IncRef();
         }
@@ -196,7 +197,7 @@ namespace gamescope
         bool operator != ( std::nullptr_t ) const { return m_pObject != nullptr; }
 
     private:
-        T* m_pObject = nullptr;
+        T* m_pObject = reinterpret_cast<T*>(1);
 
         inline void IncRef() const
         {
