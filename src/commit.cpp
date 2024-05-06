@@ -7,12 +7,12 @@
 
 extern gamescope::CAsyncWaiter<gamescope::Rc<commit_t>> g_ImageWaiter;
 
-__attribute__((no_stack_protector,nothrow)) commit_t() noexcept
+__attribute__((no_stack_protector,nothrow)) commit_t::commit_t() noexcept
 {
     static uint64_t maxCommmitID = 0;
     commitID = ++maxCommmitID;
 }
-__attribute__((no_stack_protector,nothrow)) ~commit_t() noexcept
+__attribute__((no_stack_protector,nothrow)) commit_t::~commit_t() noexcept
 {
     {
         std::unique_lock lock( m_WaitableCommitStateMutex );
