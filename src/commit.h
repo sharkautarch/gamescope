@@ -2,8 +2,8 @@
 
 struct commit_t final : public gamescope::IWaitable, public gamescope::RcObject
 {
-	commit_t();
-    ~commit_t();
+	__attribute__((no_stack_protector,nothrow)) commit_t() noexcept;
+    __attribute__((no_stack_protector,nothrow)) ~commit_t() noexcept;
 
 	GamescopeAppTextureColorspace colorspace() const;
 
