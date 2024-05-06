@@ -40,6 +40,22 @@ namespace gamescope
             return false;
     }
 
+    inline std::vector<std::string_view> Split( std::string_view string, std::string_view delims = " " )
+    {
+        std::vector<std::string_view> tokens;
+        
+        size_t end = 0;
+        for ( size_t start = 0; start < string.size() && end != std::string_view::npos; start = end + 1 )
+        {
+            end = string.find_first_of( delims, start );
+
+            if ( start != end )
+                tokens.emplace_back( string.substr( start, end-start ) );
+        }
+
+        return tokens;
+    }
+
     struct StringHash
     {
         using is_transparent = void;
@@ -127,7 +143,13 @@ namespace gamescope
             if ( pArgs.size() != 2 )
                 return;
 
-            if constexpr ( std::is_integral<T>::value )
+            if constexpr ( std::is_enum<T>::value )
+            {
+                using Underlying = std::underlying_type<T>::type;
+                std::optional<Underlying> oResult = Parse<Underlying>( pArgs[1] );
+                SetValue( oResult ? static_cast<T>( *oResult ) : T{} );
+            }
+            else if constexpr ( std::is_integral<T>::value )
             {
                 std::optional<T> oResult = Parse<T>( pArgs[1] );
                 SetValue( oResult ? *oResult : T{} );

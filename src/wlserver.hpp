@@ -12,6 +12,8 @@
 #include <list>
 #include <optional>
 
+#include <pixman-1/pixman.h>
+
 #include "vulkan_include.h"
 
 #include "steamcompmgr_shared.hpp"
@@ -32,10 +34,24 @@ struct wlserver_vk_swapchain_feedback
 	VkColorSpaceKHR vk_colorspace;
 	VkCompositeAlphaFlagBitsKHR vk_composite_alpha;
 	VkSurfaceTransformFlagBitsKHR vk_pre_transform;
-	VkPresentModeKHR vk_present_mode;
 	VkBool32 vk_clipped;
 
 	std::shared_ptr<gamescope::BackendBlob> hdr_metadata_blob;
+};
+
+
+struct GamescopeTimelinePoint
+{
+	struct wlr_render_timeline *pTimeline = nullptr;
+	uint64_t ulPoint = 0;
+
+	void Release();
+};
+
+struct GamescopeAcquireTimelineState
+{
+	int32_t nEventFd = -1;
+	bool bKnownReady = false;
 };
 
 struct ResListEntry_t {
@@ -47,6 +63,8 @@ struct ResListEntry_t {
 	std::vector<struct wl_resource*> presentation_feedbacks;
 	std::optional<uint32_t> present_id;
 	uint64_t desired_present_time;
+	std::optional<GamescopeAcquireTimelineState> oAcquireState;
+	std::optional<GamescopeTimelinePoint> oReleasePoint;
 };
 
 struct wlserver_content_override;
@@ -79,6 +97,7 @@ public:
 
 	struct wl_client *get_client();
 	struct wlr_output *get_output();
+	struct wlr_output_state *get_output_state();
 
 	void update_output_info();
 
@@ -86,9 +105,10 @@ private:
 	struct wlr_xwayland_server *xwayland_server = NULL;
 	struct wl_listener xwayland_ready_listener = { .notify = xwayland_ready_callback };
 
-	struct wlr_output *output;
+	struct wlr_output *output = nullptr;
+	struct wlr_output_state *output_state = nullptr;
 
-	std::map<uint32_t, wlserver_content_override *> content_overrides;
+	std::unordered_map<uint32_t, wlserver_content_override *> content_overrides;
 
 	bool xwayland_ready = false;
 	_XDisplay *dpy = NULL;
@@ -111,6 +131,7 @@ struct wlserver_t {
 		struct wlr_compositor *compositor;
 		struct wlr_session *session;
 		struct wlr_seat *seat;
+		struct wlr_linux_drm_syncobj_manager_v1 *drm_syncobj_manager_v1;
 
 		// Used to simulate key events and set the keymap
 		struct wlr_keyboard *virtual_keyboard_device;
@@ -124,6 +145,11 @@ struct wlserver_t {
 	struct wlr_surface *kb_focus_surface;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
+	bool mouse_constraint_requires_warp = false;
+	pixman_region32_t confine;
+	struct wlr_pointer_constraint_v1 *mouse_constraint = nullptr;
+	uint64_t ulLastMovedCursorTime = 0;
+	bool bCursorHidden = true;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
@@ -138,7 +164,11 @@ struct wlserver_t {
 	struct wl_listener new_input_method;
 
 	struct wlr_xdg_shell *xdg_shell;
+	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
+	struct wlr_pointer_constraints_v1 *constraints;
 	struct wl_listener new_xdg_surface;
+	struct wl_listener new_xdg_toplevel;
+	struct wl_listener new_pointer_constraint;
 	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
 	std::atomic<bool> xdg_dirty;
 	std::mutex xdg_commit_lock;
@@ -175,19 +205,6 @@ struct wlserver_touch {
 	struct wl_listener motion;
 };
 
-enum wlserver_touch_click_mode {
-	WLSERVER_TOUCH_CLICK_HOVER = 0,
-	WLSERVER_TOUCH_CLICK_LEFT = 1,
-	WLSERVER_TOUCH_CLICK_RIGHT = 2,
-	WLSERVER_TOUCH_CLICK_MIDDLE = 3,
-	WLSERVER_TOUCH_CLICK_PASSTHROUGH = 4,
-	WLSERVER_TOUCH_CLICK_DISABLED = 5,
-	WLSERVER_TOUCH_CLICK_TRACKPAD = 6,
-};
-
-extern enum wlserver_touch_click_mode g_nDefaultTouchClickMode;
-extern enum wlserver_touch_click_mode g_nTouchClickMode;
-
 void xwayland_surface_commit(struct wlr_surface *wlr_surface);
 
 bool wlsession_init( void );
@@ -202,14 +219,15 @@ void wlserver_lock(void);
 void wlserver_unlock(bool flush = true);
 bool wlserver_is_lock_held(void);
 
-void wlserver_keyboardfocus( struct wlr_surface *surface );
+void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true );
 void wlserver_key( uint32_t key, bool press, uint32_t time );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
-void wlserver_mousemotion( int x, int y, uint32_t time );
-void wlserver_mousewarp( int x, int y, uint32_t time );
+void wlserver_mousemotion( double x, double y, uint32_t time );
+void wlserver_mousehide();
+void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
-void wlserver_mousewheel( int x, int y, uint32_t time );
+void wlserver_mousewheel( double x, double y, uint32_t time );
 
 void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time );
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
@@ -218,6 +236,7 @@ void wlserver_touchup( int touch_id, uint32_t time );
 void wlserver_send_frame_done( struct wlr_surface *surf, const struct timespec *when );
 
 bool wlserver_surface_is_async( struct wlr_surface *surf );
+bool wlserver_surface_is_fifo( struct wlr_surface *surf );
 const std::shared_ptr<wlserver_vk_swapchain_feedback>& wlserver_surface_swapchain_feedback( struct wlr_surface *surf );
 
 std::vector<std::shared_ptr<steamcompmgr_win_t>> wlserver_get_xdg_shell_windows();
@@ -243,14 +262,13 @@ struct wlserver_wl_surface_info
 	struct wl_listener commit;
 	struct wl_listener destroy;
 
-	uint32_t presentation_hint = 0;
-
 	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback = {};
+	std::optional<VkPresentModeKHR> oCurrentPresentMode;
 
 	uint64_t sequence = 0;
 	std::vector<struct wl_resource*> pending_presentation_feedbacks;
 
-	std::atomic<struct wl_resource *> gamescope_swapchain = { nullptr };
+	std::vector<struct wl_resource *> gamescope_swapchains;
 	std::optional<uint32_t> present_id = std::nullopt;
 	uint64_t desired_present_time = 0;
 
@@ -276,9 +294,12 @@ void wlserver_presentation_feedback_discard( struct wlr_surface *surface, std::v
 void wlserver_past_present_timing( struct wlr_surface *surface, uint32_t present_id, uint64_t desired_present_time, uint64_t actual_present_time, uint64_t earliest_present_time, uint64_t present_margin );
 void wlserver_refresh_cycle( struct wlr_surface *surface, uint64_t refresh_cycle );
 
-void wlserver_force_shutdown();
+void wlserver_shutdown();
 
 void wlserver_send_gamescope_control( wl_resource *control );
 
 bool wlsession_active();
 
+void wlserver_fake_mouse_pos( double x, double y );
+
+void wlserver_mousewheel2( int32_t nDiscreteX, int32_t nDiscreteY, double flX, double flY, uint32_t uTime );

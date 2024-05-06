@@ -22,9 +22,11 @@
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "convar.h"
 #include "gpuvis_trace_utils.h"
 
 #include "backends.h"
+#include "refresh_rate.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -59,6 +61,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
+	{ "mangoapp", no_argument, nullptr, 0 },
 
 	{ "headless", no_argument, 0 },
 
@@ -180,6 +183,7 @@ const char usage[] =
 	"  --hdr-itm-target-nits          set the target luminace of the inverse tone mapping process.\n"
 	"                                 Default: 1000 nits, Max: 10000 nits\n"
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
+	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -386,7 +390,8 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 }
 
 struct sigaction handle_signal_action = {};
-extern pid_t child_pid;
+extern std::mutex g_ChildPidMutex;
+extern std::vector<pid_t> g_ChildPids;
 
 static void handle_signal( int sig )
 {
@@ -398,10 +403,16 @@ static void handle_signal( int sig )
 	case SIGQUIT:
 	case SIGTERM:
 	case SIGINT:
-		if (child_pid != 0)
 		{
-			fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
-			kill(child_pid, sig);
+			std::unique_lock lock( g_ChildPidMutex );
+			for ( auto& child_pid : g_ChildPids )
+			{
+				if (child_pid != 0)
+				{
+					fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
+					kill(child_pid, sig);
+				}
+			}
 		}
 
 		fprintf( stderr, "gamescope: Received %s signal, attempting shutdown!\n", strsignal(sig) );
@@ -580,7 +591,7 @@ int main(int argc, char **argv)
 				g_nNestedHeight = atoi( optarg );
 				break;
 			case 'r':
-				g_nNestedRefresh = atoi( optarg );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = atoi( optarg );
@@ -589,7 +600,7 @@ int main(int argc, char **argv)
 				g_nPreferredOutputHeight = atoi( optarg );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = atoi( optarg );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
@@ -632,8 +643,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "hdr-debug-heatmap") == 0) {
 					g_uCompositeDebug |= CompositeDebugFlag::Heatmap;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
-					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
-					g_nTouchClickMode = g_nDefaultTouchClickMode;
+					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) atoi( optarg );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
@@ -751,7 +761,9 @@ int main(int argc, char **argv)
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
-		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
+		if ( g_pOriginalWaylandDisplay != NULL )
+			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
+		else if ( g_pOriginalDisplay != NULL )
 			eCurrentBackend = gamescope::GamescopeBackend::SDL;
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
@@ -795,6 +807,12 @@ int main(int argc, char **argv)
 #endif
 		case gamescope::GamescopeBackend::Headless:
 			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+
+		case gamescope::GamescopeBackend::Wayland:
+			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
+			if ( !GetBackend() )
+				gamescope::IBackend::Set<gamescope::CSDLBackend>();
 			break;
 		default:
 			abort();

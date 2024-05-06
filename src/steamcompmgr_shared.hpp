@@ -48,7 +48,7 @@ struct wlserver_xdg_surface_info
 	}
 
 	// owned by wlserver
-	struct wlr_xdg_toplevel *xdg_toplevel = nullptr;
+	struct wlr_xdg_surface *xdg_surface = nullptr;
 	steamcompmgr_win_t *win = nullptr;
 
 	std::atomic<bool> mapped = { false };
@@ -120,7 +120,6 @@ struct steamcompmgr_win_t {
 	bool hasHwndStyle;
 	uint32_t hwndStyle;
 	bool hasHwndStyleEx;
-	int ignoreNextClickForVisibility;
 	uint32_t hwndStyleEx;
 
 	motif_hints_t *motif_hints;
@@ -131,9 +130,7 @@ struct steamcompmgr_win_t {
 	bool unlockedForFrameCallback;
 	bool receivedDoneCommit;
 
-	unsigned int mouseMoved;
-
-	std::vector< std::shared_ptr<commit_t> > commit_queue;
+	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;
 
 	steamcompmgr_win_type_t		type;
@@ -192,6 +189,7 @@ namespace gamescope
 		gamescope_control_screenshot_type eScreenshotType = GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY;
 		uint32_t uScreenshotFlags = 0;
 		bool bX11PropertyRequested = false;
+		bool bWaylandRequested = false;
 	};
 
 	class CScreenshotManager

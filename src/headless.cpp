@@ -1,6 +1,7 @@
 #include "backend.h"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "refresh_rate.h"
 
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
@@ -113,7 +114,7 @@ namespace gamescope
 			if ( g_nOutputWidth == 0 )
 				g_nOutputWidth = g_nOutputHeight * 16 / 9;
 			if ( g_nOutputRefresh == 0 )
-				g_nOutputRefresh = 60;
+				g_nOutputRefresh = ConvertHztomHz( 60 );
 
 			if ( !vulkan_init( vulkan_get_instance(), VK_NULL_HANDLE ) )
 			{
@@ -175,22 +176,9 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data );
 		}
 
-		virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-			return 0;
-		}
-
-        virtual void LockBackendFb( uint32_t uFbId ) override
-		{
-			abort();
-		}
-        virtual void UnlockBackendFb( uint32_t uFbId ) override
-		{
-			abort();
-		}
-        virtual void DropBackendFb( uint32_t uFbId ) override
-		{
-			abort();
+			return nullptr;
 		}
 
 		virtual bool UsesModifiers() const override
@@ -237,6 +225,11 @@ namespace gamescope
         virtual bool IsSessionBased() const override
 		{
 			return false;
+		}
+
+		virtual bool SupportsExplicitSync() const override
+		{
+			return true;
 		}
 
 		virtual bool IsVisible() const override

@@ -171,7 +171,7 @@ public:
 	inline uint32_t contentWidth() {return m_contentWidth; }
 	inline uint32_t contentHeight() {return m_contentHeight; }
 	inline uint32_t rowPitch() { return m_unRowPitch; }
-	inline uint32_t fbid() { return m_FBID; }
+	inline gamescope::IBackendFb* GetBackendFb() { return m_pBackendFb.get(); }
 	inline uint8_t *mappedData() { return m_pMappedData; }
 	inline VkFormat format() const { return m_format; }
 	inline const struct wlr_dmabuf_attributes& dmabuf() { return m_dmabuf; }
@@ -232,7 +232,8 @@ private:
 	uint32_t m_chromaOffset = 0;
 	uint32_t m_chromaPitch = 0;
 	
-	uint32_t m_FBID = 0;
+	// If this texture owns the backend Fb (ie. it's an internal texture)
+	gamescope::OwningRc<gamescope::IBackendFb> m_pBackendFb;
 
 	uint8_t *m_pMappedData = nullptr;
 
@@ -258,6 +259,8 @@ inline bool close_enough(float a, float b, float epsilon = 0.001f)
 	return fabsf(a - b) <= epsilon;
 }
 
+bool DRMFormatHasAlpha( uint32_t nDRMFormat );
+
 struct FrameInfo_t
 {
 	bool useFSRLayer0;
@@ -277,7 +280,7 @@ struct FrameInfo_t
 	struct Layer_t
 	{
 		std::shared_ptr<CVulkanTexture> tex;
-		uint32_t fbid; // TODO pretty sure we can just move this into tex
+		gamescope::Rc<gamescope::IBackendFb> pBackendFb;
 		int zpos;
 
 		vec2_t offset;
@@ -300,6 +303,14 @@ struct FrameInfo_t
 				return false;
 
 			return tex->isYcbcr();
+		}
+
+		bool hasAlpha() const
+		{
+			if ( !tex )
+				return false;
+
+			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
 		bool isScreenSize() const {
@@ -1095,6 +1106,8 @@ uint32_t VulkanFormatToDRM( VkFormat vkFormat );
 VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );
+
+std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a );
 
 bool vulkan_supports_hdr10();
 

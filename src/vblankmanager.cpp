@@ -17,13 +17,14 @@
 #include "vblankmanager.hpp"
 #include "steamcompmgr.hpp"
 #include "main.hpp"
+#include "refresh_rate.h"
 
 LogScope g_VBlankLog("vblank");
 
-// #define VBLANK_DEBUG
-
 namespace gamescope
 {
+	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
+
 	CVBlankTimer::CVBlankTimer()
 	{
 		m_ulTargetVBlank = get_time_in_nanos();
@@ -81,7 +82,7 @@ namespace gamescope
 
 	uint64_t CVBlankTimer::GetNextVBlank( uint64_t ulOffset ) const
 	{
-		const uint64_t ulIntervalNSecs = kSecInNanoSecs / GetRefresh();
+		const uint64_t ulIntervalNSecs = mHzToRefreshCycle( GetRefresh() );
 		const uint64_t ulNow = get_time_in_nanos();
 
 		uint64_t ulTargetPoint = GetLastVBlank() + ulIntervalNSecs - ulOffset;
@@ -97,7 +98,7 @@ namespace gamescope
 		const GamescopeScreenType eScreenType = GetBackend()->GetScreenType();
 
 		const int nRefreshRate = GetRefresh();
-		const uint64_t ulRefreshInterval = kSecInNanoSecs / nRefreshRate;
+		const uint64_t ulRefreshInterval = mHzToRefreshCycle( nRefreshRate );
 		// The redzone is relative to 60Hz for external displays.
 		// Scale it by our target refresh so we don't miss submitting for
 		// vblank in DRM.
@@ -109,7 +110,7 @@ namespace gamescope
 		// Need to re-test that.
 		const uint64_t ulRedZone = eScreenType == GAMESCOPE_SCREEN_TYPE_INTERNAL
 			? m_ulVBlankDrawBufferRedZone
-			: ( m_ulVBlankDrawBufferRedZone * 60 * kSecInNanoSecs ) / ( nRefreshRate * kSecInNanoSecs );
+			: std::min<uint64_t>( m_ulVBlankDrawBufferRedZone, ( m_ulVBlankDrawBufferRedZone * 60'000 * nRefreshRate ) / 60'000 );
 
 		bool bVRR = GetBackend()->IsVRRActive();
 		uint64_t ulOffset = 0;
@@ -149,7 +150,7 @@ namespace gamescope
 
 			ulOffset = ulNewRollingDrawTime + ulRedZone;
 
-			if ( !bPreemptive )
+			if ( vblank_debug && !bPreemptive )
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
 		}
 		else
@@ -169,7 +170,7 @@ namespace gamescope
 
 			ulOffset = ulDrawTime + ulRedZone;
 
-			if ( !bPreemptive )
+			if ( vblank_debug && !bPreemptive )
 				VBlankDebugSpew( ulOffset, ulDrawTime, ulRedZone );
 		}
 
@@ -273,10 +274,12 @@ namespace gamescope
 				// Doing this aims to include that, like we were before, but with timerfd.
 				.ulWakeupTime = m_TimerFDSchedule.ulScheduledWakeupPoint,
 			};
-#ifdef VBLANK_DEBUG
-			uint64_t ulNow = get_time_in_nanos();
-			fprintf( stderr, "wakeup: %lu\n", ulNow );
-#endif
+
+			if ( vblank_debug )
+			{
+				uint64_t ulNow = get_time_in_nanos();
+				g_VBlankLog.infof( "TimerFD Wakeup: %lu\n", ulNow );
+			}
 
 			gpuvis_trace_printf( "vblank timerfd wakeup" );
 
@@ -325,7 +328,6 @@ namespace gamescope
 
 	void CVBlankTimer::VBlankDebugSpew( uint64_t ulOffset, uint64_t ulDrawTime, uint64_t ulRedZone )
 	{
-#ifdef VBLANK_DEBUG
 		static uint64_t s_ulVBlankID = 0;
 		static uint64_t s_ulLastDrawTime = kStartingVBlankDrawTime;
 		static uint64_t s_ulLastOffset = kStartingVBlankDrawTime + ulRedZone;
@@ -333,9 +335,9 @@ namespace gamescope
 		if ( s_ulVBlankID++ % 300 == 0 || ulDrawTime > s_ulLastOffset )
 		{
 			if ( ulDrawTime > s_ulLastOffset )
-				fprintf( stderr, " !! missed vblank " );
+				g_VBlankLog.infof( " !! missed vblank " );
 
-			fprintf( stderr, "redZone: %.2fms decayRate: %lu%% - rollingMaxDrawTime: %.2fms lastDrawTime: %.2fms lastOffset: %.2fms - drawTime: %.2fms offset: %.2fms\n",
+			g_VBlankLog.infof( "redZone: %.2fms decayRate: %lu%% - rollingMaxDrawTime: %.2fms lastDrawTime: %.2fms lastOffset: %.2fms - drawTime: %.2fms offset: %.2fms\n",
 				ulRedZone / 1'000'000.0,
 				m_ulVBlankRateOfDecayPercentage,
 				m_ulRollingMaxDrawTime / 1'000'000.0,
@@ -347,7 +349,6 @@ namespace gamescope
 
 		s_ulLastDrawTime = ulDrawTime;
 		s_ulLastOffset = ulOffset;
-#endif
 	}
 
 	void CVBlankTimer::NudgeThread()

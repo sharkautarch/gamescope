@@ -612,7 +612,6 @@ bool CVulkanDevice::createDevice()
 	VkPhysicalDeviceVulkan12Features vulkan12Features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = std::exchange(features2.pNext, &vulkan12Features),
-		.uniformAndStorageBuffer8BitAccess = VK_TRUE,
 		.shaderFloat16 = m_bSupportsFp16,
 		.scalarBlockLayout = VK_TRUE,
 		.timelineSemaphore = VK_TRUE,
@@ -2243,7 +2242,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bFlippable == true )
 	{
-		m_FBID = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
+		m_pBackendFb = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2427,12 +2426,8 @@ CVulkanTexture::~CVulkanTexture( void )
 		m_linearView = VK_NULL_HANDLE;
 	}
 
-	if ( m_FBID != 0 )
-	{
-		GetBackend()->DropBackendFb( m_FBID );
-		m_FBID = 0;
-	}
-
+	if ( m_pBackendFb != nullptr )
+		m_pBackendFb = nullptr;
 
 	if ( m_vkImageMemory != VK_NULL_HANDLE )
 	{
@@ -2825,23 +2820,25 @@ std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
 	return g_output.temporaryHackyBlankImage;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 {
 	CVulkanTexture::createFlags flags;
 	flags.bFlippable = true;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 
-	// To match Steam's scaling, which is capped at 1080p
-	int width = std::min<int>( g_nOutputWidth, 1920 );
-	int height = std::min<int>( g_nOutputHeight, 1080 );
-
 	auto texture = std::make_shared<CVulkanTexture>();
 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
 	assert( bRes );
 
-	void* dst = g_device.uploadBufferData( width * height * 4 );
-	memset( dst, 0x0, width * height * 4 );
+	uint8_t* dst = (uint8_t *)g_device.uploadBufferData( width * height * 4 );
+	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
+	{
+		dst[i + 0] = b;
+		dst[i + 1] = g;
+		dst[i + 2] = r;
+		dst[i + 3] = a;
+	}
 
 	auto cmdBuffer = g_device.commandBuffer();
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
@@ -2849,6 +2846,15 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 	g_device.waitIdle();
 
 	return texture;
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+{
+	// To match Steam's scaling, which is capped at 1080p
+	int width = std::min<int>( g_nOutputWidth, 1920 );
+	int height = std::min<int>( g_nOutputHeight, 1080 );
+
+	return vulkan_create_flat_texture( width, height, 0, 0, 0, 0 );
 }
 
 bool vulkan_supports_hdr10()
@@ -3750,7 +3756,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		nisFrameInfo.layers[0].scale.x = 1.0f;
 		nisFrameInfo.layers[0].scale.y = 1.0f;
 
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask()));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo);

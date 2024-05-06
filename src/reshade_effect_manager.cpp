@@ -306,27 +306,24 @@ TimerUniform::~TimerUniform()
 PingPongUniform::PingPongUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
-    if (auto minAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "min"; });
+    const auto matchesAnnotationName = [&](const auto& name){ return std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, name), &reshadefx::annotation::name);};
+    if (auto minAnnotation = matchesAnnotationName("min");
         minAnnotation != uniformInfo.annotations.end())
     {
         min = minAnnotation->type.is_floating_point() ? minAnnotation->value.as_float[0] : static_cast<float>(minAnnotation->value.as_int[0]);
     }
-    if (auto maxAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "max"; });
+    if (auto maxAnnotation = matchesAnnotationName("max");
         maxAnnotation != uniformInfo.annotations.end())
     {
         max = maxAnnotation->type.is_floating_point() ? maxAnnotation->value.as_float[0] : static_cast<float>(maxAnnotation->value.as_int[0]);
     }
-    if (auto smoothingAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "smoothing"; });
+    if (auto smoothingAnnotation = matchesAnnotationName("smoothing");
         smoothingAnnotation != uniformInfo.annotations.end())
     {
         smoothing = smoothingAnnotation->type.is_floating_point() ? smoothingAnnotation->value.as_float[0]
                                                                     : static_cast<float>(smoothingAnnotation->value.as_int[0]);
     }
-    if (auto stepAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "step"; });
+    if (auto stepAnnotation = matchesAnnotationName("step");
         stepAnnotation != uniformInfo.annotations.end())
     {
         stepMin =
@@ -375,13 +372,13 @@ RandomUniform::RandomUniform(reshadefx::uniform_info uniformInfo)
     : ReshadeUniform(uniformInfo)
 {
     if (auto minAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "min"; });
+            std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, "min"), &reshadefx::annotation::name);
         minAnnotation != uniformInfo.annotations.end())
     {
         min = minAnnotation->type.is_integral() ? minAnnotation->value.as_int[0] : static_cast<int>(minAnnotation->value.as_float[0]);
     }
     if (auto maxAnnotation =
-            std::find_if(uniformInfo.annotations.begin(), uniformInfo.annotations.end(), [](const auto& a) { return a.name == "max"; });
+            std::ranges::find_if(uniformInfo.annotations, std::bind_front(std::equal_to{}, "max"), &reshadefx::annotation::name);
         maxAnnotation != uniformInfo.annotations.end())
     {
         max = maxAnnotation->type.is_integral() ? maxAnnotation->value.as_int[0] : static_cast<int>(maxAnnotation->value.as_float[0]);
@@ -491,10 +488,10 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
     std::vector<std::shared_ptr<ReshadeUniform>> uniforms;
     for (auto& uniform : module.uniforms)
     {
-        auto sourceAnnotation = std::find_if(uniform.annotations.begin(), uniform.annotations.end(), [](const auto& a) { return a.name == "source"; });
+        auto sourceAnnotation = std::ranges::find_if(uniform.annotations, std::bind_front(std::equal_to{}, "source"), &reshadefx::annotation::name);
         if (sourceAnnotation == uniform.annotations.end())
         {
-            uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DataUniform(uniform)));
+            uniforms.push_back(std::make_shared<DataUniform>(uniform));
             continue;
         }
         else
@@ -502,47 +499,47 @@ static std::vector<std::shared_ptr<ReshadeUniform>> createReshadeUniforms(const 
             auto& source = sourceAnnotation->value.string_data;
             if (source == "frametime")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameTimeUniform(uniform)));
+                uniforms.push_back(std::make_shared<FrameTimeUniform>(uniform));
             }
             else if (source == "framecount")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new FrameCountUniform(uniform)));
+                uniforms.push_back(std::make_shared<FrameCountUniform>(uniform));
             }
             else if (source == "date")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DateUniform(uniform)));
+                uniforms.push_back(std::make_shared<DateUniform>(uniform));
             }
             else if (source == "timer")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new TimerUniform(uniform)));
+                uniforms.push_back(std::make_shared<TimerUniform>(uniform));
             }
             else if (source == "pingpong")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new PingPongUniform(uniform)));
+                uniforms.push_back(std::make_shared<PingPongUniform>(uniform));
             }
             else if (source == "random")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new RandomUniform(uniform)));
+                uniforms.push_back(std::make_shared<RandomUniform>(uniform));
             }
             else if (source == "key")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new KeyUniform(uniform)));
+                uniforms.push_back(std::make_shared<KeyUniform>(uniform));
             }
             else if (source == "mousebutton")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MouseButtonUniform(uniform)));
+                uniforms.push_back(std::make_shared<MouseButtonUniform>(uniform));
             }
             else if (source == "mousepoint")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MousePointUniform(uniform)));
+                uniforms.push_back(std::make_shared<MousePointUniform>(uniform));
             }
             else if (source == "mousedelta")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new MouseDeltaUniform(uniform)));
+                uniforms.push_back(std::make_shared<MouseDeltaUniform>(uniform));
             }
             else if (source == "bufready_depth")
             {
-                uniforms.push_back(std::shared_ptr<ReshadeUniform>(new DepthUniform(uniform)));
+                uniforms.push_back(std::make_shared<DepthUniform>(uniform));
             }
             else
             {
@@ -965,8 +962,7 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
             assert(ret);
         }
 
-        if (const auto source = std::find_if(
-                tex.annotations.begin(), tex.annotations.end(), [](const auto& a) { return a.name == "source"; });
+        if (const auto source = std::ranges::find_if(tex.annotations , std::bind_front(std::equal_to{}, "source"), &reshadefx::annotation::name);
             source != tex.annotations.end())
         {
             std::string filePath = local_reshade_path + "/Textures/" + source->value.string_data;

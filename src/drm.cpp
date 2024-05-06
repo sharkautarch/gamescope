@@ -39,6 +39,8 @@
 #include "steamcompmgr.hpp"
 #include "vblankmanager.hpp"
 #include "wlserver.hpp"
+#include "refresh_rate.h"
+#include <sys/utsname.h>
 
 #include "wlr_begin.hpp"
 #include <libliftoff.h>
@@ -52,8 +54,59 @@
 
 static constexpr bool k_bUseCursorPlane = false;
 
+extern int g_nPreferredOutputWidth;
+extern int g_nPreferredOutputHeight;
+
+gamescope::ConVar<bool> cv_drm_single_plane_optimizations( "drm_single_plane_optimizations", true, "Whether or not to enable optimizations for single plane usage." );
+gamescope::ConVar<bool> cv_drm_debug_disable_shaper_and_3dlut( "drm_debug_disable_shaper_and_3dlut", false, "Shaper + 3DLUT chicken bit. (Force disable/DEFAULT, no logic change)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_degamma_tf( "drm_debug_disable_degamma_tf", false, "Degamma chicken bit. (Forces DEGAMMA_TF to DEFAULT, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_regamma_tf( "drm_debug_disable_regamma_tf", false, "Regamma chicken bit. (Forces REGAMMA_TF to DEFAULT, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_output_tf( "drm_debug_disable_output_tf", false, "Force default (identity) output TF, affects other logic. Not a property directly." );
+gamescope::ConVar<bool> cv_drm_debug_disable_blend_tf( "drm_debug_disable_blend_tf", false, "Blending chicken bit. (Forces BLEND_TF to DEFAULT, does not affect other logic)" );
+gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync( "drm_debug_disable_explicit_sync", false, "Force disable explicit sync on the DRM backend." );
+
 namespace gamescope
 {
+	std::tuple<int32_t, int32_t, int32_t> GetKernelVersion()
+	{
+		utsname name;
+		if ( uname( &name ) != 0 )
+			return std::make_tuple( 0, 0, 0 );
+
+		std::vector<std::string_view> szVersionParts = Split( name.release, "." );
+
+		uint32_t uVersion[3] = { 0 };
+		for ( size_t i = 0; i < szVersionParts.size() && i < 3; i++ )
+		{
+			auto oPart = Parse<int32_t>( szVersionParts[i] );
+			if ( !oPart )
+				break;
+
+			uVersion[i] = *oPart;
+		}
+
+		return std::make_tuple( uVersion[0], uVersion[1], uVersion[2] );
+	}
+
+	// Get a DRM mode in mHz
+	// Taken from wlroots, but we can't access it as we don't
+	// use the drm backend.
+	static int32_t GetModeRefresh(const drmModeModeInfo *mode)
+	{
+		int32_t nRefresh = (mode->clock * 1'000'000ll / mode->htotal + mode->vtotal / 2) / mode->vtotal;
+
+		if (mode->flags & DRM_MODE_FLAG_INTERLACE)
+			nRefresh *= 2;
+
+		if (mode->flags & DRM_MODE_FLAG_DBLSCAN)
+			nRefresh /= 2;
+
+		if (mode->vscan > 1)
+			nRefresh /= mode->vscan;
+
+		return nRefresh;
+	}
+
 	template <typename T>
 	using CAutoDeletePtr = std::unique_ptr<T, void(*)(T*)>;
 
@@ -134,6 +187,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> IN_FORMATS; // Immutable
 
 			std::optional<CDRMAtomicProperty> FB_ID;
+			std::optional<CDRMAtomicProperty> IN_FENCE_FD;
 			std::optional<CDRMAtomicProperty> CRTC_ID;
 			std::optional<CDRMAtomicProperty> SRC_X;
 			std::optional<CDRMAtomicProperty> SRC_Y;
@@ -148,15 +202,15 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> rotation;
 			std::optional<CDRMAtomicProperty> COLOR_ENCODING;
 			std::optional<CDRMAtomicProperty> COLOR_RANGE;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_DEGAMMA_TF;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_DEGAMMA_LUT;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_CTM;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_HDR_MULT;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_SHAPER_LUT;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_SHAPER_TF;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_LUT3D;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_BLEND_TF;
-			std::optional<CDRMAtomicProperty> VALVE1_PLANE_BLEND_LUT;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_TF;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_DEGAMMA_LUT;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_CTM;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_HDR_MULT;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_SHAPER_LUT;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_SHAPER_TF;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_LUT3D;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_BLEND_TF;
+			std::optional<CDRMAtomicProperty> AMD_PLANE_BLEND_LUT;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      PlaneProperties &GetProperties()       { return m_Props; }
@@ -187,7 +241,7 @@ namespace gamescope
 			std::optional<CDRMAtomicProperty> CTM;
 			std::optional<CDRMAtomicProperty> VRR_ENABLED;
 			std::optional<CDRMAtomicProperty> OUT_FENCE_PTR;
-			std::optional<CDRMAtomicProperty> VALVE1_CRTC_REGAMMA_TF;
+			std::optional<CDRMAtomicProperty> AMD_CRTC_REGAMMA_TF;
 			std::optional<CDRMAtomicProperty> DUMMY_END;
 		};
 		      CRTCProperties &GetProperties()       { return m_Props; }
@@ -342,6 +396,18 @@ namespace gamescope
 
 		ConnectorProperties m_Props;
 	};
+
+	class CDRMFb final : public CBaseBackendFb
+	{
+	public:
+		CDRMFb( uint32_t uFbId, wlr_buffer *pClientBuffer );
+		~CDRMFb();
+
+		uint32_t GetFbId() const { return m_uFbId; }
+	
+	private:
+		uint32_t m_uFbId = 0;
+	};
 }
 
 struct saved_mode {
@@ -350,22 +416,10 @@ struct saved_mode {
 	int refresh;
 };
 
-struct fb {
-	uint32_t id;
-	/* Client buffer, if any */
-	struct wlr_buffer *buf;
-	/* A FB is held if it's being used by steamcompmgr
-	 * doesn't need to be atomic as it's only ever
-	 * modified/read from the steamcompmgr thread */
-	int held_refs;
-	/* Number of page-flips using the FB */
-	std::atomic< uint32_t > n_refs;
-};
-
 struct drm_t {
 	bool bUseLiftoff;
 
-	int fd;
+	int fd = -1;
 
 	int preferred_width, preferred_height, preferred_refresh;
 
@@ -377,13 +431,9 @@ struct drm_t {
 	std::vector< std::unique_ptr< gamescope::CDRMCRTC > > crtcs;
 	std::unordered_map< uint32_t, gamescope::CDRMConnector > connectors;
 
-	std::map< uint32_t, drmModePropertyRes * > props;
-
 	gamescope::CDRMPlane *pPrimaryPlane;
 	gamescope::CDRMCRTC *pCRTC;
 	gamescope::CDRMConnector *pConnector;
-	int kms_in_fence_fd;
-	int kms_out_fence_fd;
 
 	struct wlr_drm_format_set primary_formats;
 
@@ -396,27 +446,25 @@ struct drm_t {
 
 	std::shared_ptr<gamescope::BackendBlob> sdr_static_metadata;
 
-	struct {
+	struct drm_state_t {
 		std::shared_ptr<gamescope::BackendBlob> mode_id;
 		uint32_t color_mgmt_serial;
 		std::shared_ptr<gamescope::BackendBlob> lut3d_id[ EOTF_Count ];
 		std::shared_ptr<gamescope::BackendBlob> shaperlut_id[ EOTF_Count ];
-		drm_valve1_transfer_function output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+		amdgpu_transfer_function output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	} current, pending;
 
-	/* FBs in the atomic request, but not yet submitted to KMS */
-	std::vector < uint32_t > fbids_in_req;
-	/* FBs submitted to KMS, but not yet displayed on screen */
-	std::vector < uint32_t > fbids_queued;
-	/* FBs currently on screen */
-	std::vector < uint32_t > fbids_on_screen;
+	// FBs in the atomic request, but not yet submitted to KMS
+	// Accessed only on req thread
+	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_FbIdsInRequest;
 
-	std::unordered_map< uint32_t, struct fb > fb_map;
-	std::mutex fb_map_mutex;
-
-	std::mutex free_queue_lock;
-	std::vector< uint32_t > fbid_unlock_queue;
-	std::vector< uint32_t > fbid_free_queue;
+	// FBs currently queued to go on screen.
+	// May be accessed by page flip handler thread and req thread, thus mutex.
+	std::mutex m_QueuedFbIdsMutex;
+	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_QueuedFbIds;
+	// FBs currently on screen.
+	// Accessed only on page flip handler thread.
+	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_VisibleFbIds;
 
 	std::mutex flip_lock;
 
@@ -469,6 +517,7 @@ struct drm_color_ctm2 {
 };
 
 bool g_bSupportsAsyncFlips = false;
+bool g_bSupportsSyncObjs = false;
 
 extern gamescope::GamescopeModeGeneration g_eGamescopeModeGeneration;
 extern GamescopePanelOrientation g_DesiredInternalOrientation;
@@ -492,12 +541,12 @@ static constexpr uint32_t s_kSteamDeckLCDRates[] =
 
 static constexpr uint32_t s_kSteamDeckOLEDRates[] =
 {
-	45,47,48,49,
-	50,51,53,55,56,59,
-	60,62,64,65,66,68,
-	72,73,76,77,78,
-	80,81,82,84,85,86,87,88,
-	90,
+	45, 47, 48, 49, 
+	50, 51, 53, 55, 56, 59, 
+	60, 62, 64, 65, 66, 68, 
+	72, 73, 76, 77, 78, 
+	80, 81, 82, 84, 85, 86, 87, 88, 
+	90, 
 };
 
 static void update_connector_display_info_wl(struct drm_t *drm)
@@ -532,13 +581,6 @@ inline uint64_t drm_calc_s31_32(float val)
 	color.s31_32_bits.fractional = uint64_t( fractional * float( 1ull << 32 ) );
 
 	return color.s31_32;
-}
-
-
-static struct fb& get_fb( struct drm_t& drm, uint32_t id )
-{
-	std::lock_guard<std::mutex> m( drm.fb_map_mutex );
-	return drm.fb_map[ id ];
 }
 
 static gamescope::CDRMCRTC *find_crtc_for_connector( struct drm_t *drm, gamescope::CDRMConnector *pConnector )
@@ -623,8 +665,6 @@ static gamescope::CDRMPlane *find_primary_plane(struct drm_t *drm)
 	return nullptr;
 }
 
-static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb );
-
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsigned int usec, unsigned int crtc_id, void *data)
 {
@@ -648,52 +688,19 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	drm_verbose_log.debugf("page_flip_handler %" PRIu64, pCtx->ulPendingFlipCount);
 	gpuvis_trace_printf("page_flip_handler %" PRIu64, pCtx->ulPendingFlipCount);
 
-	for ( uint32_t i = 0; i < g_DRM.fbids_on_screen.size(); i++ )
 	{
-		uint32_t previous_fbid = g_DRM.fbids_on_screen[ i ];
-		assert( previous_fbid != 0 );
-
-		struct fb &previous_fb = get_fb( g_DRM, previous_fbid );
-
-		if ( --previous_fb.n_refs == 0 )
-		{
-			// we flipped away from this previous fbid, now safe to delete
-			std::lock_guard<std::mutex> lock( g_DRM.free_queue_lock );
-
-			for ( uint32_t i = 0; i < g_DRM.fbid_unlock_queue.size(); i++ )
-			{
-				if ( g_DRM.fbid_unlock_queue[ i ] == previous_fbid )
-				{
-					drm_verbose_log.debugf("deferred unlock %u", previous_fbid);
-
-					drm_unlock_fb_internal( &g_DRM, &get_fb( g_DRM, previous_fbid ) );
-
-					g_DRM.fbid_unlock_queue.erase( g_DRM.fbid_unlock_queue.begin() + i );
-					break;
-				}
-			}
-
-			for ( uint32_t i = 0; i < g_DRM.fbid_free_queue.size(); i++ )
-			{
-				if ( g_DRM.fbid_free_queue[ i ] == previous_fbid )
-				{
-					drm_verbose_log.debugf( "deferred free %u", previous_fbid );
-
-					drm_drop_fbid( &g_DRM, previous_fbid );
-
-					g_DRM.fbid_free_queue.erase( g_DRM.fbid_free_queue.begin() + i );
-					break;
-				}
-			}
-		}
+		std::unique_lock lock( g_DRM.m_QueuedFbIdsMutex );
+		// Swap and clear from queue -> visible to avoid allocations.
+		g_DRM.m_VisibleFbIds.swap( g_DRM.m_QueuedFbIds );
+		g_DRM.m_QueuedFbIds.clear();
 	}
-
-	g_DRM.fbids_on_screen = g_DRM.fbids_queued;
-	g_DRM.fbids_queued.clear();
 
 	g_DRM.flip_lock.unlock();
 
 	mangoapp_output_update( vblanktime );
+
+	// Nudge so that steamcompmgr releases commits.
+	nudge_steamcompmgr();
 }
 
 void flip_handler_thread_run(void)
@@ -991,7 +998,7 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	const drmModeModeInfo *mode = nullptr;
 	if ( drm->preferred_width != 0 || drm->preferred_height != 0 || drm->preferred_refresh != 0 )
 	{
-		mode = find_mode(best->GetModeConnector(), drm->preferred_width, drm->preferred_height, drm->preferred_refresh);
+		mode = find_mode(best->GetModeConnector(), drm->preferred_width, drm->preferred_height, gamescope::ConvertmHzToHz( drm->preferred_refresh ));
 	}
 
 	if (!mode && best->GetScreenType() == gamescope::GAMESCOPE_SCREEN_TYPE_EXTERNAL) {
@@ -1066,6 +1073,9 @@ void load_pnps(void)
 
 extern bool env_to_bool(const char *env);
 
+uint32_t g_uAlwaysSignalledSyncobj = 0;
+int g_nAlwaysSignalledSyncFile = -1;
+
 bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 {
 	load_pnps();
@@ -1120,6 +1130,22 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 	}
 
 	uint64_t cap;
+	g_bSupportsSyncObjs = drmGetCap(drm->fd, DRM_CAP_SYNCOBJ, &cap) == 0 && cap != 0;
+	if ( g_bSupportsSyncObjs ) {
+		int err = drmSyncobjCreate(drm->fd, DRM_SYNCOBJ_CREATE_SIGNALED, &g_uAlwaysSignalledSyncobj);
+		if (err < 0) {
+			drm_log.errorf("Failed to create dummy signalled syncobj");
+			return false;
+		}
+		err = drmSyncobjExportSyncFile(drm->fd, g_uAlwaysSignalledSyncobj, &g_nAlwaysSignalledSyncFile);
+		if (err < 0) {
+			drm_log.errorf("Failed to create dummy signalled sync file");
+			return false;
+		}
+	} else {
+		drm_log.errorf("Syncobjs are not supported by the KMS driver");
+	}
+
 	if (drmGetCap(drm->fd, DRM_CAP_ADDFB2_MODIFIERS, &cap) == 0 && cap != 0) {
 		drm->allow_modifiers = true;
 	}
@@ -1220,8 +1246,6 @@ bool init_drm(struct drm_t *drm, int width, int height, int refresh)
 		}
 	}
 
-	drm->kms_in_fence_fd = -1;
-
 	std::thread flip_handler_thread( flip_handler_thread_run );
 	flip_handler_thread.detach();
 
@@ -1287,13 +1311,14 @@ void finish_drm(struct drm_t *drm)
 		if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 			pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( req, 0, true );
 
-		if ( pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
-			pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
+		if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
+			pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( req, 0, true );
 	}
 
 	for ( std::unique_ptr< gamescope::CDRMPlane > &pPlane : drm->planes )
 	{
 		pPlane->GetProperties().FB_ID->SetPendingValue( req, 0, true );
+		pPlane->GetProperties().IN_FENCE_FD->SetPendingValue( req, -1, true );
 		pPlane->GetProperties().CRTC_ID->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_X->SetPendingValue( req, 0, true );
 		pPlane->GetProperties().SRC_Y->SetPendingValue( req, 0, true );
@@ -1313,32 +1338,32 @@ void finish_drm(struct drm_t *drm)
 		//if ( pPlane->GetProperties().zpos )
 		//	pPlane->GetProperties().zpos->SetPendingValue( req, , true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_TF )
-			pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+		if ( pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF )
+			pPlane->GetProperties().AMD_PLANE_DEGAMMA_TF->SetPendingValue( req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_LUT )
-			pPlane->GetProperties().VALVE1_PLANE_DEGAMMA_LUT->SetPendingValue( req, 0, true );
+		if ( pPlane->GetProperties().AMD_PLANE_DEGAMMA_LUT )
+			pPlane->GetProperties().AMD_PLANE_DEGAMMA_LUT->SetPendingValue( req, 0, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_CTM )
-			pPlane->GetProperties().VALVE1_PLANE_CTM->SetPendingValue( req, 0, true );
+		if ( pPlane->GetProperties().AMD_PLANE_CTM )
+			pPlane->GetProperties().AMD_PLANE_CTM->SetPendingValue( req, 0, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_HDR_MULT )
-			pPlane->GetProperties().VALVE1_PLANE_HDR_MULT->SetPendingValue( req, 0x100000000ULL, true );
+		if ( pPlane->GetProperties().AMD_PLANE_HDR_MULT )
+			pPlane->GetProperties().AMD_PLANE_HDR_MULT->SetPendingValue( req, 0x100000000ULL, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_SHAPER_TF )
-			pPlane->GetProperties().VALVE1_PLANE_SHAPER_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+		if ( pPlane->GetProperties().AMD_PLANE_SHAPER_TF )
+			pPlane->GetProperties().AMD_PLANE_SHAPER_TF->SetPendingValue( req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_SHAPER_LUT )
-			pPlane->GetProperties().VALVE1_PLANE_SHAPER_LUT->SetPendingValue( req, 0, true );
+		if ( pPlane->GetProperties().AMD_PLANE_SHAPER_LUT )
+			pPlane->GetProperties().AMD_PLANE_SHAPER_LUT->SetPendingValue( req, 0, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_LUT3D )
-			pPlane->GetProperties().VALVE1_PLANE_LUT3D->SetPendingValue( req, 0, true );
+		if ( pPlane->GetProperties().AMD_PLANE_LUT3D )
+			pPlane->GetProperties().AMD_PLANE_LUT3D->SetPendingValue( req, 0, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_BLEND_TF )
-			pPlane->GetProperties().VALVE1_PLANE_BLEND_TF->SetPendingValue( req, DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT, true );
+		if ( pPlane->GetProperties().AMD_PLANE_BLEND_TF )
+			pPlane->GetProperties().AMD_PLANE_BLEND_TF->SetPendingValue( req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, true );
 
-		if ( pPlane->GetProperties().VALVE1_PLANE_BLEND_LUT )
-			pPlane->GetProperties().VALVE1_PLANE_BLEND_LUT->SetPendingValue( req, 0, true );
+		if ( pPlane->GetProperties().AMD_PLANE_BLEND_LUT )
+			pPlane->GetProperties().AMD_PLANE_BLEND_LUT->SetPendingValue( req, 0, true );
 	}
 
 	// We can't do a non-blocking commit here or else risk EBUSY in case the
@@ -1352,18 +1377,39 @@ void finish_drm(struct drm_t *drm)
 
 	free(drm->device_name);
 
+	wlr_drm_format_set_finish( &drm->formats );
+	wlr_drm_format_set_finish( &drm->primary_formats );
+	drm->m_FbIdsInRequest.clear();
+	{
+		std::unique_lock lock( drm->m_QueuedFbIdsMutex );
+		drm->m_QueuedFbIds.clear();
+	}
+	{
+		std::unique_lock lock( drm->flip_lock );
+		drm->m_VisibleFbIds.clear();
+	}
+	drm->sdr_static_metadata = nullptr;
+	drm->current = drm_t::drm_state_t{};
+	drm->pending = drm_t::drm_state_t{};
+	drm->planes.clear();
+	drm->crtcs.clear();
+	drm->connectors.clear();
+
+
+
 	// We can't close the DRM FD here, it might still be in use by the
 	// page-flip handler thread.
 }
 
-uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf )
+gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct wlr_dmabuf_attributes *dma_buf )
 {
+	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
 	uint32_t fb_id = 0;
 
 	if ( !wlr_drm_format_set_has( &drm->formats, dma_buf->format, dma_buf->modifier ) )
 	{
 		drm_verbose_log.errorf( "Cannot import FB to DRM: format 0x%" PRIX32 " and modifier 0x%" PRIX64 " not supported for scan-out", dma_buf->format, dma_buf->modifier );
-		return 0;
+		return nullptr;
 	}
 
 	uint32_t handles[4] = {0};
@@ -1404,16 +1450,7 @@ uint32_t drm_fbid_from_dmabuf( struct drm_t *drm, struct wlr_buffer *buf, struct
 
 	drm_verbose_log.debugf("make fbid %u", fb_id);
 
-	/* Nested scope so fb doesn't end up in the out: label */
-	{
-		struct fb &fb = get_fb( *drm, fb_id );
-		assert( fb.held_refs == 0 );
-		fb.id = fb_id;
-		fb.buf = buf;
-		if (!buf)
-			fb.held_refs++;
-		fb.n_refs = 0;
-	}
+	pBackendFb = new gamescope::CDRMFb( fb_id, buf );
 
 out:
 	for ( int i = 0; i < dma_buf->n_planes; i++ ) {
@@ -1437,77 +1474,7 @@ out:
 		}
 	}
 
-	return fb_id;
-}
-
-void drm_drop_fbid( struct drm_t *drm, uint32_t fbid )
-{
-	struct fb &fb = get_fb( *drm, fbid );
-	assert( fb.held_refs == 0 ||
-	        fb.buf == nullptr );
-
-	fb.held_refs = 0;
-
-	if ( fb.n_refs != 0 )
-	{
-		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
-		drm->fbid_free_queue.push_back( fbid );
-		return;
-	}
-
-	if (drmModeRmFB( drm->fd, fbid ) != 0 )
-	{
-		drm_log.errorf_errno( "drmModeRmFB failed" );
-	}
-}
-
-static void drm_unlock_fb_internal( struct drm_t *drm, struct fb *fb )
-{
-	assert( fb->held_refs == 0 );
-	assert( fb->n_refs == 0 );
-
-	if ( fb->buf != nullptr )
-	{
-		wlserver_lock();
-		wlr_buffer_unlock( fb->buf );
-		wlserver_unlock();
-	}
-}
-
-void drm_lock_fbid( struct drm_t *drm, uint32_t fbid )
-{
-	struct fb &fb = get_fb( *drm, fbid );
-	assert( fb.n_refs == 0 );
-
-	if ( fb.held_refs++ == 0 )
-	{
-		if ( fb.buf != nullptr )
-		{
-			wlserver_lock();
-			wlr_buffer_lock( fb.buf );
-			wlserver_unlock();
-		}
-	}
-}
-
-void drm_unlock_fbid( struct drm_t *drm, uint32_t fbid )
-{
-	struct fb &fb = get_fb( *drm, fbid );
-
-	assert( fb.held_refs > 0 );
-	if ( --fb.held_refs != 0 )
-		return;
-
-	if ( fb.n_refs != 0 )
-	{
-		std::lock_guard<std::mutex> lock( drm->free_queue_lock );
-		drm->fbid_unlock_queue.push_back( fbid );
-		return;
-	}
-
-	/* FB isn't being used in any page-flip, free it immediately */
-	drm_verbose_log.debugf("free fbid %u", fbid);
-	drm_unlock_fb_internal( drm, &fb );
+	return pBackendFb;
 }
 
 static void update_drm_effective_orientations( struct drm_t *drm, const drmModeModeInfo *pMode )
@@ -1598,6 +1565,7 @@ struct LiftoffStateCacheEntry
 		uint32_t zpos;
 		uint32_t srcW, srcH;
 		uint32_t crtcX, crtcY, crtcW, crtcH;
+		uint16_t opacity;
 		drm_color_encoding colorEncoding;
 		drm_color_range    colorRange;
 		GamescopeAppTextureColorspace colorspace;
@@ -1625,6 +1593,7 @@ struct LiftoffStateCacheEntryKasher
 			hash_combine(hash, k.layerState[i].crtcY);
 			hash_combine(hash, k.layerState[i].crtcW);
 			hash_combine(hash, k.layerState[i].crtcH);
+			hash_combine(hash, k.layerState[i].opacity);
 			hash_combine(hash, k.layerState[i].colorEncoding);
 			hash_combine(hash, k.layerState[i].colorRange);
 			hash_combine(hash, k.layerState[i].colorspace);
@@ -1637,37 +1606,73 @@ struct LiftoffStateCacheEntryKasher
 
 std::unordered_set<LiftoffStateCacheEntry, LiftoffStateCacheEntryKasher> g_LiftoffStateCache;
 
-static inline drm_valve1_transfer_function colorspace_to_plane_degamma_tf(GamescopeAppTextureColorspace colorspace)
+static inline amdgpu_transfer_function colorspace_to_plane_degamma_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
 		default: // Linear in this sense is SRGB. Linear = sRGB image view doing automatic sRGB -> Linear which doesn't happen on DRM side.
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
-			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
+			return AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB:
 			// Use LINEAR TF for scRGB float format as 80 nit = 1.0 in scRGB, which matches
 			// what PQ TF decodes to/encodes from.
 			// AMD internal format is FP16, and generally expected for 1.0 -> 80 nit.
 			// which just so happens to match scRGB.
-			return DRM_VALVE1_TRANSFER_FUNCTION_LINEAR;
+			return AMDGPU_TRANSFER_FUNCTION_IDENTITY;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
-			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
+			return AMDGPU_TRANSFER_FUNCTION_PQ_EOTF;
 	}
 }
 
-static inline drm_valve1_transfer_function colorspace_to_plane_shaper_tf(GamescopeAppTextureColorspace colorspace)
+static inline amdgpu_transfer_function colorspace_to_plane_shaper_tf(GamescopeAppTextureColorspace colorspace)
 {
 	switch ( colorspace )
 	{
 		default:
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB:
-			return DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
+			return AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB: // scRGB Linear -> PQ for shaper + 3D LUT
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ:
-			return DRM_VALVE1_TRANSFER_FUNCTION_PQ;
+			return AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF;
 		case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
-			return DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+			return AMDGPU_TRANSFER_FUNCTION_DEFAULT;
+	}
+}
+
+static inline amdgpu_transfer_function inverse_tf(amdgpu_transfer_function tf)
+{
+	switch ( tf )
+	{
+		default:
+		case AMDGPU_TRANSFER_FUNCTION_DEFAULT:
+			return AMDGPU_TRANSFER_FUNCTION_DEFAULT;
+		case AMDGPU_TRANSFER_FUNCTION_IDENTITY:
+			return AMDGPU_TRANSFER_FUNCTION_IDENTITY;
+		case AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_BT709_OETF:
+			return AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF;
+		case AMDGPU_TRANSFER_FUNCTION_PQ_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA22_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA24_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA24_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA26_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA26_INV_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_SRGB_INV_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF:
+			return AMDGPU_TRANSFER_FUNCTION_BT709_OETF;
+		case AMDGPU_TRANSFER_FUNCTION_PQ_INV_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_PQ_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA22_INV_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA22_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA24_INV_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA24_EOTF;
+		case AMDGPU_TRANSFER_FUNCTION_GAMMA26_INV_EOTF:
+			return AMDGPU_TRANSFER_FUNCTION_GAMMA26_EOTF;
 	}
 }
 
@@ -1725,6 +1730,7 @@ LiftoffStateCacheEntry FrameInfoToLiftoffStateCacheEntry( struct drm_t *drm, con
 		entry.layerState[i].crtcY = crtcY;
 		entry.layerState[i].crtcW = crtcW;
 		entry.layerState[i].crtcH = crtcH;
+		entry.layerState[i].opacity = frameInfo->layers[i].opacity * 0xffff;
 		entry.layerState[i].ycbcr = frameInfo->layers[i].isYcbcr();
 		if ( entry.layerState[i].ycbcr )
 		{
@@ -1746,13 +1752,6 @@ static bool is_liftoff_caching_enabled()
 	static bool disabled = env_to_bool(getenv("GAMESCOPE_LIFTOFF_CACHE_DISABLE"));
 	return !disabled;
 }
-
-bool g_bDisableShaperAnd3DLUT = false;
-bool g_bDisableDegamma = false;
-bool g_bDisableRegamma = false;
-bool g_bDisableBlendTF = false;
-
-bool g_bSinglePlaneOptimizations = true;
 
 namespace gamescope
 {
@@ -1862,10 +1861,11 @@ namespace gamescope
 		auto rawProperties = GetRawProperties();
 		if ( rawProperties )
 		{
-			m_Props.type                     = CDRMAtomicProperty::Instantiate( "type",                     this, *rawProperties );
-			m_Props.IN_FORMATS               = CDRMAtomicProperty::Instantiate( "IN_FORMATS",               this, *rawProperties );
+			m_Props.type                  = CDRMAtomicProperty::Instantiate( "type",                  this, *rawProperties );
+			m_Props.IN_FORMATS            = CDRMAtomicProperty::Instantiate( "IN_FORMATS",            this, *rawProperties );
 
 			m_Props.FB_ID                    = CDRMAtomicProperty::Instantiate( "FB_ID",                    this, *rawProperties );
+			m_Props.IN_FENCE_FD              = CDRMAtomicProperty::Instantiate( "IN_FENCE_FD",              this, *rawProperties );
 			m_Props.CRTC_ID                  = CDRMAtomicProperty::Instantiate( "CRTC_ID",                  this, *rawProperties );
 			m_Props.SRC_X                    = CDRMAtomicProperty::Instantiate( "SRC_X",                    this, *rawProperties );
 			m_Props.SRC_Y                    = CDRMAtomicProperty::Instantiate( "SRC_Y",                    this, *rawProperties );
@@ -1880,15 +1880,15 @@ namespace gamescope
 			m_Props.rotation                 = CDRMAtomicProperty::Instantiate( "rotation",                 this, *rawProperties );
 			m_Props.COLOR_ENCODING           = CDRMAtomicProperty::Instantiate( "COLOR_ENCODING",           this, *rawProperties );
 			m_Props.COLOR_RANGE              = CDRMAtomicProperty::Instantiate( "COLOR_RANGE",              this, *rawProperties );
-			m_Props.VALVE1_PLANE_DEGAMMA_TF  = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_DEGAMMA_TF",  this, *rawProperties );
-			m_Props.VALVE1_PLANE_DEGAMMA_LUT = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_DEGAMMA_LUT", this, *rawProperties );
-			m_Props.VALVE1_PLANE_CTM         = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_CTM",         this, *rawProperties );
-			m_Props.VALVE1_PLANE_HDR_MULT    = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_HDR_MULT",    this, *rawProperties );
-			m_Props.VALVE1_PLANE_SHAPER_LUT  = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_SHAPER_LUT",  this, *rawProperties );
-			m_Props.VALVE1_PLANE_SHAPER_TF   = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_SHAPER_TF",   this, *rawProperties );
-			m_Props.VALVE1_PLANE_LUT3D       = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_LUT3D",       this, *rawProperties );
-			m_Props.VALVE1_PLANE_BLEND_TF    = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_BLEND_TF",    this, *rawProperties );
-			m_Props.VALVE1_PLANE_BLEND_LUT   = CDRMAtomicProperty::Instantiate( "VALVE1_PLANE_BLEND_LUT",   this, *rawProperties );
+			m_Props.AMD_PLANE_DEGAMMA_TF     = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_TF",     this, *rawProperties );
+			m_Props.AMD_PLANE_DEGAMMA_LUT    = CDRMAtomicProperty::Instantiate( "AMD_PLANE_DEGAMMA_LUT",    this, *rawProperties );
+			m_Props.AMD_PLANE_CTM            = CDRMAtomicProperty::Instantiate( "AMD_PLANE_CTM",            this, *rawProperties );
+			m_Props.AMD_PLANE_HDR_MULT       = CDRMAtomicProperty::Instantiate( "AMD_PLANE_HDR_MULT",       this, *rawProperties );
+			m_Props.AMD_PLANE_SHAPER_LUT     = CDRMAtomicProperty::Instantiate( "AMD_PLANE_SHAPER_LUT",     this, *rawProperties );
+			m_Props.AMD_PLANE_SHAPER_TF      = CDRMAtomicProperty::Instantiate( "AMD_PLANE_SHAPER_TF",      this, *rawProperties );
+			m_Props.AMD_PLANE_LUT3D          = CDRMAtomicProperty::Instantiate( "AMD_PLANE_LUT3D",          this, *rawProperties );
+			m_Props.AMD_PLANE_BLEND_TF       = CDRMAtomicProperty::Instantiate( "AMD_PLANE_BLEND_TF",       this, *rawProperties );
+			m_Props.AMD_PLANE_BLEND_LUT      = CDRMAtomicProperty::Instantiate( "AMD_PLANE_BLEND_LUT",      this, *rawProperties );
 		}
 	}
 
@@ -1908,14 +1908,14 @@ namespace gamescope
 		auto rawProperties = GetRawProperties();
 		if ( rawProperties )
 		{
-			m_Props.ACTIVE                   = CDRMAtomicProperty::Instantiate( "ACTIVE",                 this, *rawProperties );
-			m_Props.MODE_ID                  = CDRMAtomicProperty::Instantiate( "MODE_ID",                this, *rawProperties );
-			m_Props.GAMMA_LUT                = CDRMAtomicProperty::Instantiate( "GAMMA_LUT",              this, *rawProperties );
-			m_Props.DEGAMMA_LUT              = CDRMAtomicProperty::Instantiate( "DEGAMMA_LUT",            this, *rawProperties );
-			m_Props.CTM                      = CDRMAtomicProperty::Instantiate( "CTM",                    this, *rawProperties );
-			m_Props.VRR_ENABLED              = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",            this, *rawProperties );
-			m_Props.OUT_FENCE_PTR            = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",          this, *rawProperties );
-			m_Props.VALVE1_CRTC_REGAMMA_TF   = CDRMAtomicProperty::Instantiate( "VALVE1_CRTC_REGAMMA_TF", this, *rawProperties );
+			m_Props.ACTIVE              = CDRMAtomicProperty::Instantiate( "ACTIVE",              this, *rawProperties );
+			m_Props.MODE_ID             = CDRMAtomicProperty::Instantiate( "MODE_ID",             this, *rawProperties );
+			m_Props.GAMMA_LUT           = CDRMAtomicProperty::Instantiate( "GAMMA_LUT",           this, *rawProperties );
+			m_Props.DEGAMMA_LUT         = CDRMAtomicProperty::Instantiate( "DEGAMMA_LUT",         this, *rawProperties );
+			m_Props.CTM                 = CDRMAtomicProperty::Instantiate( "CTM",                 this, *rawProperties );
+			m_Props.VRR_ENABLED         = CDRMAtomicProperty::Instantiate( "VRR_ENABLED",         this, *rawProperties );
+			m_Props.OUT_FENCE_PTR       = CDRMAtomicProperty::Instantiate( "OUT_FENCE_PTR",       this, *rawProperties );
+			m_Props.AMD_CRTC_REGAMMA_TF = CDRMAtomicProperty::Instantiate( "AMD_CRTC_REGAMMA_TF", this, *rawProperties );
 		}
 	}
 
@@ -2294,6 +2294,23 @@ namespace gamescope
 
 		return std::nullopt;
 	}
+
+	/////////////////////////
+	// CDRMFb
+	/////////////////////////
+	CDRMFb::CDRMFb( uint32_t uFbId, wlr_buffer *pClientBuffer )
+		: CBaseBackendFb( pClientBuffer )
+		, m_uFbId{ uFbId }
+	{
+
+	}
+	CDRMFb::~CDRMFb()
+	{
+		// I own the fbid.
+		if ( drmModeRmFB( g_DRM.fd, m_uFbId ) != 0 )
+			drm_log.errorf_errno( "drmModeRmFB failed" );
+		m_uFbId = 0;
+	}
 }
 
 static int
@@ -2313,20 +2330,23 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			return -EINVAL;
 	}
 
-	bool bSinglePlane = frameInfo->layerCount < 2 && g_bSinglePlaneOptimizations;
+	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
 
 	for ( int i = 0; i < k_nMaxLayers; i++ )
 	{
 		if ( i < frameInfo->layerCount )
 		{
-			if ( frameInfo->layers[ i ].fbid == 0 )
+			if ( frameInfo->layers[ i ].pBackendFb == nullptr )
 			{
 				drm_verbose_log.errorf("drm_prepare_liftoff: layer %d has no FB", i );
 				return -EINVAL;
 			}
 
-			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", frameInfo->layers[ i ].fbid);
-			drm->fbids_in_req.push_back( frameInfo->layers[ i ].fbid );
+			gamescope::CDRMFb *pDrmFb = static_cast<gamescope::CDRMFb *>( frameInfo->layers[ i ].pBackendFb.get() );
+
+			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", pDrmFb->GetFbId());
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", g_nAlwaysSignalledSyncFile);
+			drm->m_FbIdsInRequest.emplace_back( frameInfo->layers[ i ].pBackendFb );
 
 			liftoff_layer_set_property( drm->lo_layers[ i ], "zpos", entry.layerState[i].zpos );
 			liftoff_layer_set_property( drm->lo_layers[ i ], "alpha", frameInfo->layers[ i ].opacity * 0xffff);
@@ -2376,8 +2396,8 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					drm_valve1_transfer_function degamma_tf = colorspace_to_plane_degamma_tf( entry.layerState[i].colorspace );
-					drm_valve1_transfer_function shaper_tf = colorspace_to_plane_shaper_tf( entry.layerState[i].colorspace );
+					amdgpu_transfer_function degamma_tf = colorspace_to_plane_degamma_tf( entry.layerState[i].colorspace );
+					amdgpu_transfer_function shaper_tf = colorspace_to_plane_shaper_tf( entry.layerState[i].colorspace );
 
 					if ( entry.layerState[i].ycbcr )
 					{
@@ -2389,27 +2409,27 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 						//
 						// Doing LINEAR/DEFAULT here introduces banding so... this is the best way.
 						// (sRGB DEGAMMA does NOT work on YUV planes!)
-						degamma_tf = DRM_VALVE1_TRANSFER_FUNCTION_BT709;
-						shaper_tf = DRM_VALVE1_TRANSFER_FUNCTION_BT709;
+						degamma_tf = AMDGPU_TRANSFER_FUNCTION_BT709_OETF;
+						shaper_tf = AMDGPU_TRANSFER_FUNCTION_BT709_INV_OETF;
 					}
 
-					if (!g_bDisableDegamma)
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", degamma_tf );
+					if (!cv_drm_debug_disable_degamma_tf)
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", degamma_tf );
 					else
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", 0 );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", 0 );
 
-					if ( !g_bDisableShaperAnd3DLUT )
+					if ( !cv_drm_debug_disable_shaper_and_3dlut )
 					{
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", shaper_tf );
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", drm->pending.shaperlut_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", shaper_tf );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_LUT3D", drm->pending.lut3d_id[ ColorSpaceToEOTFIndex( entry.layerState[i].colorspace ) ]->GetBlobValue() );
 						// Josh: See shaders/colorimetry.h colorspace_blend_tf if you have questions as to why we start doing sRGB for BLEND_TF despite potentially working in Gamma 2.2 space prior.
 					}
 					else
 					{
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
-						liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", 0 );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", 0 );
+						liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_LUT3D", 0 );
 					}
 				}
 			}
@@ -2417,42 +2437,43 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 			{
 				if ( drm_supports_color_mgmt( drm ) )
 				{
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_CTM", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_LUT3D", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
 				}
 			}
 
 			if ( drm_supports_color_mgmt( drm ) )
 			{
-				if (!g_bDisableBlendTF && !bSinglePlane)
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", drm->pending.output_tf );
+				if (!cv_drm_debug_disable_blend_tf && !bSinglePlane)
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", drm->pending.output_tf );
 				else
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
 
 				if (frameInfo->layers[i].ctm != nullptr)
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_CTM", frameInfo->layers[i].ctm->GetBlobValue() );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", frameInfo->layers[i].ctm->GetBlobValue() );
 				else
-					liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_CTM", 0 );
+					liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
 			}
 		}
 		else
 		{
 			liftoff_layer_set_property( drm->lo_layers[ i ], "FB_ID", 0 );
+			liftoff_layer_set_property( drm->lo_layers[ i ], "IN_FENCE_FD", -1 );
 
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_ENCODING" );
 			liftoff_layer_unset_property( drm->lo_layers[ i ], "COLOR_RANGE" );
 
 			if ( drm_supports_color_mgmt( drm ) )
 			{
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_DEGAMMA_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_LUT", 0 );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_SHAPER_TF", 0 );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_LUT3D", 0 );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_BLEND_TF", DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT );
-				liftoff_layer_set_property( drm->lo_layers[ i ], "VALVE1_PLANE_CTM", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_DEGAMMA_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_LUT", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_SHAPER_TF", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_LUT3D", 0 );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_BLEND_TF", AMDGPU_TRANSFER_FUNCTION_DEFAULT );
+				liftoff_layer_set_property( drm->lo_layers[ i ], "AMD_PLANE_CTM", 0 );
 			}
 		}
 	}
@@ -2533,7 +2554,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->needs_modeset = true;
 	}
 
-	uint32_t uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
+	drm_colorspace uColorimetry = DRM_MODE_COLORIMETRY_DEFAULT;
 
 	const bool bWantsHDR10 = g_bOutputHDREnabled && frameInfo->outputEncodingEOTF == EOTF_PQ;
 	gamescope::BackendBlob *pHDRMetadata = nullptr;
@@ -2541,10 +2562,11 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 	{
 		if ( bWantsHDR10 )
 		{
+			pHDRMetadata = drm->pConnector->GetHDRInfo().pDefaultMetadataBlob.get();
+
 			wlserver_vk_swapchain_feedback* pFeedback = steamcompmgr_get_base_layer_swapchain_feedback();
-			pHDRMetadata = pFeedback
-				? pFeedback->hdr_metadata_blob.get()
-				: drm->pConnector->GetHDRInfo().pDefaultMetadataBlob.get();
+			if ( pFeedback && pFeedback->hdr_metadata_blob != nullptr )
+				pHDRMetadata = pFeedback->hdr_metadata_blob.get();
 			uColorimetry = DRM_MODE_COLORIMETRY_BT2020_RGB;
 		}
 		else
@@ -2557,31 +2579,31 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			drm->needs_modeset = true;
 	}
 
-	drm->fbids_in_req.clear();
+	drm->m_FbIdsInRequest.clear();
 
 	bool needs_modeset = drm->needs_modeset.exchange(false);
 
 	assert( drm->req == nullptr );
 	drm->req = drmModeAtomicAlloc();
 
-	bool bSinglePlane = frameInfo->layerCount < 2 && g_bSinglePlaneOptimizations;
+	bool bSinglePlane = frameInfo->layerCount < 2 && cv_drm_single_plane_optimizations;
 
 	if ( drm_supports_color_mgmt( &g_DRM ) && frameInfo->applyOutputColorMgmt )
 	{
-		if ( !g_bDisableRegamma && !bSinglePlane )
+		if ( !cv_drm_debug_disable_output_tf && !bSinglePlane )
 		{
 			drm->pending.output_tf = g_bOutputHDREnabled
-				? DRM_VALVE1_TRANSFER_FUNCTION_PQ
-				: DRM_VALVE1_TRANSFER_FUNCTION_SRGB;
+				? AMDGPU_TRANSFER_FUNCTION_PQ_EOTF
+				: AMDGPU_TRANSFER_FUNCTION_SRGB_EOTF;
 		}
 		else
 		{
-			drm->pending.output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+			drm->pending.output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 		}
 	}
 	else
 	{
-		drm->pending.output_tf = DRM_VALVE1_TRANSFER_FUNCTION_DEFAULT;
+		drm->pending.output_tf = AMDGPU_TRANSFER_FUNCTION_DEFAULT;
 	}
 
 	uint32_t flags = DRM_MODE_ATOMIC_NONBLOCK;
@@ -2644,8 +2666,8 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 			if ( pCRTC->GetProperties().OUT_FENCE_PTR )
 				pCRTC->GetProperties().OUT_FENCE_PTR->SetPendingValue( drm->req, 0, bForceInRequest );
 
-			if ( pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
-				pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
+			if ( pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
+				pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, 0, bForceInRequest );
 		}
 
 		if ( drm->pConnector )
@@ -2679,8 +2701,13 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 
 	if ( drm->pCRTC )
 	{
-		if ( drm->pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF )
-			drm->pCRTC->GetProperties().VALVE1_CRTC_REGAMMA_TF->SetPendingValue( drm->req, drm->pending.output_tf, bForceInRequest );
+		if ( drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF )
+		{
+			if ( !cv_drm_debug_disable_regamma_tf )
+				drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, inverse_tf( drm->pending.output_tf ), bForceInRequest );
+			else
+				drm->pCRTC->GetProperties().AMD_CRTC_REGAMMA_TF->SetPendingValue( drm->req, AMDGPU_TRANSFER_FUNCTION_DEFAULT, bForceInRequest );
+		}
 	}
 
 	drm->flags = flags;
@@ -2700,7 +2727,7 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 		drmModeAtomicFree( drm->req );
 		drm->req = nullptr;
 
-		drm->fbids_in_req.clear();
+		drm->m_FbIdsInRequest.clear();
 
 		if ( needs_modeset )
 			drm->needs_modeset = true;
@@ -2848,7 +2875,7 @@ static void drm_unset_mode( struct drm_t *drm )
 
 	g_nOutputRefresh = drm->preferred_refresh;
 	if (g_nOutputRefresh == 0)
-		g_nOutputRefresh = 60;
+		g_nOutputRefresh = gamescope::ConvertHztomHz( 60 );
 
 	g_bRotated = false;
 }
@@ -2863,7 +2890,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	drm->pending.mode_id = GetBackend()->CreateBackendBlob( *mode );
 	drm->needs_modeset = true;
 
-	g_nOutputRefresh = mode->vrefresh;
+	g_nOutputRefresh = gamescope::GetModeRefresh( mode );
 
 	update_drm_effective_orientations(drm, mode);
 
@@ -2995,7 +3022,7 @@ bool drm_supports_color_mgmt(struct drm_t *drm)
 	if ( !drm->pPrimaryPlane )
 		return false;
 
-	return drm->pPrimaryPlane->GetProperties().VALVE1_PLANE_CTM.has_value();
+	return drm->pPrimaryPlane->GetProperties().AMD_PLANE_CTM.has_value() && drm->pPrimaryPlane->GetProperties().AMD_PLANE_BLEND_TF.has_value();
 }
 
 std::span<const uint32_t> drm_get_valid_refresh_rates( struct drm_t *drm )
@@ -3019,6 +3046,8 @@ namespace gamescope
 
 		virtual ~CDRMBackend()
 		{
+			if ( g_DRM.fd != -1 )
+				finish_drm( &g_DRM );
 		}
 
 		virtual bool Init() override
@@ -3035,7 +3064,7 @@ namespace gamescope
 				return false;
 			}
 
-			return init_drm( &g_DRM, 0, 0, 0 );
+			return init_drm( &g_DRM, g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh );
 		}
 
 		virtual bool __attribute__((cold)) PostInit() override
@@ -3109,6 +3138,11 @@ namespace gamescope
 				bNeedsFullComposite |= g_bHDRItmEnable;
 				if ( !SupportsColorManagement() )
 					bNeedsFullComposite |= ( pFrameInfo->layerCount > 1 || pFrameInfo->layers[0].colorspace != GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ );
+			}
+			else
+			{
+				if ( !SupportsColorManagement() )
+					bNeedsFullComposite |= ColorspaceIsHDR( pFrameInfo->layers[0].colorspace );
 			}
 
 			bNeedsFullComposite |= !!(g_uCompositeDebug & CompositeDebugFlag::Heatmap);
@@ -3233,12 +3267,12 @@ namespace gamescope
 				baseLayer->zpos = g_zposBase;
 
 				baseLayer->tex = vulkan_get_last_output_image( false, false );
-				baseLayer->fbid = baseLayer->tex->fbid();
+				baseLayer->pBackendFb = baseLayer->tex->GetBackendFb();
 				baseLayer->applyColorMgmt = false;
 
 				baseLayer->filter = GamescopeUpscaleFilter::NEAREST;
 				baseLayer->ctm = nullptr;
-				baseLayer->colorspace = g_bOutputHDREnabled ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+				baseLayer->colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
 				m_bWasPartialCompsiting = false;
 			}
@@ -3259,7 +3293,7 @@ namespace gamescope
 					overlayLayer->zpos = g_zposOverlay;
 
 					overlayLayer->tex = vulkan_get_last_output_image( true, bDefer );
-					overlayLayer->fbid = overlayLayer->tex->fbid();
+					overlayLayer->pBackendFb = overlayLayer->tex->GetBackendFb();
 					overlayLayer->applyColorMgmt = g_ColorMgmt.pending.enabled;
 
 					overlayLayer->filter = GamescopeUpscaleFilter::NEAREST;
@@ -3368,7 +3402,6 @@ namespace gamescope
 				for ( uint32_t i = 0; i < 12; i++ )
 					ctm2.matrix[i] = drm_calc_s31_32( pData[i] );
 
-				fprintf( stderr, " !!!! MAKING CTM BLOB!!!!!!\n ");
 				if ( drmModeCreatePropertyBlob( g_DRM.fd, reinterpret_cast<const void *>( &ctm2 ), sizeof( ctm2 ), &uBlob ) != 0 )
 					return nullptr;
 			}
@@ -3381,27 +3414,14 @@ namespace gamescope
 			return std::make_shared<BackendBlob>( data, uBlob, true );
 		}
 
-		virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
+		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
 		{
 			return drm_fbid_from_dmabuf( &g_DRM, pBuffer, pDmaBuf );
 		}
 
-        virtual void LockBackendFb( uint32_t uFbId ) override
-		{
-			drm_lock_fbid( &g_DRM, uFbId );
-		}
-        virtual void UnlockBackendFb( uint32_t uFbId ) override
-		{
-			drm_unlock_fbid( &g_DRM, uFbId );
-		}
-        virtual void DropBackendFb( uint32_t uFbId ) override
-		{
-			drm_drop_fbid( &g_DRM, uFbId );
-		}
-
 		virtual bool UsesModifiers() const override
 		{
-			return true;
+			return g_DRM.allow_modifiers;
 		}
 		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override
 		{
@@ -3463,6 +3483,25 @@ namespace gamescope
 			return true;
 		}
 
+		virtual bool SupportsExplicitSync() const override
+		{
+#if __linux__
+			auto [nMajor, nMinor, nPatch] = GetKernelVersion();
+			
+			// Only expose support on 6.8+ for eventfd fixes.
+			if ( nMajor < 6 )
+				return false;
+
+			if ( nMajor == 6 && nMinor < 8 )
+				return false;
+#else
+			// I don't know about this for FreeBSD, etc.
+			return false;
+#endif
+
+			return g_bSupportsSyncObjs && !cv_drm_debug_disable_explicit_sync;
+		}
+
 		virtual bool IsVisible() const override
 		{
 			return !g_DRM.paused;
@@ -3516,7 +3555,6 @@ namespace gamescope
 			int ret = 0;
 
 			assert( drm->req != nullptr );
-			assert( drm->fbids_queued.size() == 0 );
 
 			defer( if ( drm->req != nullptr ) { drmModeAtomicFree( drm->req ); drm->req = nullptr; } );
 
@@ -3528,14 +3566,10 @@ namespace gamescope
 
 				// Do it before the commit, as otherwise the pageflip handler could
 				// potentially beat us to the refcount checks.
-				for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
-				{
-					struct fb &fb = get_fb( g_DRM, drm->fbids_in_req[ i ] );
-					assert( fb.held_refs );
-					fb.n_refs++;
-				}
 
-				drm->fbids_queued = drm->fbids_in_req;
+				// Swap over request FDs -> Queue
+				std::unique_lock lock( drm->m_QueuedFbIdsMutex );
+				drm->m_QueuedFbIds.swap( drm->m_FbIdsInRequest );
 			}
 
 			m_PresentFeedback.m_uQueuedPresents++;
@@ -3562,13 +3596,14 @@ namespace gamescope
 
 				drm_rollback( drm );
 
-				// Undo refcount if the commit didn't actually work
-				for ( uint32_t i = 0; i < drm->fbids_in_req.size(); i++ )
+				// Swap back over to what was previously queued (probably nothing)
+				// if this commit failed.
 				{
-					get_fb( g_DRM, drm->fbids_in_req[ i ] ).n_refs--;
+					std::unique_lock lock( drm->m_QueuedFbIdsMutex );
+					drm->m_QueuedFbIds.swap( drm->m_FbIdsInRequest );
 				}
-
-				drm->fbids_queued.clear();
+				// Clear our refs.
+				drm->m_FbIdsInRequest.clear();
 
 				m_PresentFeedback.m_uQueuedPresents--;
 
@@ -3577,7 +3612,9 @@ namespace gamescope
 
 				return ret;
 			} else {
-				drm->fbids_in_req.clear();
+				// Our request went through!
+				// Clear what we swapped with (what was previously queued)
+				drm->m_FbIdsInRequest.clear();
 
 				drm->current = drm->pending;
 
