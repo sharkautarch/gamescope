@@ -3588,7 +3588,7 @@ determine_and_apply_focus()
 			global_focus.cursor->hide();
 	}
 
-	if ( global_focus.inputFocusWindow )
+	if ( global_focus.inputFocusWindow && global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND )
 	{
 		// Cannot simply XWarpPointer here as we immediately go on to
 		// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
