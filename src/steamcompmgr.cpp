@@ -7233,387 +7233,390 @@ steamcompmgr_main(int argc, char **argv)
 	// ie. color.rgb = color.rgba * u_ctm[offsetLayerIdx];
 	s_scRGB709To2020Matrix = GetBackend()->CreateBackendBlob( glm::mat3x4( glm::transpose( k_2020_from_709 ) ) );
 
-	for (;;)
-	{
-		vblank = false;
-
+	auto body = [&]() __attribute__((hot)) {
+		for (;;)
 		{
-			gamescope_xwayland_server_t *server = NULL;
-			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-			{
-				assert(server->ctx);
-				if (server->ctx->HasQueuedEvents())
-					server->ctx->Dispatch();
-			}
-		}
-
-		g_SteamCompMgrWaiter.PollEvents();
-
-		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
-		{
-			g_SteamCompMgrVBlankTime = *pendingVBlank;
-			vblank = true;
-		}
-
-		if ( g_bRun == false )
-		{
-			break;
-		}
-
-		bool flush_root = false;
-
-		if ( inputCounter != lastPublishedInputCounter )
-		{
-			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
-							 (unsigned char *)&inputCounter, 1 );
-
-			lastPublishedInputCounter = inputCounter;
-			flush_root = true;
-		}
-
-		if ( g_bFSRActive != g_bWasFSRActive )
-		{
-			uint32_t active = g_bFSRActive ? 1 : 0;
-			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFSRFeedback, XA_CARDINAL, 32, PropModeReplace,
-					(unsigned char *)&active, 1 );
-
-			g_bWasFSRActive = g_bFSRActive;
-			flush_root = true;
-		}
-
-		if (focusDirty)
-			determine_and_apply_focus();
-
-		// If our DRM state is out-of-date, refresh it. This might update
-		// the output size.
-		if ( GetBackend()->PollState() )
-		{
-			hasRepaint = true;
-
-			update_mode_atoms(root_ctx, &flush_root);
-		}
-
-		g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
-
-		// Pick our width/height for this potential frame, regardless of how it might change later
-		// At some point we might even add proper locking so we get real updates atomically instead
-		// of whatever jumble of races the below might cause over a couple of frames
-		if ( currentOutputWidth != g_nOutputWidth ||
-			 currentOutputHeight != g_nOutputHeight ||
-			 currentHDROutput != g_bOutputHDREnabled ||
-			 currentHDRForce != g_bForceHDRSupportDebug )
-		{
-			if ( steamMode && g_nXWaylandCount > 1 )
-			{
-				g_nNestedHeight = ( g_nNestedWidth * g_nOutputHeight ) / g_nOutputWidth;
-				wlserver_lock();
-				// Update only Steam, the root ctx, with the new output size for now
-				wlserver_set_xwayland_server_mode( 0, g_nOutputWidth, g_nOutputHeight, g_nOutputRefresh );
-				wlserver_unlock();
-			}
-
-			// XXX(JoshA): Remake this. It sucks.
-			if ( GetBackend()->UsesVulkanSwapchain() )
-			{
-				vulkan_remake_swapchain();
-
-				while ( !acquire_next_image() )
-					vulkan_remake_swapchain();
-			}
-			else
-			{
-				vulkan_remake_output_images();
-			}
-
+			vblank = false;
 
 			{
 				gamescope_xwayland_server_t *server = NULL;
 				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 				{
-					uint32_t hdr_value = ( g_bOutputHDREnabled || g_bForceHDRSupportDebug ) ? 1 : 0;
-					XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeHDROutputFeedback, XA_CARDINAL, 32, PropModeReplace,
-						(unsigned char *)&hdr_value, 1 );
-
-					server->ctx->cursor->setDirty();
-
-					if (server->ctx.get() == root_ctx)
-					{
-						flush_root = true;
-					}
-					else
-					{
-						XFlush(server->ctx->dpy);
-					}
+					assert(server->ctx);
+					if (server->ctx->HasQueuedEvents())
+						server->ctx->Dispatch();
 				}
 			}
 
-			currentOutputWidth = g_nOutputWidth;
-			currentOutputHeight = g_nOutputHeight;
-			currentHDROutput = g_bOutputHDREnabled;
-			currentHDRForce = g_bForceHDRSupportDebug;
+			g_SteamCompMgrWaiter.PollEvents();
 
-#if HAVE_PIPEWIRE
-			nudge_pipewire();
-#endif
-		}
-
-		// Ask for a new surface every vblank
-		// When we observe a new commit being complete for a surface, we ask for a new frame.
-		// This ensures that FIFO works properly, since otherwise we might ask for a new frame
-		// application can commit a new frame that completes before we ever displayed
-		// the current pending commit.
-		static uint64_t vblank_idx = 0;
-		if ( vblank == true )
-		{
+			if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 			{
-				gamescope_xwayland_server_t *server = NULL;
-				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-				{
-					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
-					{
-						steamcompmgr_latch_frame_done( w, vblank_idx );
-					}
-				}
-
-				for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
-				{
-					steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
-				}
-			}
-		}
-
-		{
-			gamescope_xwayland_server_t *server = NULL;
-			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-			{
-				handle_done_commits_xwayland(server->ctx.get(), vblank, vblank_idx);
-
-				// When we have observed both a complete commit and a VBlank, we should request a new frame.
-				if (vblank)
-				{
-					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
-					{
-						steamcompmgr_flush_frame_done(w);
-					}
-				}
-			}
-		}
-
-		if ( vblank )
-		{
-			vblank_idx++;
-
-			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
-			int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
-			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefreshHz;
-			nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
-			int nVblankDivisor = nRealRefreshHz / nTargetFPS;
-
-			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
-			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
-		}
-
-		// Handle presentation-time stuff
-		//
-		// Notes:
-		//
-		// We send the presented event just after the latest latch time possible so PresentWait in Vulkan
-		// still returns pretty optimally. The extra 2ms or so can be "display latency"
-		// We still provide the predicted TTL refresh time in the presented event though.
-		//
-		// We ignore or lie most of the flags because they aren't particularly useful for a client
-		// to know anyway and it would delay us sending this at an optimal time.
-		// (particularly for DXGI frame latency handles under Proton.)
-		//
-		// The boat is still out as to whether we should do latest latch or pageflip/ttl for the event.
-		// For now, going to keep this, and if we change our minds later, it's no big deal.
-		//
-		// It's a little strange, but we return `presented` for any window not visible
-		// and `presented` for anything visible. It's a little disingenuous because we didn't
-		// actually show a window if it wasn't visible, but we could! And that is the first
-		// opportunity it had. It's confusing but we need this for forward progress.
-
-		if ( vblank )
-		{
-			wlserver_lock();
-			gamescope_xwayland_server_t *server = NULL;
-			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-				handle_presented_xwayland( server->ctx.get() );
-			wlserver_unlock();
-		}
-
-		//
-
-		{
-			gamescope_xwayland_server_t *server = NULL;
-			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-				check_new_xwayland_res(server->ctx.get());
-		}
-
-
-		{
-			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
-			std::shared_ptr<gamescope::BackendBlob> app_hdr_metadata = nullptr;
-			if ( g_HeldCommits[HELD_COMMIT_BASE] != nullptr )
-			{
-				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
-				if (g_HeldCommits[HELD_COMMIT_BASE]->feedback)
-					app_hdr_metadata = g_HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+				g_SteamCompMgrVBlankTime = *pendingVBlank;
+				vblank = true;
 			}
 
-			bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
-
-			static bool s_bAppWantsHDRCached = false;
-
-			if ( app_wants_hdr != s_bAppWantsHDRCached )
+			if ( g_bRun == false )
 			{
-				uint32_t app_wants_hdr_prop = app_wants_hdr ? 1 : 0;
+				break;
+			}
 
-				XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppWantsHDRFeedback, XA_CARDINAL, 32, PropModeReplace,
-						(unsigned char *)&app_wants_hdr_prop, 1 );
+			bool flush_root = false;
 
-				s_bAppWantsHDRCached = app_wants_hdr;
+			if ( inputCounter != lastPublishedInputCounter )
+			{
+				XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
+								 (unsigned char *)&inputCounter, 1 );
+
+				lastPublishedInputCounter = inputCounter;
 				flush_root = true;
 			}
 
-			if ( app_hdr_metadata != g_ColorMgmt.pending.appHDRMetadata )
+			if ( g_bFSRActive != g_bWasFSRActive )
 			{
-				if ( app_hdr_metadata )
-				{
-					std::vector<uint32_t> app_hdr_metadata_blob;
-					app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
-					memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
-					memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_output_metadata>().hdmi_metadata_type1, sizeof(hdr_metadata_infoframe));
+				uint32_t active = g_bFSRActive ? 1 : 0;
+				XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFSRFeedback, XA_CARDINAL, 32, PropModeReplace,
+						(unsigned char *)&active, 1 );
 
-					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
-							(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
+				g_bWasFSRActive = g_bFSRActive;
+				flush_root = true;
+			}
+
+			if (focusDirty)
+				determine_and_apply_focus();
+
+			// If our DRM state is out-of-date, refresh it. This might update
+			// the output size.
+			if ( GetBackend()->PollState() )
+			{
+				hasRepaint = true;
+
+				update_mode_atoms(root_ctx, &flush_root);
+			}
+
+			g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
+
+			// Pick our width/height for this potential frame, regardless of how it might change later
+			// At some point we might even add proper locking so we get real updates atomically instead
+			// of whatever jumble of races the below might cause over a couple of frames
+			if ( currentOutputWidth != g_nOutputWidth ||
+				 currentOutputHeight != g_nOutputHeight ||
+				 currentHDROutput != g_bOutputHDREnabled ||
+				 currentHDRForce != g_bForceHDRSupportDebug )
+			{
+				if ( steamMode && g_nXWaylandCount > 1 )
+				{
+					g_nNestedHeight = ( g_nNestedWidth * g_nOutputHeight ) / g_nOutputWidth;
+					wlserver_lock();
+					// Update only Steam, the root ctx, with the new output size for now
+					wlserver_set_xwayland_server_mode( 0, g_nOutputWidth, g_nOutputHeight, g_nOutputRefresh );
+					wlserver_unlock();
+				}
+
+				// XXX(JoshA): Remake this. It sucks.
+				if ( GetBackend()->UsesVulkanSwapchain() )
+				{
+					vulkan_remake_swapchain();
+
+					while ( !acquire_next_image() )
+						vulkan_remake_swapchain();
 				}
 				else
 				{
-					XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback);
+					vulkan_remake_output_images();
 				}
 
-				g_ColorMgmt.pending.appHDRMetadata = app_hdr_metadata;
-				flush_root = true;
+
+				{
+					gamescope_xwayland_server_t *server = NULL;
+					for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+					{
+						uint32_t hdr_value = ( g_bOutputHDREnabled || g_bForceHDRSupportDebug ) ? 1 : 0;
+						XChangeProperty(server->ctx->dpy, server->ctx->root, server->ctx->atoms.gamescopeHDROutputFeedback, XA_CARDINAL, 32, PropModeReplace,
+							(unsigned char *)&hdr_value, 1 );
+
+						server->ctx->cursor->setDirty();
+
+						if (server->ctx.get() == root_ctx)
+						{
+							flush_root = true;
+						}
+						else
+						{
+							XFlush(server->ctx->dpy);
+						}
+					}
+				}
+
+				currentOutputWidth = g_nOutputWidth;
+				currentOutputHeight = g_nOutputHeight;
+				currentHDROutput = g_bOutputHDREnabled;
+				currentHDRForce = g_bForceHDRSupportDebug;
+
+	#if HAVE_PIPEWIRE
+				nudge_pipewire();
+	#endif
 			}
-		}
 
-		steamcompmgr_check_xdg(vblank);
-
-		// Handles if we got a commit for the window we want to focus
-		// to switch to it for painting (outdatedInteractiveFocus)
-		// Doesn't realllly matter but avoids an extra frame of being on the wrong window.
-		if (focusDirty)
-			determine_and_apply_focus();
-
-		if ( window_is_steam( global_focus.focusWindow ) )
-		{
-			g_bSteamIsActiveWindow = true;
-			g_upscaleScaler = GamescopeUpscaleScaler::FIT;
-			g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
-		}
-		else
-		{
-			g_bSteamIsActiveWindow = false;
-			g_upscaleScaler = g_wantedUpscaleScaler;
-			g_upscaleFilter = g_wantedUpscaleFilter;
-		}
-
-		// If we're in the middle of a fade, then keep us
-		// as needing a repaint.
-		if ( is_fading_out() )
-			hasRepaint = true;
-
-		if ( vblank )
-		{
-			if ( global_focus.cursor )
-				global_focus.cursor->UpdatePosition();
-		}
-
-		static int nIgnoredOverlayRepaints = 0;
-
-		const bool bVRR = GetBackend()->IsVRRActive();
-
-		// HACK: Disable tearing if we have an overlay to avoid stutters right now
-		// TODO: Fix properly.
-		static bool bHasOverlay = ( global_focus.overlayWindow && global_focus.overlayWindow->opacity ) ||
-								( global_focus.externalOverlayWindow && global_focus.externalOverlayWindow->opacity ) ||
-								( global_focus.overrideWindow  && global_focus.focusWindow && !global_focus.focusWindow->isSteamStreamingClient && global_focus.overrideWindow->opacity );
-
-		const bool bSteamOverlayOpen  = global_focus.overlayWindow && global_focus.overlayWindow->opacity;
-		// If we are running behind, allow tearing.
-		const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
-
-		const bool bForceRepaint = g_bForceRepaint.exchange(false);
-		const bool bForceSyncFlip = bForceRepaint || is_fading_out();
-		// If we are compositing, always force sync flips because we currently wait
-		// for composition to finish before submitting.
-		// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
-		const bool bNeedsSyncFlip = bForceSyncFlip || GetVBlankTimer().WasCompositing() || nIgnoredOverlayRepaints;
-		const bool bDoAsyncFlip   = ( ((g_nAsyncFlipsEnabled >= 1) && GetBackend()->SupportsTearing() && bSurfaceWantsAsync && !bHasOverlay) || bVRR ) && !bSteamOverlayOpen && !bNeedsSyncFlip;
-
-		bool bShouldPaint = false;
-		if ( bDoAsyncFlip )
-		{
-			if ( hasRepaint && !GetVBlankTimer().WasCompositing() )
-				bShouldPaint = true;
-		}
-		else
-		{
-			bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bForceSyncFlip );
-		}
-
-		// If we have a pending page flip and doing VRR, lets not do another...
-		if ( bVRR && GetBackend()->PresentationFeedback().CurrentPresentsInFlight() != 0 )
-			bShouldPaint = false;
-
-		if ( !bShouldPaint && hasRepaintNonBasePlane && vblank )
-			nIgnoredOverlayRepaints++;
-
-		if ( !GetBackend()->IsVisible() )
-			bShouldPaint = false;
-
-		if ( bShouldPaint )
-		{
-			paint_all( !vblank && !bVRR );
-
-			hasRepaint = false;
-			hasRepaintNonBasePlane = false;
-			nIgnoredOverlayRepaints = 0;
-		}
-
-		if ( vblank )
-		{
-			// Pre-emptively re-arm the vblank timer if it
-			// isn't already re-armed.
-			//
-			// Juuust in case pageflip handler doesn't happen
-			// so we don't stop vblanking forever.
-			GetVBlankTimer().ArmNextVBlank( true );
-		}
-
-		update_vrr_atoms(root_ctx, false, &flush_root);
-
-		if (global_focus.cursor)
-		{
-			global_focus.cursor->checkSuspension();
-
-			if (global_focus.cursor->needs_server_flush())
+			// Ask for a new surface every vblank
+			// When we observe a new commit being complete for a surface, we ask for a new frame.
+			// This ensures that FIFO works properly, since otherwise we might ask for a new frame
+			// application can commit a new frame that completes before we ever displayed
+			// the current pending commit.
+			static uint64_t vblank_idx = 0;
+			if ( vblank == true )
 			{
-				flush_root = true;
-				global_focus.cursor->inform_flush();
+				{
+					gamescope_xwayland_server_t *server = NULL;
+					for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+					{
+						for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
+						{
+							steamcompmgr_latch_frame_done( w, vblank_idx );
+						}
+					}
+
+					for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+					{
+						steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
+					}
+				}
 			}
+
+			{
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				{
+					handle_done_commits_xwayland(server->ctx.get(), vblank, vblank_idx);
+
+					// When we have observed both a complete commit and a VBlank, we should request a new frame.
+					if (vblank)
+					{
+						for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
+						{
+							steamcompmgr_flush_frame_done(w);
+						}
+					}
+				}
+			}
+
+			if ( vblank )
+			{
+				vblank_idx++;
+
+				int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+				int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
+				int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefreshHz;
+				nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+				int nVblankDivisor = nRealRefreshHz / nTargetFPS;
+
+				g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
+				g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
+			}
+
+			// Handle presentation-time stuff
+			//
+			// Notes:
+			//
+			// We send the presented event just after the latest latch time possible so PresentWait in Vulkan
+			// still returns pretty optimally. The extra 2ms or so can be "display latency"
+			// We still provide the predicted TTL refresh time in the presented event though.
+			//
+			// We ignore or lie most of the flags because they aren't particularly useful for a client
+			// to know anyway and it would delay us sending this at an optimal time.
+			// (particularly for DXGI frame latency handles under Proton.)
+			//
+			// The boat is still out as to whether we should do latest latch or pageflip/ttl for the event.
+			// For now, going to keep this, and if we change our minds later, it's no big deal.
+			//
+			// It's a little strange, but we return `presented` for any window not visible
+			// and `presented` for anything visible. It's a little disingenuous because we didn't
+			// actually show a window if it wasn't visible, but we could! And that is the first
+			// opportunity it had. It's confusing but we need this for forward progress.
+
+			if ( vblank )
+			{
+				wlserver_lock();
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+					handle_presented_xwayland( server->ctx.get() );
+				wlserver_unlock();
+			}
+
+			//
+
+			{
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+					check_new_xwayland_res(server->ctx.get());
+			}
+
+
+			{
+				GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+				std::shared_ptr<gamescope::BackendBlob> app_hdr_metadata = nullptr;
+				if ( g_HeldCommits[HELD_COMMIT_BASE] != nullptr )
+				{
+					current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
+					if (g_HeldCommits[HELD_COMMIT_BASE]->feedback)
+						app_hdr_metadata = g_HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
+				}
+
+				bool app_wants_hdr = ColorspaceIsHDR( current_app_colorspace );
+
+				static bool s_bAppWantsHDRCached = false;
+
+				if ( app_wants_hdr != s_bAppWantsHDRCached )
+				{
+					uint32_t app_wants_hdr_prop = app_wants_hdr ? 1 : 0;
+
+					XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppWantsHDRFeedback, XA_CARDINAL, 32, PropModeReplace,
+							(unsigned char *)&app_wants_hdr_prop, 1 );
+
+					s_bAppWantsHDRCached = app_wants_hdr;
+					flush_root = true;
+				}
+
+				if ( app_hdr_metadata != g_ColorMgmt.pending.appHDRMetadata )
+				{
+					if ( app_hdr_metadata )
+					{
+						std::vector<uint32_t> app_hdr_metadata_blob;
+						app_hdr_metadata_blob.resize((sizeof(hdr_metadata_infoframe) + (sizeof(uint32_t) - 1)) / sizeof(uint32_t));
+						memset(app_hdr_metadata_blob.data(), 0, sizeof(uint32_t) * app_hdr_metadata_blob.size());
+						memcpy(app_hdr_metadata_blob.data(), &app_hdr_metadata->View<hdr_output_metadata>().hdmi_metadata_type1, sizeof(hdr_metadata_infoframe));
+
+						XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback, XA_CARDINAL, 32, PropModeReplace,
+								(unsigned char *)app_hdr_metadata_blob.data(), (int)app_hdr_metadata_blob.size() );
+					}
+					else
+					{
+						XDeleteProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeColorAppHDRMetadataFeedback);
+					}
+
+					g_ColorMgmt.pending.appHDRMetadata = app_hdr_metadata;
+					flush_root = true;
+				}
+			}
+
+			steamcompmgr_check_xdg(vblank);
+
+			// Handles if we got a commit for the window we want to focus
+			// to switch to it for painting (outdatedInteractiveFocus)
+			// Doesn't realllly matter but avoids an extra frame of being on the wrong window.
+			if (focusDirty)
+				determine_and_apply_focus();
+
+			if ( window_is_steam( global_focus.focusWindow ) )
+			{
+				g_bSteamIsActiveWindow = true;
+				g_upscaleScaler = GamescopeUpscaleScaler::FIT;
+				g_upscaleFilter = GamescopeUpscaleFilter::LINEAR;
+			}
+			else
+			{
+				g_bSteamIsActiveWindow = false;
+				g_upscaleScaler = g_wantedUpscaleScaler;
+				g_upscaleFilter = g_wantedUpscaleFilter;
+			}
+
+			// If we're in the middle of a fade, then keep us
+			// as needing a repaint.
+			if ( is_fading_out() )
+				hasRepaint = true;
+
+			if ( vblank )
+			{
+				if ( global_focus.cursor )
+					global_focus.cursor->UpdatePosition();
+			}
+
+			static int nIgnoredOverlayRepaints = 0;
+
+			const bool bVRR = GetBackend()->IsVRRActive();
+
+			// HACK: Disable tearing if we have an overlay to avoid stutters right now
+			// TODO: Fix properly.
+			static bool bHasOverlay = ( global_focus.overlayWindow && global_focus.overlayWindow->opacity ) ||
+									( global_focus.externalOverlayWindow && global_focus.externalOverlayWindow->opacity ) ||
+									( global_focus.overrideWindow  && global_focus.focusWindow && !global_focus.focusWindow->isSteamStreamingClient && global_focus.overrideWindow->opacity );
+
+			const bool bSteamOverlayOpen  = global_focus.overlayWindow && global_focus.overlayWindow->opacity;
+			// If we are running behind, allow tearing.
+			const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
+
+			const bool bForceRepaint = g_bForceRepaint.exchange(false);
+			const bool bForceSyncFlip = bForceRepaint || is_fading_out();
+			// If we are compositing, always force sync flips because we currently wait
+			// for composition to finish before submitting.
+			// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
+			const bool bNeedsSyncFlip = bForceSyncFlip || GetVBlankTimer().WasCompositing() || nIgnoredOverlayRepaints;
+			const bool bDoAsyncFlip   = ( ((g_nAsyncFlipsEnabled >= 1) && GetBackend()->SupportsTearing() && bSurfaceWantsAsync && !bHasOverlay) || bVRR ) && !bSteamOverlayOpen && !bNeedsSyncFlip;
+
+			bool bShouldPaint = false;
+			if ( bDoAsyncFlip )
+			{
+				if ( hasRepaint && !GetVBlankTimer().WasCompositing() )
+					bShouldPaint = true;
+			}
+			else
+			{
+				bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bForceSyncFlip );
+			}
+
+			// If we have a pending page flip and doing VRR, lets not do another...
+			if ( bVRR && GetBackend()->PresentationFeedback().CurrentPresentsInFlight() != 0 )
+				bShouldPaint = false;
+
+			if ( !bShouldPaint && hasRepaintNonBasePlane && vblank )
+				nIgnoredOverlayRepaints++;
+
+			if ( !GetBackend()->IsVisible() )
+				bShouldPaint = false;
+
+			if ( bShouldPaint )
+			{
+				paint_all( !vblank && !bVRR );
+
+				hasRepaint = false;
+				hasRepaintNonBasePlane = false;
+				nIgnoredOverlayRepaints = 0;
+			}
+
+			if ( vblank )
+			{
+				// Pre-emptively re-arm the vblank timer if it
+				// isn't already re-armed.
+				//
+				// Juuust in case pageflip handler doesn't happen
+				// so we don't stop vblanking forever.
+				GetVBlankTimer().ArmNextVBlank( true );
+			}
+
+			update_vrr_atoms(root_ctx, false, &flush_root);
+
+			if (global_focus.cursor)
+			{
+				global_focus.cursor->checkSuspension();
+
+				if (global_focus.cursor->needs_server_flush())
+				{
+					flush_root = true;
+					global_focus.cursor->inform_flush();
+				}
+			}
+
+			if (flush_root)
+			{
+				XFlush(root_ctx->dpy);
+			}
+
+			vulkan_garbage_collect();
+
+			vblank = false;
 		}
-
-		if (flush_root)
-		{
-			XFlush(root_ctx->dpy);
-		}
-
-		vulkan_garbage_collect();
-
-		vblank = false;
-	}
+	};
+	body();
 
 	steamcompmgr_exit();
 }
