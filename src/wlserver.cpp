@@ -125,19 +125,22 @@ void GamescopeTimelinePoint::Release()
 // DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT -> Wait for materialization + signal
 //
 
-static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const GamescopeTimelinePoint &point )
+static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
 {
+	if (!oPoint)
+		return std::nullopt;
+
 	uint64_t uSignalledPoint = 0;
-	int nRet = drmSyncobjQuery( point.pTimeline->drm_fd, &point.pTimeline->handle, &uSignalledPoint, 1u );
+	int nRet = drmSyncobjQuery( oPoint->pTimeline->drm_fd, &oPoint->pTimeline->handle, &uSignalledPoint, 1u );
 	if ( nRet != 0 )
 	{
 		wl_log.errorf( "Failed to query syncobj" );
 		return std::nullopt;
 	}
 
-	if ( uSignalledPoint >= point.ulPoint )
+	if ( uSignalledPoint >= oPoint->ulPoint )
 	{
-		return GamescopeAcquireTimelineState{ -1, true };
+		return std::optional<GamescopeAcquireTimelineState>{ std::in_place_t{}, -1, true };
 	}
 	else
 	{
@@ -150,22 +153,22 @@ static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( cons
 
 		drm_syncobj_eventfd syncobjEventFd =
 		{
-			.handle = point.pTimeline->handle,
+			.handle = oPoint->pTimeline->handle,
 			// Only valid flags are: DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
 			// -> Wait for fence materialization rather than signal.
 			.flags  = 0u,
-			.point  = point.ulPoint,
+			.point  = oPoint->ulPoint,
 			.fd     = nExplicitSyncEventFd,
 		};
 
-		if ( drmIoctl( point.pTimeline->drm_fd, DRM_IOCTL_SYNCOBJ_EVENTFD, &syncobjEventFd ) != 0 )
+		if ( drmIoctl( oPoint->pTimeline->drm_fd, DRM_IOCTL_SYNCOBJ_EVENTFD, &syncobjEventFd ) != 0 )
 		{
 			wl_log.errorf_errno( "DRM_IOCTL_SYNCOBJ_EVENTFD failed" );
 			close( nExplicitSyncEventFd );
 			return std::nullopt;
 		}
 
-		return GamescopeAcquireTimelineState{ nExplicitSyncEventFd, false };
+		return std::optional<GamescopeAcquireTimelineState>{ std::in_place_t{}, nExplicitSyncEventFd, false };
 	}
 }
 
@@ -178,39 +181,38 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
 		wlr_linux_drm_syncobj_v1_get_surface_state( wlserver.wlr.drm_syncobj_manager_v1, surf );
 
-	std::optional<GamescopeAcquireTimelineState> oAcquireState;
+	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {
+			std::in_place_t{},
+			pSyncState->acquire_timeline,
+			pSyncState->acquire_point
+	};
+	std::optional<GamescopeAcquireTimelineState> oAcquireState = TimelinePointToEventFd( oAcquirePoint );
 	std::optional<GamescopeTimelinePoint> oReleasePoint;
 	if ( pSyncState )
 	{
-		GamescopeTimelinePoint acquirePoint =
-		{
-			.pTimeline = pSyncState->acquire_timeline,
-			.ulPoint   = pSyncState->acquire_point,
-		};
-		oAcquireState = TimelinePointToEventFd( acquirePoint );
 		if ( !oAcquireState )
 		{
 			return std::nullopt;
 		}
 
-		oReleasePoint = GamescopeTimelinePoint
-		{
-			.pTimeline = wlr_render_timeline_ref( pSyncState->release_timeline ),
-			.ulPoint   = pSyncState->release_point,
-		};
+		oReleasePoint.emplace(
+			  wlr_render_timeline_ref( pSyncState->release_timeline ),
+			  pSyncState->release_point 
+		);
 	}
 
-	ResListEntry_t newEntry = {
-		.surf = surf,
-		.buf = buf,
-		.async = wlserver_surface_is_async(surf),
-		.fifo = wlserver_surface_is_fifo(surf),
-		.feedback = pFeedback,
-		.presentation_feedbacks = std::move(wl_surf->pending_presentation_feedbacks),
-		.present_id = wl_surf->present_id,
-		.desired_present_time = wl_surf->desired_present_time,
-		.oAcquireState = oAcquireState,
-		.oReleasePoint = oReleasePoint,
+	auto oNewEntry = std::optional<ResListEntry_t> {
+		std::in_place_t{},
+		surf,
+		buf,
+		wlserver_surface_is_async(surf),
+		wlserver_surface_is_fifo(surf),
+		pFeedback,
+		std::move(wl_surf->pending_presentation_feedbacks),
+		wl_surf->present_id,
+		wl_surf->desired_present_time,
+		oAcquireState,
+		oReleasePoint
 	};
 	wl_surf->present_id = std::nullopt;
 	wl_surf->desired_present_time = 0;
@@ -222,7 +224,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	if ( wlserver.mouse_constraint && wlserver.mouse_constraint->surface == pConstraintSurface )
 		wlserver_update_cursor_constraint();
 
-	return newEntry;
+	return oNewEntry;
 }
 
 void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
