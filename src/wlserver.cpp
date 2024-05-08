@@ -70,6 +70,8 @@
 
 static LogScope wl_log("wlserver");
 
+//#define GAMESCOPE_SWAPCHAIN_DEBUG
+
 struct wlserver_t wlserver = {
 	.touch_down_ids = {}
 };
@@ -630,6 +632,9 @@ static struct wl_listener new_surface_listener = { .notify = wlserver_new_surfac
 
 void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_content_override *co )
 {
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "destroy_content_override REAL: co: %p co->surface: %p co->x11_window: 0x%x co->gamescope_swapchain: %p", co, co->surface, co->x11_window, co->gamescope_swapchain );
+#endif
 	if ( co->surface )
 	{
 		wlserver_wl_surface_info *wl_surface_info = get_wl_surface_info( co->surface );
@@ -647,6 +652,9 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_cont
 }
 void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_x11_surface_info *x11_surface, struct wlr_surface *surf )
 {
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "destroy_content_override LOOKUP: x11_surface: %p x11_window: 0x%x surf: %p", x11_surface, x11_surface->x11_id, surf );
+#endif
 	auto iter = content_overrides.find( x11_surface->x11_id );
 	if (iter == content_overrides.end())
 		return;
@@ -655,6 +663,11 @@ void gamescope_xwayland_server_t::destroy_content_override( struct wlserver_x11_
 		x11_surface->override_surface = nullptr;
 
 	struct wlserver_content_override *co = iter->second;
+
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "destroy_content_override LOOKUP FOUND: x11_surface: %p x11_window: 0x%x surf: %p co: %p co->surface: %p", x11_surface, x11_surface->x11_id, surf, co, co->surface );
+#endif
+
 	co->gamescope_swapchain = nullptr;
 	if (co->surface == surf)
 		destroy_content_override(iter->second);
@@ -669,6 +682,8 @@ static void content_override_handle_surface_destroy( struct wl_listener *listene
 	server->destroy_content_override( co );
 }
 
+static void gamescope_swapchain_destroy_co( struct wl_resource *resource );
+
 void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wlr_surface *surface, uint32_t x11_window )
 {
 	wlserver_x11_surface_info *x11_surface = lookup_x11_surface_info_from_xid( this, x11_window );
@@ -676,11 +691,20 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
 	if ( x11_surface )
 		x11_window = x11_surface->x11_id;
 
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "handle_override_window_content: (1) x11_window: 0x%x swapchain_resource: %p surface: %p", x11_window, resource, surface );
+#endif
+
 	if ( content_overrides.count( x11_window ) ) {
 		if ( content_overrides[x11_window]->gamescope_swapchain == resource )
 			return;
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+		wl_log.infof( "handle_override_window_content: (2) DESTROYING x11_window: 0x%x old_swapchain: %p new_swapchain: %p", x11_window, content_overrides[x11_window]->gamescope_swapchain, resource );
+#endif
 		destroy_content_override( content_overrides[ x11_window ] );
 	}
+
+	gamescope_swapchain_destroy_co( resource );
 
 	struct wlserver_content_override *co = (struct wlserver_content_override *)calloc(1, sizeof(*co));
 	co->server = this;
@@ -690,6 +714,10 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
 	co->surface_destroy_listener.notify = content_override_handle_surface_destroy;
 	wl_signal_add( &surface->events.destroy, &co->surface_destroy_listener );
 	content_overrides[ x11_window ] = co;
+
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "handle_override_window_content: (3) x11_window: 0x%x swapchain_resource: %p surface: %p co: %p", x11_window, resource, surface, co );
+#endif
 
 	if ( x11_surface )
 		wlserver_x11_surface_info_set_wlr( x11_surface, surface, true );
@@ -789,17 +817,37 @@ static void create_gamescope_xwayland( void )
 
 
 
-
-
-static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *resource )
+static void gamescope_swapchain_destroy_co( struct wl_resource *resource )
 {
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "gamescope_swapchain_destroy_co swapchain: %p", resource );
+#endif
 	wlserver_wl_surface_info *wl_surface_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 	if ( wl_surface_info )
 	{
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+		wl_log.infof( "gamescope_swapchain_destroy_co swapchain: %p GOT WAYLAND SURFACE", resource );
+#endif
 		wlserver_x11_surface_info *x11_surface = wl_surface_info->x11_surface;
 		if (x11_surface)
+		{
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+			wl_log.infof( "gamescope_swapchain_destroy_co swapchain: %p GOT X11 SURFACE", resource );
+#endif
 			x11_surface->xwayland_server->destroy_content_override( x11_surface, wl_surface_info->wlr );
+		}
+	}
+}
 
+static void gamescope_swapchain_handle_resource_destroy( struct wl_resource *resource )
+{
+#ifdef GAMESCOPE_SWAPCHAIN_DEBUG
+	wl_log.infof( "gamescope_swapchain_handle_resource_destroy swapchain: %p", resource );
+#endif
+	wlserver_wl_surface_info *wl_surface_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
+	if ( wl_surface_info )
+	{
+		gamescope_swapchain_destroy_co( resource );
 		std::erase(wl_surface_info->gamescope_swapchains, resource);
 	}
 }
