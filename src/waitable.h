@@ -9,8 +9,10 @@
 
 #include <functional>
 #include <mutex>
+#include <memory>
 
 #include "log.hpp"
+#include "constexpr_func.h"
 
 extern LogScope g_WaitableLog;
 
@@ -18,6 +20,7 @@ timespec nanos_to_timespec( uint64_t ulNanos );
 
 namespace gamescope
 {
+	
     class IWaitable
     {
     public:
@@ -111,7 +114,7 @@ namespace gamescope
     class CFunctionWaitable final : public IWaitable
     {
     public:
-        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc = nullptr )
+        CFunctionWaitable( int nFD, constexpr_function<void()> fnPollFunc = [](){ return ; } )
             : m_nFD{ nFD }
             , m_fnPollFunc{ fnPollFunc }
         {
@@ -134,7 +137,7 @@ namespace gamescope
         }
     private:
         int m_nFD;
-        std::function<void()> m_fnPollFunc;
+        constexpr_function<void()> m_fnPollFunc;
     };
 
     class ITimerWaitable : public IWaitable
@@ -193,7 +196,7 @@ namespace gamescope
     class CTimerFunction final : public ITimerWaitable
     {
     public:
-        CTimerFunction( std::function<void()> fnPollFunc )
+        CTimerFunction( constexpr_function<void()> fnPollFunc )
             : m_fnPollFunc{ fnPollFunc }
         {
         }
@@ -203,7 +206,7 @@ namespace gamescope
             m_fnPollFunc();
         }
     private:
-        std::function<void()> m_fnPollFunc;
+        constexpr_function<void()> m_fnPollFunc;
     };
 
     template <size_t MaxEvents = 1024>

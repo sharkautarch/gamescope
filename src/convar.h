@@ -12,6 +12,8 @@
 #include <functional>
 #include <cassert>
 
+#include "constexpr_func.h"
+
 namespace gamescope
 {
     class ConCommand;
@@ -69,7 +71,7 @@ namespace gamescope
 
     class ConCommand
     {
-        using ConCommandFunc = std::function<void( std::span<std::string_view> )>;
+        using ConCommandFunc = constexpr_function<void( std::span<std::string_view> )>;
 
     public:
         ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func )
@@ -102,7 +104,7 @@ namespace gamescope
     template <typename T>
     class ConVar : public ConCommand
     {
-        using ConVarCallbackFunc = std::function<void()>;
+        using ConVarCallbackFunc = constexpr_function<void()>;
     public:
         ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr )
             : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); } )
