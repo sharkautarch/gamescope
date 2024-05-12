@@ -1414,7 +1414,7 @@ void CVulkanCmdBuffer::clearState()
 }
 
 template<class PushData, class... Args>
-inline void __attribute__((no_stack_protector,nothrow)) CVulkanCmdBuffer::uploadConstants(Args&&... args) noexcept
+inline void __attribute__((no_stack_protector,nothrow)) CVulkanCmdBuffer::uploadConstants(Args&&... args)
 {
 	PushData data(std::forward<Args>(args)...);
 
@@ -3386,7 +3386,7 @@ struct BlitPushData_t
     float u_itmSdrNits; // unset
     float u_itmTargetNits; // unset
 
-	explicit __attribute__((no_stack_protector,nothrow)) BlitPushData_t(const struct FrameInfo_t *frameInfo) noexcept
+	explicit __attribute__((no_stack_protector,nothrow)) BlitPushData_t(const struct FrameInfo_t *frameInfo)
 	{
 		u_shaderFilter = 0;
 
@@ -3425,7 +3425,7 @@ struct BlitPushData_t
 		u_itmTargetNits = g_flHDRItmTargetNits;
 	}
 
-	explicit __attribute__((no_stack_protector,nothrow)) BlitPushData_t(float blit_scale) noexcept {
+	explicit __attribute__((no_stack_protector,nothrow)) BlitPushData_t(float blit_scale) {
 		scale[0] = { blit_scale, blit_scale };
 		offset[0] = { 0.5f, 0.5f };
 		opacity[0] = 1.0f;
@@ -3491,7 +3491,7 @@ struct EasuPushData_t
 	uvec4_t Const2;
 	uvec4_t Const3;
 
-	__attribute__((no_stack_protector,nothrow)) EasuPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY) noexcept
+	__attribute__((no_stack_protector,nothrow)) EasuPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY)
 	{
 		FsrEasuCon(&Const0.x, &Const1.x, &Const2.x, &Const3.x, inputX, inputY, inputX, inputY, tempX, tempY);
 	}
@@ -3515,7 +3515,7 @@ struct RcasPushData_t
     float u_itmSdrNits; // unset
     float u_itmTargetNits; // unset
 
-	__attribute__((no_stack_protector,nothrow)) RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness) noexcept
+	__attribute__((no_stack_protector,nothrow)) RcasPushData_t(const struct FrameInfo_t *frameInfo, float sharpness)
 	{
 		uvec4_t tmp;
 		FsrRcasCon(&tmp.x, sharpness);
@@ -3569,7 +3569,7 @@ struct NisPushData_t
 {
 	NISConfig nisConfig;
 
-	__attribute__((no_stack_protector,nothrow)) NisPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, float sharpness) noexcept
+	__attribute__((no_stack_protector,nothrow)) NisPushData_t(uint32_t inputX, uint32_t inputY, uint32_t tempX, uint32_t tempY, float sharpness)
 	{
 		NVScalerUpdateConfig(
 			nisConfig, sharpness,

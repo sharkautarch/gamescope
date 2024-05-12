@@ -5800,7 +5800,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime ) noexcept
+bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime )
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -5882,7 +5882,7 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 }
 
 // TODO: Merge these two functions.
-void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx ) noexcept
+void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
 	// windows in FIFO mode we got a new frame to present for this vblank
 	static phmap::flat_hash_set< uint32_t > fifo_win_seqs(8);
@@ -5950,7 +5950,7 @@ void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwaylan
 	
 }
 
-void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg() noexcept
+void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg()
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
