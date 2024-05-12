@@ -7,72 +7,68 @@
 #include <cstdlib>
 
 namespace xcb {
-
-  typedef struct {
-    xcb_window_t window;
-    xcb_get_geometry_cookie_t geo;
-    xcb_query_tree_cookie_t q_tree;
-    std::tuple<xcb_get_geometry_reply_t* __restrict__, xcb_query_tree_reply_t*__restrict__> cached_replies;
-  } cookie_cache_t;
-
   static thread_local constinit bool g_cache_bIsValid = false; //thread_local just incase g_cache could otherwise be accessed by one thread, while it is being deleted by another thread
-  static constinit cookie_cache_t g_cache = {};
+  inline struct cookie_cache_t {
+    xcb_window_t window;
+    std::tuple<xcb_get_geometry_cookie_t, xcb_query_tree_cookie_t> cached_cookies;
+    std::tuple<xcb_get_geometry_reply_t*, xcb_query_tree_reply_t*> cached_replies;
+  } g_cache = {};
   
-  class Prefetcher {
-    public: //Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR
-        explicit Prefetcher(xcb_connection_t* __restrict__ connection, const xcb_window_t window) {
-            g_cache = {
-                .window = window,
-                .geo = xcb_get_geometry(connection, window),
-                .q_tree = xcb_query_tree(connection, window)
-            };
-            g_cache_bIsValid = true;
-        }
+  template <typename T>
+  concept CacheableCookie = std::is_same<T, xcb_get_geometry_cookie_t>::value || std::is_same<T, xcb_query_tree_cookie_t>::value;
+  
+  static constexpr auto replyFuncs = std::make_tuple(xcb_get_geometry_reply, xcb_query_tree_reply);
+  template <CacheableCookie CookieType>
+  consteval int getCacheTupleIdx() { return std::is_same<CookieType, xcb_get_geometry_cookie_t>::value ? 0 : 1; }
+  
+  //Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR:
+  struct Prefetcher {
+    explicit Prefetcher(xcb_connection_t* __restrict__ connection, const xcb_window_t window) {
+        g_cache = {
+            .window = window,
+            .cached_cookies = { 
+                xcb_get_geometry(connection, window),
+                xcb_query_tree(connection, window)
+            }
+        };
+        g_cache_bIsValid = true;
+    }
 
-        ~Prefetcher() {
-            g_cache_bIsValid = false;
-            if ( std::get<0>(g_cache.cached_replies) != nullptr )
-                free(std::get<0>(g_cache.cached_replies));
-            if ( std::get<1>(g_cache.cached_replies) != nullptr )
-                free(std::get<1>(g_cache.cached_replies));
-            g_cache.cached_replies = {nullptr,nullptr};
-        }
+    ~Prefetcher() {
+        g_cache_bIsValid = false;
+        free(std::get<0>(g_cache.cached_replies));
+        free(std::get<1>(g_cache.cached_replies));
+        g_cache.cached_replies = {nullptr,nullptr};
+    }
   };
   
   struct ReplyDeleter {
+    const bool m_bOwning = true;
+    consteval ReplyDeleter(bool bOwning = true) : m_bOwning{bOwning} {}
     template <typename T>
     void operator()(T* ptr) const {
-      free(const_cast<std::remove_const_t<T>*>(ptr));
+      if (m_bOwning)
+        free(const_cast<std::remove_const_t<T>*>(ptr));
     }
   };
 
   template <typename T>
   using Reply = std::unique_ptr<T, ReplyDeleter>;
   
-  static Reply<xcb_get_geometry_reply_t> getCachedReply(xcb_connection_t* __restrict__ connection, const xcb_get_geometry_cookie_t cookie) {
-    xcb_get_geometry_reply_t* __restrict__ reply_copied = reinterpret_cast<xcb_get_geometry_reply_t* __restrict__>(std::malloc(sizeof(xcb_get_geometry_reply_t)));
-    if (std::get<0>(g_cache.cached_replies) == nullptr) {
-        std::get<0>(g_cache.cached_replies) = xcb_get_geometry_reply(connection, cookie, nullptr);
+  template <CacheableCookie CookieType, typename ReplyType>
+  static Reply<ReplyType> getCachedReply(xcb_connection_t* __restrict__ connection, const CookieType cookie) {
+    static constexpr int index = getCacheTupleIdx<CookieType>();
+    if (std::get<index>(g_cache.cached_replies) == nullptr) {
+        std::get<index>(g_cache.cached_replies) = std::get<index>(replyFuncs)(connection, cookie, nullptr);
     }
 
-    std::memcpy(reply_copied,std::get<0>(g_cache.cached_replies), sizeof(xcb_get_geometry_reply_t));
-    return Reply<xcb_get_geometry_reply_t>{reply_copied};
+    return Reply<ReplyType>{std::get<index>(g_cache.cached_replies), ReplyDeleter{false}};
   }
   
-  static Reply<xcb_query_tree_reply_t> getCachedReply(xcb_connection_t* __restrict__ connection, const xcb_query_tree_cookie_t cookie) {
-    xcb_query_tree_reply_t* __restrict__ reply_copied = reinterpret_cast<xcb_query_tree_reply_t* __restrict__>(std::malloc(sizeof(xcb_query_tree_reply_t)));
-    if (std::get<1>(g_cache.cached_replies) == nullptr) {
-        std::get<1>(g_cache.cached_replies) = xcb_query_tree_reply(connection, cookie, nullptr);
-    }
-
-    std::memcpy(reply_copied, std::get<1>(g_cache.cached_replies), sizeof(xcb_query_tree_reply_t));
-    return Reply<xcb_query_tree_reply_t>{reply_copied};
-  }
-  
-  template <typename cookie_retType, typename reply_retType, typename first=xcb_connection_t*, typename... ArgsTwo>
+  template <typename Cookie_RetType, typename Reply_RetType, typename XcbConn=xcb_connection_t*, typename... Args>
   class XcbFetch {
-    using cookie_f_ptr_t = cookie_retType (*)(first, ArgsTwo...);
-    using reply_f_ptr_t = reply_retType (*)(first, cookie_retType, xcb_generic_error_t**);
+    using cookie_f_ptr_t = Cookie_RetType (*)(XcbConn, Args...);
+    using reply_f_ptr_t = Reply_RetType (*)(XcbConn, Cookie_RetType, xcb_generic_error_t**);
     
     const cookie_f_ptr_t m_cookieFunc;
     const reply_f_ptr_t m_replyFunc;
@@ -80,15 +76,16 @@ namespace xcb {
     public:
         consteval XcbFetch(cookie_f_ptr_t cookieFunc, reply_f_ptr_t replyFunc) : m_cookieFunc{cookieFunc}, m_replyFunc{replyFunc} {}
         
-        inline Reply<std::remove_pointer_t<reply_retType>> operator()(first conn, auto... argsTwo) { //have to use auto for argsTwo, since otherwise there'd be a type deduction conflict
-            return Reply<std::remove_pointer_t<reply_retType>> { m_replyFunc(conn, m_cookieFunc(conn, argsTwo...), nullptr) };
+        inline Reply<std::remove_pointer_t<Reply_RetType>> operator()(XcbConn conn, auto... args) { //have to use auto for argsTwo, since otherwise there'd be a type deduction conflict
+            return Reply<std::remove_pointer_t<Reply_RetType>> { m_replyFunc(conn, m_cookieFunc(conn, args...), nullptr) };
         }
   };
   
-  template <>
-  class XcbFetch<xcb_get_geometry_cookie_t, xcb_get_geometry_reply_t*, xcb_connection_t*, xcb_window_t> {
-    using cookie_f_ptr_t = xcb_get_geometry_cookie_t (*)(xcb_connection_t*, xcb_window_t);
-    using reply_f_ptr_t = xcb_get_geometry_reply_t* (*)(xcb_connection_t*, xcb_get_geometry_cookie_t, xcb_generic_error_t**);
+  template <CacheableCookie Cookie_RetType, typename Reply_RetType>
+  class XcbFetch<Cookie_RetType, Reply_RetType, xcb_connection_t*, xcb_window_t> {
+    using Reply_RetTypeBase = std::remove_pointer_t<Reply_RetType>;
+    using cookie_f_ptr_t = Cookie_RetType (*)(xcb_connection_t*, xcb_window_t);
+    using reply_f_ptr_t = Reply_RetType (*)(xcb_connection_t*, Cookie_RetType, xcb_generic_error_t**);
     
     const cookie_f_ptr_t m_cookieFunc;
     const reply_f_ptr_t m_replyFunc;
@@ -96,32 +93,12 @@ namespace xcb {
     public:
         consteval XcbFetch(cookie_f_ptr_t cookieFunc, reply_f_ptr_t replyFunc) : m_cookieFunc{cookieFunc}, m_replyFunc{replyFunc} {}
         
-        inline Reply<xcb_get_geometry_reply_t> operator()(xcb_connection_t* conn, xcb_window_t window) {
+        inline Reply<Reply_RetTypeBase> operator()(xcb_connection_t* conn, xcb_window_t window) {
             const bool tryCached = (g_cache_bIsValid && g_cache.window == window);
             if (tryCached) [[likely]]
-                return getCachedReply(conn, g_cache.geo);
+                return getCachedReply<Cookie_RetType, Reply_RetTypeBase>(conn, std::get<Cookie_RetType>(g_cache.cached_cookies));
 
-            return Reply<xcb_get_geometry_reply_t> { m_replyFunc(conn, m_cookieFunc(conn, window), nullptr) };
-        }
-  };
-  
-  template <>
-  class XcbFetch<xcb_query_tree_cookie_t, xcb_query_tree_reply_t*, xcb_connection_t*, xcb_window_t> {
-    using cookie_f_ptr_t = xcb_query_tree_cookie_t (*)(xcb_connection_t*, xcb_window_t);
-    using reply_f_ptr_t = xcb_query_tree_reply_t* (*)(xcb_connection_t*, xcb_query_tree_cookie_t, xcb_generic_error_t**);
-    
-    const cookie_f_ptr_t m_cookieFunc;
-    const reply_f_ptr_t m_replyFunc;
-    
-    public:
-        consteval XcbFetch(cookie_f_ptr_t cookieFunc, reply_f_ptr_t replyFunc) : m_cookieFunc{cookieFunc}, m_replyFunc{replyFunc} {}
-        
-        inline Reply<xcb_query_tree_reply_t> operator()(xcb_connection_t* conn, xcb_window_t window) {
-            const bool tryCached = (g_cache_bIsValid && g_cache.window == window);
-            if (tryCached) [[likely]]
-                return getCachedReply(conn, g_cache.q_tree);
-
-            return Reply<xcb_query_tree_reply_t> { m_replyFunc(conn, m_cookieFunc(conn, window), nullptr) };
+            return Reply<Reply_RetTypeBase> { m_replyFunc(conn, m_cookieFunc(conn, window), nullptr) };
         }
   };
  
