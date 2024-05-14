@@ -1038,7 +1038,7 @@ public:
 						| ( (isPresent && state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_SHADER_READ_BIT : 0u),
 
 				.dstAccessMask = dst_read_bits | dst_write_bits,
-				.oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+				.oldLayout = state.discarded ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 				.newLayout =  isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
 				.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 				.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,

@@ -167,6 +167,13 @@ namespace gamescope
                 }
                 break;
 
+                case EIS_EVENT_SCROLL_DISCRETE:
+                {
+                    m_flScrollAccum[0] += eis_event_scroll_get_discrete_dx( pEisEvent ) / 120.0;
+                    m_flScrollAccum[1] += eis_event_scroll_get_discrete_dy( pEisEvent ) / 120.0;
+                }
+                break;
+
                 case EIS_EVENT_KEYBOARD_KEY:
                 {
                     wlserver_lock();
@@ -186,7 +193,17 @@ namespace gamescope
 
                 case EIS_EVENT_FRAME:
                 {
-                    // Not used currently, maybe we want to accum scroll?
+                    double flScrollX = m_flScrollAccum[0];
+                    double flScrollY = m_flScrollAccum[1];
+                    m_flScrollAccum[0] = 0.0;
+                    m_flScrollAccum[1] = 0.0;
+
+                    if ( flScrollX == 0.0 && flScrollY == 0.0 )
+                        break;
+
+                    wlserver_lock();
+                    wlserver_mousewheel( flScrollX, flScrollY, ++s_uSequence );
+                    wlserver_unlock();
                 }
                 break;
 
@@ -196,6 +213,8 @@ namespace gamescope
                 }
                 break;
             }
+
+            eis_event_unref( pEisEvent );
         }
     }
 }
