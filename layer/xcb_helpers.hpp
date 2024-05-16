@@ -11,7 +11,7 @@ namespace xcb {
   inline static constinit thrd_t g_cache_tid; //incase g_cache could otherwise be accessed by one thread, while it is being deleted by another thread
   inline static constinit struct cookie_cache_t {
     xcb_window_t window;
-    std::tuple<xcb_get_geometry_cookie_t, xcb_query_tree_cookie_t> cached_cookies;
+    uint32_t cached_cookies[2];
     std::tuple<xcb_get_geometry_reply_t*, xcb_query_tree_reply_t*> cached_replies;
   } g_cache = {};
   
@@ -20,9 +20,9 @@ namespace xcb {
     explicit Prefetcher(xcb_connection_t* __restrict__ connection, const xcb_window_t window) {
         g_cache = {
             .window = window,
-            .cached_cookies = { 
-                xcb_get_geometry(connection, window),
-                xcb_query_tree(connection, window)
+            .cached_cookies = {
+                xcb_get_geometry(connection, window).sequence,
+                xcb_query_tree(connection, window).sequence
             }
         };
         g_cache_tid = thrd_current();
@@ -48,22 +48,6 @@ namespace xcb {
 
   template <typename T>
   using Reply = std::unique_ptr<T, ReplyDeleter>;
-
-  static constexpr auto replyFuncs = std::make_tuple(xcb_get_geometry_reply, xcb_query_tree_reply);
-  template <typename CookieType>
-  consteval int getCacheTupleIdx() { 
-    return std::is_same<CookieType, xcb_get_geometry_cookie_t>::value ? 0 : 1;
-  }
-  
-  template <typename CookieType, typename ReplyType>
-  static Reply<ReplyType> getCachedReply(xcb_connection_t* __restrict__ connection, const CookieType cookie) {
-    static constexpr int index = getCacheTupleIdx<CookieType>();
-    if (std::get<index>(g_cache.cached_replies) == nullptr) {
-        std::get<index>(g_cache.cached_replies) = std::get<index>(replyFuncs)(connection, cookie, nullptr);
-    }
-
-    return Reply<ReplyType>{std::get<index>(g_cache.cached_replies), ReplyDeleter{false}}; // return 'non-owning' unique_ptr
-  }
   
   template <typename Cookie_RetType, typename Reply_RetType, typename XcbConn=xcb_connection_t*, typename... Args>
   class XcbFetch {
@@ -84,6 +68,11 @@ namespace xcb {
   template <typename CookieType>
   concept CacheableCookie = std::is_same<CookieType, xcb_get_geometry_cookie_t>::value 
                             || std::is_same<CookieType, xcb_query_tree_cookie_t>::value;
+
+  template <typename CookieType>
+  consteval int getCacheTupleIdx() { 
+    return std::is_same<CookieType, xcb_get_geometry_cookie_t>::value ? 0 : 1;
+  }
   
   template <CacheableCookie Cookie_RetType, typename Reply_RetType>
   class XcbFetch<Cookie_RetType, Reply_RetType, xcb_connection_t*, xcb_window_t> {
@@ -94,6 +83,16 @@ namespace xcb {
     const cookie_f_ptr_t m_cookieFunc;
     const reply_f_ptr_t m_replyFunc;
     
+    inline Reply<Reply_RetTypeBase> getCachedReply(xcb_connection_t* __restrict__ connection) {
+		static constexpr int index = getCacheTupleIdx<Cookie_RetType>();
+		if (std::get<index>(g_cache.cached_replies) == nullptr) {
+			Cookie_RetType c = {.sequence = g_cache.cached_cookies[index]};
+		    std::get<index>(g_cache.cached_replies) = (*m_replyFunc)(connection, c, nullptr);
+		}
+
+		return Reply<Reply_RetTypeBase>{std::get<index>(g_cache.cached_replies), ReplyDeleter{false}}; // return 'non-owning' unique_ptr
+	}
+	
     public:
         consteval XcbFetch(cookie_f_ptr_t cookieFunc, reply_f_ptr_t replyFunc) : m_cookieFunc{cookieFunc}, m_replyFunc{replyFunc} {}
         
@@ -103,7 +102,7 @@ namespace xcb {
             if (!tryCached) [[unlikely]]
                 return Reply<Reply_RetTypeBase> { m_replyFunc(conn, m_cookieFunc(conn, window), nullptr) };
             
-            auto ret = getCachedReply<Cookie_RetType, Reply_RetTypeBase>(conn, std::get<Cookie_RetType>(g_cache.cached_cookies));
+            auto ret = getCachedReply(conn);
             #if !defined(NDEBUG) || NDEBUG == 0
             if (!ret)
                 fprintf(stderr, "[Gamescope WSI] getCachedReply() failed.\n");
