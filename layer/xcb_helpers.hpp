@@ -11,7 +11,7 @@ namespace xcb {
   inline static constinit thrd_t g_cache_tid; //incase g_cache could otherwise be accessed by one thread, while it is being deleted by another thread
   inline static constinit struct cookie_cache_t {
     xcb_window_t window;
-    uint32_t cached_cookies[2];
+    std::tuple<xcb_get_geometry_cookie_t, xcb_query_tree_cookie_t> cached_cookies;
     std::tuple<xcb_get_geometry_reply_t*__restrict__, xcb_query_tree_reply_t*__restrict__> cached_replies;
   } g_cache = {};
   
@@ -21,8 +21,8 @@ namespace xcb {
         g_cache = {
             .window = window,
             .cached_cookies = {
-                xcb_get_geometry(connection, window).sequence,
-                xcb_query_tree(connection, window).sequence
+                xcb_get_geometry(connection, window),
+                xcb_query_tree(connection, window)
             }
         };
         g_cache_tid = thrd_current();
@@ -86,8 +86,7 @@ namespace xcb {
     inline Reply<Reply_RetTypeBase> getCachedReply(xcb_connection_t* __restrict__ connection) {
 		static constexpr int index = getCacheTupleIdx<Cookie_RetType>();
 		if (std::get<index>(g_cache.cached_replies) == nullptr) {
-			Cookie_RetType c = {.sequence = g_cache.cached_cookies[index]};
-		    std::get<index>(g_cache.cached_replies) = (*m_replyFunc)(connection, c, nullptr);
+		    std::get<index>(g_cache.cached_replies) = (*m_replyFunc)(connection, std::get<index>(g_cache.cached_cookies), nullptr);
 		}
 
 		return Reply<Reply_RetTypeBase>{std::get<index>(g_cache.cached_replies), ReplyDeleter{false}}; // return 'non-owning' unique_ptr
