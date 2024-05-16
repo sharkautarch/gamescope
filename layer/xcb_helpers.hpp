@@ -12,7 +12,7 @@ namespace xcb {
   inline static constinit struct cookie_cache_t {
     xcb_window_t window;
     uint32_t cached_cookies[2];
-    std::tuple<xcb_get_geometry_reply_t*, xcb_query_tree_reply_t*> cached_replies;
+    std::tuple<xcb_get_geometry_reply_t*__restrict__, xcb_query_tree_reply_t*__restrict__> cached_replies;
   } g_cache = {};
   
   //Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR:
