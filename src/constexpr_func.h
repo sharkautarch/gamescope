@@ -17,6 +17,12 @@ class constexpr_function<R(TArgs...)> {
   struct implementation final : interface {
     constexpr implementation(Fn fn) : fn{fn} {}
     constexpr ~implementation() = default;
+    constexpr implementation(const implementation<Fn>& other) {
+    	other = this;
+    }
+    constexpr implementation<Fn> operator=(const implementation<Fn>&) {
+    	return *this;
+    }
     constexpr auto operator()(TArgs... args) -> R {
     	if constexpr (std::is_trivial_v<Fn> || std::is_fundamental_v<Fn>)
      		return;
@@ -31,11 +37,18 @@ class constexpr_function<R(TArgs...)> {
   };
 
  public:
-  constexpr ~constexpr_function() {
+  /*constexpr ~constexpr_function() {
     delete fn;
-  }
+  }*/
   template <class Fn>
-  constexpr constexpr_function(Fn fn) : fn{new implementation<Fn>(fn)} {}
+  consteval constexpr_function(Fn fn) {
+  	if constexpr (std::is_trivial_v<Fn> || std::is_fundamental_v<Fn>) {
+     		return;
+    } else {
+    	fn_holder<implementation<Fn>> = implementation<Fn>{fn};
+  		this->fn = &fn_holder<Fn>;
+  	}
+  }
   constexpr auto operator()(TArgs... args) const -> R {
      if constexpr (sizeof...(TArgs) == 0)
      	return (*fn)();
@@ -44,7 +57,9 @@ class constexpr_function<R(TArgs...)> {
   constexpr operator bool() {
   	return fn != nullptr;
   }
- private: 
+ private:
+  template <typename T>
+  static T fn_holder;
   interface* fn{};
 };
 
