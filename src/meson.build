@@ -119,7 +119,7 @@ if drm_dep.found()
   required_wlroots_features += 'libinput_backend'
   liftoff_dep = dependency(
     'libliftoff',
-    version: ['>= 0.4.0', '< 0.5.0'],
+    version: ['>= 0.5.0', '< 0.6.0'],
     fallback: ['libliftoff', 'liftoff'],
     default_options: ['default_library=static'],
   )

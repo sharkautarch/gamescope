@@ -2285,7 +2285,7 @@ namespace gamescope
         assert( uAxis == WL_POINTER_AXIS_VERTICAL_SCROLL || uAxis == WL_POINTER_AXIS_HORIZONTAL_SCROLL );
 
         // Vertical is first in the wl_pointer_axis enum, flip y,x -> x,y
-        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0f;
+        m_flScrollAccum[ !uAxis ] += nValue120 / 120.0;
     }
     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {

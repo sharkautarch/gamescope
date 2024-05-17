@@ -212,13 +212,16 @@ namespace GamescopeWSILayer {
         return false;
       }
 
-      // If this window is not within 1px margin of error for the size of
+      // If this window is not within 2px margin of error for the size of
       // it's top level window, then it cannot be flipped.
+      //
+      // Some games like Halo Infinite, make a child window that is 1280x802px
+      // I have no idea how thtat happens, or whether its an app or Wine bug or not.
       if (*toplevelWindow != window) {
         if (iabs(rect->offset.x) > 1 ||
             iabs(rect->offset.y) > 1 ||
-            iabs(int32_t(toplevelRect->extent.width)  - int32_t(rect->extent.width)) > 1 ||
-            iabs(int32_t(toplevelRect->extent.height) - int32_t(rect->extent.height)) > 1) {
+            iabs(int32_t(toplevelRect->extent.width)  - int32_t(rect->extent.width)) > 2 ||
+            iabs(int32_t(toplevelRect->extent.height) - int32_t(rect->extent.height)) > 2) {
   #if GAMESCOPE_WSI_BYPASS_DEBUG
           fprintf(stderr, "[Gamescope WSI] Not within 1px margin of error. Offset: %d %d Extent: %u %u vs %u %u\n",
             rect->offset.x, rect->offset.y,

@@ -5,6 +5,7 @@
 #include <spa/param/video/format-utils.h>
 
 #include "rendervulkan.hpp"
+#include "pipewire_gamescope.hpp"
 
 struct pipewire_state {
 	struct pw_loop *loop;
@@ -14,8 +15,10 @@ struct pipewire_state {
 
 	struct pw_stream *stream;
 	uint32_t stream_node_id;
-	bool streaming;
+	std::atomic<bool> streaming;
 	struct spa_video_info_raw video_info;
+	struct spa_gamescope gamescope_info;
+	uint64_t focus_appid;
 	bool dmabuf;
 	int shm_stride;
 	uint64_t seq;
@@ -29,6 +32,7 @@ struct pipewire_state {
 struct pipewire_buffer {
 	enum spa_data_type type; // SPA_DATA_MemFd or SPA_DATA_DmaBuf
 	struct spa_video_info_raw video_info;
+	struct spa_gamescope gamescope_info;
 	std::shared_ptr<CVulkanTexture> texture;
 
 	// Only used for SPA_DATA_MemFd

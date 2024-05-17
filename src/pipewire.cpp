@@ -12,7 +12,6 @@
 
 #include "main.hpp"
 #include "pipewire.hpp"
-#include "pipewire_requested_size.hpp"
 #include "log.hpp"
 
 static LogScope pwr_log("pipewire");
@@ -93,6 +92,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0, 0, UINT64_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -121,6 +121,7 @@ static void build_format_params(struct spa_pod_builder *builder, spa_video_forma
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0, 0, UINT64_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -325,16 +326,18 @@ static void stream_handle_param_changed(void *data, uint32_t id, const struct sp
 	if (param == nullptr || id != SPA_PARAM_Format)
 		return;
 
-	struct spa_rectangle requested_size = { 0, 0 };
+	struct spa_gamescope gamescope_info{};
 
-	int ret = spa_format_video_raw_parse_with_requested_size(param, &state->video_info, &requested_size);
+	int ret = spa_format_video_raw_parse_with_gamescope(param, &state->video_info, &gamescope_info);
 	if (ret < 0) {
 		pwr_log.errorf("spa_format_video_raw_parse failed");
 		return;
 	}
-	s_nRequestedWidth = requested_size.width;
-	s_nRequestedHeight = requested_size.height;
+	s_nRequestedWidth = gamescope_info.requested_size.width;
+	s_nRequestedHeight = gamescope_info.requested_size.height;
 	calculate_capture_size();
+
+	state->gamescope_info = gamescope_info;
 
 	int bpp = 4;
 	if (state->video_info.format == SPA_VIDEO_FORMAT_NV12) {
@@ -438,6 +441,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	struct pipewire_buffer *buffer = new pipewire_buffer();
 	buffer->buffer = pw_buffer;
 	buffer->video_info = state->video_info;
+	buffer->gamescope_info = state->gamescope_info;
 
 	bool is_dmabuf = (spa_data->type & (1 << SPA_DATA_DmaBuf)) != 0;
 	bool is_memfd = (spa_data->type & (1 << SPA_DATA_MemFd)) != 0;
