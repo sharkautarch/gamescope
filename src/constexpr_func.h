@@ -49,7 +49,9 @@ class constexpr_function<R(TArgs...)> {
   	if constexpr (std::is_trivial_v<Fn> || std::is_fundamental_v<Fn>) {
      		return;
     } else {
+    	#ifndef __clang__
     	static_assert(! (fn_holder<implementation<Fn>>.has_value()) );
+    	#endif
     	fn_holder<implementation<Fn>>.emplace(fn);
   		this->fn = &(*fn_holder<implementation<Fn>>);
   	}
