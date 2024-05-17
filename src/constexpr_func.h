@@ -57,6 +57,10 @@ class constexpr_function<R(TArgs...)> {
     } else {
     	#ifndef __clang__
     	static_assert(! (fn_holder<implementation<Fn>>.has_value()) );
+    	#else
+    	if (!std::is_constant_evaluated()) {
+    		static_assert(! (fn_holder<implementation<Fn>>.has_value()) );
+    	}
     	#endif
     	fn_holder<implementation<Fn>>.emplace(fn);
   		this->fn = &(*fn_holder<implementation<Fn>>);
