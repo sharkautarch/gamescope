@@ -2026,7 +2026,12 @@ std::pair<int, int> wlserver_get_surface_extent( struct wlr_surface *pSurface )
 
 void wlserver_oncursorevent()
 {
-	if ( !wlserver.bCursorHidden )
+	// Don't repaint if we would use a nested cursor.
+	// TODO: Move this check into GetBackend().
+	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
+		return;
+
+	if ( !wlserver.bCursorHidden && wlserver.bCursorHasImage )
 	{
 		hasRepaint = true;
 	}
@@ -2229,7 +2234,7 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 	}
 
 	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
-	wlserver.bCursorHidden = false;
+	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 
 	wlserver.mouse_surface_cursorx += dx;
 	wlserver.mouse_surface_cursory += dy;
@@ -2253,7 +2258,7 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 
 	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
 	if ( !bSynthetic )
-		wlserver.bCursorHidden = false;
+		wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 
 	wlserver_oncursorevent();
 
@@ -2272,7 +2277,7 @@ void wlserver_mousebutton( int button, bool press, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
 
-	wlserver.bCursorHidden = false;
+	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 
 	wlserver_oncursorevent();
 

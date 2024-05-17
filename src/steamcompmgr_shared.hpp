@@ -116,6 +116,7 @@ struct steamcompmgr_win_t {
 	unsigned int requestedHeight;
 	bool is_dialog;
 	bool maybe_a_dropdown;
+	bool outdatedInteractiveFocus = false;
 
 	bool hasHwndStyle;
 	uint32_t hwndStyle;

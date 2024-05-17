@@ -36,6 +36,10 @@ struct focus_t
 	bool			outdatedInteractiveFocus;
 	bool			bResetToCorner = false;
 	bool			bResetToCenter = false;
+
+	uint64_t		ulCurrentFocusSerial = UINT64_MAX;
+
+	bool IsDirty();
 };
 
 struct CommitDoneEntry_t
@@ -89,6 +93,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 	double accum_y = 0.0;
 
 	bool force_windows_fullscreen = false;
+
+	std::vector< steamcompmgr_win_t* > GetPossibleFocusWindows();
+	void DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows );
 
 	struct {
 		Atom steamAtom;
