@@ -1,5 +1,6 @@
 #pragma once
 #include <memory>
+#include <optional>
 
 //This constexpr function implementation is based off of
 //a c++23 constexpr function implementation that used c++23 constexpr unique_ptr: https://www.reddit.com/r/cpp/comments/118z87c/c23_constexpr_stdfunction_in_40_loc_simplified/
@@ -37,16 +38,20 @@ class constexpr_function<R(TArgs...)> {
   };
 
  public:
-  /*constexpr ~constexpr_function() {
-    delete fn;
-  }*/
+  constexpr ~constexpr_function() {
+    if (!std::is_constant_evaluated() && fn != nullptr) {
+    	fn->~interface();
+    	fn=nullptr;
+    }
+  }
   template <class Fn>
   consteval constexpr_function(Fn fn) {
   	if constexpr (std::is_trivial_v<Fn> || std::is_fundamental_v<Fn>) {
      		return;
     } else {
-    	fn_holder<implementation<Fn>> = implementation<Fn>{fn};
-  		this->fn = &fn_holder<Fn>;
+    	static_assert(! (fn_holder<implementation<Fn>>.has_value()) );
+    	fn_holder<implementation<Fn>>.emplace(fn);
+  		this->fn = &fn_holder<implementation<Fn>>;
   	}
   }
   constexpr auto operator()(TArgs... args) const -> R {
@@ -59,7 +64,7 @@ class constexpr_function<R(TArgs...)> {
   }
  private:
   template <typename T>
-  static T fn_holder;
+  static inline std::optional<T> fn_holder = std::nullopt;
   interface* fn{};
 };
 
