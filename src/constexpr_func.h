@@ -51,7 +51,7 @@ class constexpr_function<R(TArgs...)> {
     } else {
     	static_assert(! (fn_holder<implementation<Fn>>.has_value()) );
     	fn_holder<implementation<Fn>>.emplace(fn);
-  		this->fn = &fn_holder<implementation<Fn>>;
+  		this->fn = &(*fn_holder<implementation<Fn>>);
   	}
   }
   constexpr auto operator()(TArgs... args) const -> R {
