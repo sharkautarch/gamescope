@@ -44,8 +44,14 @@ class constexpr_function<R(TArgs...)> {
     	fn=nullptr;
     }
   }
+
   template <class Fn>
-  consteval constexpr_function(Fn fn) {
+  #ifndef __clang__
+  consteval
+  #else
+  constexpr
+  #endif
+  constexpr_function(Fn fn) {
   	if constexpr (std::is_trivial_v<Fn> || std::is_fundamental_v<Fn>) {
      		return;
     } else {
