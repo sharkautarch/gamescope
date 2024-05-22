@@ -37,6 +37,7 @@ static LogScope openvr_log("openvr");
 static bool GetVulkanInstanceExtensionsRequired( std::vector< std::string > &outInstanceExtensionList );
 static bool GetVulkanDeviceExtensionsRequired( VkPhysicalDevice pPhysicalDevice, std::vector< std::string > &outDeviceExtensionList );
 
+gamescope::ConVar<bool> cv_vr_always_warp_cursor( "vr_always_warp_cursor", true, "Whether or not we should always warp the cursor, even if it is invisible so we get hover events." );
 
 // Not in public headers yet.
 namespace vr
@@ -679,10 +680,11 @@ namespace gamescope
                             float x = vrEvent.data.mouse.x;
                             float y = g_nOutputHeight - vrEvent.data.mouse.y;
 
+                            // Always warp a cursor, even if it's invisible, so we get hover events.
+                            bool bAlwaysMoveCursor = GetTouchClickMode() == TouchClickModes::Passthrough && cv_vr_always_warp_cursor;
+
                             wlserver_lock();
-                            if ( GetTouchClickMode() == TouchClickModes::Passthrough )
-                                wlserver_touchmotion( x / float( g_nOutputWidth ), y / float( g_nOutputHeight ), 0, ++m_uFakeTimestamp );
-                            wlserver_mousewarp( x, y, m_uFakeTimestamp, false );
+                            wlserver_touchmotion( x / float( g_nOutputWidth ), y / float( g_nOutputHeight ), 0, ++m_uFakeTimestamp, bAlwaysMoveCursor );
                             wlserver_unlock();
                             break;
                         }

@@ -230,7 +230,7 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
 void wlserver_mousebutton( int button, bool press, uint32_t time );
 void wlserver_mousewheel( double x, double y, uint32_t time );
 
-void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time );
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor = false );
 void wlserver_touchdown( double x, double y, int touch_id, uint32_t time );
 void wlserver_touchup( int touch_id, uint32_t time );
 

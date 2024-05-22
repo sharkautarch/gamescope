@@ -407,7 +407,7 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 
 std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture();
 
-std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture );
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, std::shared_ptr<CVulkanTexture> pYUVOutTexture );
 
 struct wlr_renderer *vulkan_renderer_create( void );
 

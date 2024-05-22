@@ -2384,7 +2384,7 @@ static void apply_touchscreen_orientation(double *x, double *y )
 	*y = ty;
 }
 
-void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
+void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool bAlwaysWarpCursor )
 {
 	assert( wlserver_is_lock_held() );
 
@@ -2416,6 +2416,9 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time )
 		if ( eMode == gamescope::TouchClickModes::Passthrough )
 		{
 			wlr_seat_touch_notify_motion( wlserver.wlr.seat, time, touch_id, tx, ty );
+
+			if ( bAlwaysWarpCursor )
+				wlserver_mousewarp( tx, ty, time, false );
 		}
 		else if ( eMode == gamescope::TouchClickModes::Disabled )
 		{

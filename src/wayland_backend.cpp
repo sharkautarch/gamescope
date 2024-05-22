@@ -73,6 +73,7 @@ namespace gamescope
 
     gamescope::ConVar<bool> cv_wayland_mouse_warp_without_keyboard_focus( "wayland_mouse_warp_without_keyboard_focus", true, "Should we only forward mouse warps to the app when we have keyboard focus?" );
     gamescope::ConVar<bool> cv_wayland_mouse_relmotion_without_keyboard_focus( "wayland_mouse_relmotion_without_keyboard_focus", false, "Should we only forward mouse relative motion to the app when we have keyboard focus?" );
+    gamescope::ConVar<bool> cv_wayland_use_modifiers( "wayland_use_modifiers", true, "Use DMA-BUF modifiers?" );
 
     class CWaylandConnector;
     class CWaylandPlane;
@@ -532,6 +533,8 @@ namespace gamescope
         void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
         void UpdateFullscreenState();
 
+        bool SupportsFormat( uint32_t uDRMFormat ) const;
+
         void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
 
         bool CurrentDisplaySupportsVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
@@ -598,6 +601,7 @@ namespace gamescope
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
         std::unordered_map<uint32_t, std::vector<uint64_t>> m_FormatModifiers;
+        std::unordered_set<uint32_t> m_ModifierlessFormats;
         std::unordered_map<uint32_t, wl_buffer *> m_ImportedFbs;
 
         uint32_t m_uPointerEnterSerial = 0;
@@ -1270,15 +1274,15 @@ namespace gamescope
     void CWaylandBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
     {
         VkFormat u8BitFormat = VK_FORMAT_UNDEFINED;
-        if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB8888 ) )
+        if ( SupportsFormat( DRM_FORMAT_ARGB8888 ) )
             u8BitFormat = VK_FORMAT_B8G8R8A8_UNORM;
-        else if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR8888 ) )
+        else if ( SupportsFormat( DRM_FORMAT_ABGR8888 ) )
             u8BitFormat = VK_FORMAT_R8G8B8A8_UNORM;
 
         VkFormat u10BitFormat = VK_FORMAT_UNDEFINED;
-        if ( m_FormatModifiers.contains( DRM_FORMAT_ABGR2101010 ) )
+        if ( SupportsFormat( DRM_FORMAT_ABGR2101010 ) )
             u10BitFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-        else if ( m_FormatModifiers.contains( DRM_FORMAT_ARGB2101010 ) )
+        else if ( SupportsFormat( DRM_FORMAT_ARGB2101010 ) )
             u10BitFormat = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
 
         assert( u8BitFormat != VK_FORMAT_UNDEFINED );
@@ -1478,10 +1482,16 @@ namespace gamescope
 
     bool CWaylandBackend::UsesModifiers() const
     {
-        return true;
+        if ( !cv_wayland_use_modifiers )
+            return false;
+
+        return !m_FormatModifiers.empty();
     }
     std::span<const uint64_t> CWaylandBackend::GetSupportedModifiers( uint32_t uDrmFormat ) const
     {
+        if ( !UsesModifiers() )
+            return std::span<const uint64_t>{};
+
         auto iter = m_FormatModifiers.find( uDrmFormat );
         if ( iter == m_FormatModifiers.end() )
             return std::span<const uint64_t>{};
@@ -1744,6 +1754,13 @@ namespace gamescope
         }
     }
 
+    bool CWaylandBackend::SupportsFormat( uint32_t uDRMFormat ) const
+    {
+        return UsesModifiers()
+            ? m_FormatModifiers.contains( uDRMFormat )
+            : m_ModifierlessFormats.contains( uDRMFormat );
+    }
+
     /////////////////////
     // Wayland Callbacks
     /////////////////////
@@ -1831,6 +1848,8 @@ namespace gamescope
         //xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx", drmGetFormatName( uFormat ), uFormat, ulModifier );
         if ( ulModifier != DRM_FORMAT_MOD_INVALID )
             m_FormatModifiers[uFormat].emplace_back( ulModifier );
+        else
+            m_ModifierlessFormats.emplace( uFormat );
     }
 
     // Output
@@ -2290,8 +2309,8 @@ namespace gamescope
     void CWaylandInputThread::Wayland_Pointer_Frame( wl_pointer *pPointer )
     {
         defer( m_uAxisSource = WL_POINTER_AXIS_SOURCE_WHEEL );
-        double x = m_flScrollAccum[0];
-        double y = m_flScrollAccum[1];
+        double flX = m_flScrollAccum[0];
+        double flY = m_flScrollAccum[1];
         m_flScrollAccum[0] = 0.0;
         m_flScrollAccum[1] = 0.0;
 
@@ -2301,8 +2320,11 @@ namespace gamescope
         if ( m_uAxisSource != WL_POINTER_AXIS_SOURCE_WHEEL )
             return;
 
+        if ( flX == 0.0 && flY == 0.0 )
+            return;
+
         wlserver_lock();
-        wlserver_mousewheel( x, y, ++m_uFakeTimestamp );
+        wlserver_mousewheel( flX, flY, ++m_uFakeTimestamp );
         wlserver_unlock();
     }
 

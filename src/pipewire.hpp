@@ -45,7 +45,11 @@ struct pipewire_buffer {
 	// The following fields are not thread-safe
 
 	// The PipeWire buffer, or nullptr if it's been destroyed.
-	struct pw_buffer *buffer;
+	std::atomic<struct pw_buffer *> buffer;
+	bool IsStale() const 
+	{
+		return buffer == nullptr;
+	}
 	// We pass the buffer to the steamcompmgr thread for copying. This is set
 	// to true if the buffer is currently owned by the steamcompmgr thread.
 	bool copying;
@@ -54,5 +58,7 @@ struct pipewire_buffer {
 bool init_pipewire(void);
 uint32_t get_pipewire_stream_node_id(void);
 struct pipewire_buffer *dequeue_pipewire_buffer(void);
+bool pipewire_is_streaming();
+void pipewire_destroy_buffer(struct pipewire_buffer *buffer);
 void push_pipewire_buffer(struct pipewire_buffer *buffer);
 void nudge_pipewire(void);

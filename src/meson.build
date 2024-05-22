@@ -175,6 +175,9 @@ endforeach
     cpp_args: gamescope_cpp_args,
   )
 
+if pipewire_dep.found()
+  executable( 'gamescopestream', 'gamescopestream.cpp', protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+endif
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
 executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], dependencies:[benchmark_dep, glm_dep])

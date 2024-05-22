@@ -14,6 +14,8 @@
 #include "pipewire.hpp"
 #include "log.hpp"
 
+#include <spa/debug/format.h>
+
 static LogScope pwr_log("pipewire");
 
 static struct pipewire_state pipewire_state = { .stream_node_id = SPA_ID_INVALID };
@@ -33,7 +35,6 @@ static uint32_t s_nOutputWidth;
 static uint32_t s_nOutputHeight;
 
 static void destroy_buffer(struct pipewire_buffer *buffer) {
-	assert(!buffer->copying);
 	assert(buffer->buffer == nullptr);
 
 	switch (buffer->type) {
@@ -54,6 +55,11 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 	}
 
 	delete buffer;
+}
+
+void pipewire_destroy_buffer(struct pipewire_buffer *buffer)
+{
+	destroy_buffer(buffer);
 }
 
 static void calculate_capture_size()
@@ -92,7 +98,7 @@ static void __attribute__((cold)) build_format_params(struct spa_pod_builder *bu
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
-		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0, 0, UINT64_MAX ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, 0ll, INT32_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -121,7 +127,7 @@ static void __attribute__((cold)) build_format_params(struct spa_pod_builder *bu
 		SPA_FORMAT_VIDEO_size, SPA_POD_Rectangle(&size),
 		SPA_FORMAT_VIDEO_framerate, SPA_POD_Fraction(&framerate),
 		SPA_FORMAT_VIDEO_requested_size, SPA_POD_CHOICE_RANGE_Rectangle( &min_requested_size, &min_requested_size, &max_requested_size ),
-		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0, 0, UINT64_MAX ),
+		SPA_FORMAT_VIDEO_gamescope_focus_appid, SPA_POD_CHOICE_RANGE_Long( 0ll, 0ll, INT32_MAX ),
 		0);
 	if (format == SPA_VIDEO_FORMAT_NV12) {
 		spa_pod_builder_add(builder,
@@ -136,6 +142,9 @@ static void __attribute__((cold)) build_format_params(struct spa_pod_builder *bu
 			0);
 	}
 	params.push_back((const struct spa_pod *) spa_pod_builder_pop(builder, &obj_frame));
+
+//	for (auto& param : params)
+//		spa_debug_format(2, nullptr, param);
 }
 
 
@@ -575,8 +584,6 @@ static void stream_handle_remove_buffer(void *data, struct pw_buffer *pw_buffer)
 
 	if (!buffer->copying) {
 		destroy_buffer(buffer);
-	} else {
-		nudge_pipewire();
 	}
 }
 
@@ -722,6 +729,12 @@ bool __attribute__((cold)) init_pipewire(void)
 uint32_t get_pipewire_stream_node_id(void)
 {
 	return pipewire_state.stream_node_id;
+}
+
+bool pipewire_is_streaming()
+{
+	struct pipewire_state *state = &pipewire_state;
+	return state->streaming;
 }
 
 struct pipewire_buffer *dequeue_pipewire_buffer(void)
