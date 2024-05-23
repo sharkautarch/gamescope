@@ -1839,14 +1839,14 @@ extern std::mutex g_SteamCompMgrXWaylandServerMutex;
 
 static int g_wlserverNudgePipe[2] = {-1, -1};
 
-void wlserver_run(void)
+void wlserver_run(void) TRACY_TRY
 {
 	pthread_setname_np( pthread_self(), "gamescope-wl" );
 
 	if ( pipe2( g_wlserverNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 	{
 		wl_log.errorf_errno( "wlserver: pipe2 failed" );
-		exit( 1 );
+		EXIT( 1 );
 	}
 
 	struct pollfd pollfds[2] = {
@@ -1862,6 +1862,7 @@ void wlserver_run(void)
 
 	while ( !g_bShutdownWLServer )
 	{
+		ZoneScoped;
 		int ret = poll( pollfds, 2, -1 );
 
 		if ( ret < 0 ) {
@@ -1915,6 +1916,7 @@ void wlserver_run(void)
     wlserver.display = NULL;
 	wlserver_unlock(false);
 }
+TRACY_CATCH
 
 void wlserver_shutdown()
 {

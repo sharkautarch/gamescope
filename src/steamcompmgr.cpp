@@ -2209,6 +2209,12 @@ static void paint_pipewire()
 static void
 paint_all(bool async)
 {
+#ifdef TRACY_COLLECT_CALLSTACKS
+	ZoneScopedNC("paint_all", TRACY_CALLSTACK_DEPTH);
+#else
+	ZoneScopedN("paint_all");
+#endif
+
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
 
@@ -5799,7 +5805,7 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
-[[noreturn]] static void
+MAYBE_NORETURN static void
 steamcompmgr_exit(void)
 {
 	g_ImageWaiter.Shutdown();
@@ -5841,7 +5847,7 @@ steamcompmgr_exit(void)
     wlserver_shutdown();
     wlserver_unlock(false);
 
-	pthread_exit(NULL);
+	PTHREAD_EXIT(NULL);
 }
 
 static int
@@ -6477,6 +6483,12 @@ handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent 
 
 void xwayland_ctx_t::Dispatch()
 {
+#ifdef TRACY_COLLECT_CALLSTACKS
+	ZoneScopedNC("xwayland_ctx_t::Dispatch", TRACY_CALLSTACK_DEPTH);
+#else
+	ZoneScopedN("xwayland_ctx_t::Dispatch");
+#endif
+
 	xwayland_ctx_t *ctx = this;
 
 	MouseCursor *cursor = ctx->cursor.get();
@@ -7152,7 +7164,7 @@ void update_edid_prop()
 bool g_bLaunchMangoapp = false;
 
 void
-steamcompmgr_main(int argc, char **argv)
+steamcompmgr_main(int argc, char **argv) TRACY_TRY
 {
 	int	readyPipeFD = -1;
 
@@ -7334,6 +7346,8 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
+		ZoneScoped;
+		
 		vblank = false;
 
 		{
@@ -7347,6 +7361,8 @@ steamcompmgr_main(int argc, char **argv)
 		}
 
 		g_SteamCompMgrWaiter.PollEvents();
+
+		FrameMarkStart(sl_steamcompmgr_name);
 
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{
@@ -7680,6 +7696,7 @@ steamcompmgr_main(int argc, char **argv)
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
 		}
+		FrameMarkEnd(sl_steamcompmgr_name);
 
 #if HAVE_PIPEWIRE
 		if ( vblank && pipewire_is_streaming() )
@@ -7721,6 +7738,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	steamcompmgr_exit();
 }
+TRACY_CATCH
 
 void steamcompmgr_send_frame_done_to_focus_window()
 {
