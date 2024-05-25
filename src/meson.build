@@ -11,6 +11,7 @@ dep_xmu = dependency('xmu')
 dep_xi = dependency('xi')
 
 drm_dep = dependency('libdrm', version: '>= 2.4.113', required: get_option('drm_backend'))
+eis_dep = dependency('libeis-1.0', required : get_option('input_emulation'))
 
 wayland_server = dependency('wayland-server', version: '>=1.21')
 wayland_protos = dependency('wayland-protocols', version: '>=1.17')
@@ -25,7 +26,7 @@ avif_dep = dependency('libavif', version: '>=1.0.0', required: get_option('avif_
 
 wlroots_dep = dependency(
   'wlroots',
-  version: ['>= 0.17.0', '< 0.18.0'],
+  version: ['>= 0.18.0', '< 0.19.0'],
   fallback: ['wlroots', 'wlroots'],
   default_options: ['default_library=static', 'examples=false', 'xwayland=enabled', 'backends=libinput', 'renderers=[]', 'allocators=[]', 'session=enabled'],
 )
@@ -36,6 +37,8 @@ displayinfo_dep = dependency(
   fallback: ['libdisplay-info', 'di_dep'],
   default_options: ['default_library=static'],
 )
+
+libdecor_dep = dependency('libdecor-0')
 
 glsl_compiler = find_program('glslang', 'glslangValidator', native: true)
 
@@ -92,6 +95,7 @@ required_wlroots_features = ['xwayland']
 src = [
   'steamcompmgr.cpp',
   'convar.cpp',
+  'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
@@ -104,6 +108,8 @@ src = [
   'mangoapp.cpp',
   'reshade_effect_manager.cpp',
   'backend.cpp',
+  'wayland_backend.cpp',
+  'InputEmulation.cpp',
 ]
 
 gamescope_cpp_args = []
@@ -113,7 +119,7 @@ if drm_dep.found()
   required_wlroots_features += 'libinput_backend'
   liftoff_dep = dependency(
     'libliftoff',
-    version: ['>= 0.4.0', '< 0.5.0'],
+    version: ['>= 0.5.0', '< 0.6.0'],
     fallback: ['libliftoff', 'liftoff'],
     default_options: ['default_library=static'],
   )
@@ -129,9 +135,11 @@ gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
 
 src += spirv_shaders
 src += protocols_server_src
+src += protocols_client_src
 
 if pipewire_dep.found()
   src += 'pipewire.cpp'
@@ -156,12 +164,16 @@ endforeach
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
-      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi
+      stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
+      libdecor_dep, eis_dep,
     ],
     install: true,
     cpp_args: gamescope_cpp_args,
   )
 
+if pipewire_dep.found()
+  executable( 'gamescopestream', 'gamescopestream.cpp', protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+endif
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
 executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], dependencies:[benchmark_dep, glm_dep])

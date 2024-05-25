@@ -18,22 +18,22 @@ jobs:
             sdl2 vulkan-headers libx11 libxmu libxcomposite libxrender libxres \
             libxtst libxkbcommon libdrm libinput wayland-protocols benchmark \
             xorg-xwayland pipewire cmake \
-            libavif libheif aom rav1e
+            libavif libheif aom rav1e libdecor libxdamage
       - uses: actions/checkout@v2
         with:
           submodules: recursive
       - name: Build with gcc
         run: |
           export CC=gcc CXX=g++
-          meson build-gcc/ --werror --auto-features=enabled
+          meson build-gcc/ -Dinput_emulation=disabled --werror --auto-features=enabled
           ninja -C build-gcc/
       - name: Build with gcc (no vr)
         run: |
           export CC=gcc CXX=g++
-          meson build-gcc-novr/ -Denable_openvr_support=false --werror --auto-features=enabled
+          meson build-gcc-novr/ -Dinput_emulation=disabled -Denable_openvr_support=false --werror --auto-features=enabled
           ninja -C build-gcc-novr/
       - name: Build with clang
         run: |
           export CC=clang CXX=clang++
-          meson build-clang/ --werror --auto-features=enabled
+          meson build-clang/ -Dinput_emulation=disabled --werror --auto-features=enabled
           ninja -C build-clang/

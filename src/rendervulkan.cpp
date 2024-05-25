@@ -166,7 +166,6 @@ Target *pNextFind(const Base *base, VkStructureType sType)
 }
 
 #define VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA (VkStructureType)1000001002
-#define VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA (VkStructureType)1000001003
 
 struct wsi_image_create_info {
 	VkStructureType sType;
@@ -177,11 +176,6 @@ struct wsi_image_create_info {
 	const uint64_t *modifiers;
 };
 
-struct wsi_memory_allocate_info {
-	VkStructureType sType;
-	const void *pNext;
-	bool implicit_sync;
-};
 
 // DRM doesn't have 32bit floating point formats, so add our own
 #define DRM_FORMAT_ABGR32323232F fourcc_code('A', 'B', '8', 'F')
@@ -612,7 +606,6 @@ bool CVulkanDevice::createDevice()
 	VkPhysicalDeviceVulkan12Features vulkan12Features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = std::exchange(features2.pNext, &vulkan12Features),
-		.uniformAndStorageBuffer8BitAccess = VK_TRUE,
 		.shaderFloat16 = m_bSupportsFp16,
 		.scalarBlockLayout = VK_TRUE,
 		.timelineSemaphore = VK_TRUE,
@@ -1709,7 +1702,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 			.srcAccessMask = state.dirty ? write_bits : 0u,
 			.dstAccessMask = flush ? 0u : read_bits | write_bits,
-			.oldLayout = (state.discarded || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.oldLayout = state.discarded ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 			.newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
@@ -2065,7 +2058,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	if ( pExistingImageToReuseMemory == nullptr )
 	{
 		// Possible pNexts
-		wsi_memory_allocate_info wsiAllocInfo = {};
 		VkImportMemoryFdInfoKHR importMemoryInfo = {};
 		VkExportMemoryAllocateInfo memory_export_info = {};
 		VkMemoryDedicatedAllocateInfo memory_dedicated_info = {};
@@ -2102,13 +2094,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 				vk_log.errorf_errno( "dup failed" );
 				return false;
 			}
-
-			// We're importing WSI buffers from GL or Vulkan, set implicit_sync
-			wsiAllocInfo = {
-					.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
-					.pNext = std::exchange(allocInfo.pNext, &wsiAllocInfo),
-					.implicit_sync = true,
-			};
 
 			// Memory already provided by pDMA
 			importMemoryInfo = {
@@ -2271,7 +2256,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bFlippable == true )
 	{
-		m_FBID = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
+		m_pBackendFb = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2455,12 +2440,8 @@ CVulkanTexture::~CVulkanTexture( void )
 		m_linearView = VK_NULL_HANDLE;
 	}
 
-	if ( m_FBID != 0 )
-	{
-		GetBackend()->DropBackendFb( m_FBID );
-		m_FBID = 0;
-	}
-
+	if ( m_pBackendFb != nullptr )
+		m_pBackendFb = nullptr;
 
 	if ( m_vkImageMemory != VK_NULL_HANDLE )
 	{
@@ -2853,23 +2834,25 @@ std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
 	return g_output.temporaryHackyBlankImage;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+std::shared_ptr<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 {
 	CVulkanTexture::createFlags flags;
 	flags.bFlippable = true;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 
-	// To match Steam's scaling, which is capped at 1080p
-	int width = std::min<int>( g_nOutputWidth, 1920 );
-	int height = std::min<int>( g_nOutputHeight, 1080 );
-
 	auto texture = std::make_shared<CVulkanTexture>();
 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
 	assert( bRes );
 
-	void* dst = g_device.uploadBufferData( width * height * 4 );
-	memset( dst, 0x0, width * height * 4 );
+	uint8_t* dst = (uint8_t *)g_device.uploadBufferData( width * height * 4 );
+	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
+	{
+		dst[i + 0] = b;
+		dst[i + 1] = g;
+		dst[i + 2] = r;
+		dst[i + 3] = a;
+	}
 
 	auto cmdBuffer = g_device.commandBuffer();
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
@@ -2877,6 +2860,15 @@ std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
 	g_device.waitIdle();
 
 	return texture;
+}
+
+std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+{
+	// To match Steam's scaling, which is capped at 1080p
+	int width = std::min<int>( g_nOutputWidth, 1920 );
+	int height = std::min<int>( g_nOutputHeight, 1080 );
+
+	return vulkan_create_flat_texture( width, height, 0, 0, 0, 0 );
 }
 
 bool vulkan_supports_hdr10()
@@ -3626,7 +3618,7 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 	}
 }
 
-std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture, std::shared_ptr<CVulkanTexture> pYUVOutTexture )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
@@ -3645,6 +3637,37 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 	const int pixelsPerGroup = 8;
 
 	cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+
+	if ( pYUVOutTexture != nullptr )
+	{
+		float scale = (float)pScreenshotTexture->width() / pYUVOutTexture->width();
+
+		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pScreenshotTexture->streamColorspace() ) );
+		constants.halfExtent[0] = pYUVOutTexture->width() / 2.0f;
+		constants.halfExtent[1] = pYUVOutTexture->height() / 2.0f;
+		cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
+
+		for (uint32_t i = 0; i < EOTF_Count; i++)
+			cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
+
+		cmdBuffer->bindPipeline(g_device.pipeline( SHADER_TYPE_RGB_TO_NV12, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
+		cmdBuffer->bindTexture(0, pScreenshotTexture);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->setSamplerUnnormalized(0, true);
+		for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
+		{
+			cmdBuffer->bindTexture(i, nullptr);
+		}
+		cmdBuffer->bindTarget(pYUVOutTexture);
+
+		const int pixelsPerGroup = 8;
+
+		// For ycbcr, we operate on 2 pixels at a time, so use the half-extent.
+		const int dispatchSize = pixelsPerGroup * 2;
+
+		cmdBuffer->dispatch(div_roundup(pYUVOutTexture->width(), dispatchSize), div_roundup(pYUVOutTexture->height(), dispatchSize));
+	}
 
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 	return sequence;
@@ -3766,7 +3789,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		nisFrameInfo.layers[0].scale.x = 1.0f;
 		nisFrameInfo.layers[0].scale.y = 1.0f;
 
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask()));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo);

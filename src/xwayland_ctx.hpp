@@ -34,6 +34,12 @@ struct focus_t
 	steamcompmgr_win_t				*notificationWindow;
 	steamcompmgr_win_t				*overrideWindow;
 	bool			outdatedInteractiveFocus;
+	bool			bResetToCorner = false;
+	bool			bResetToCenter = false;
+
+	uint64_t		ulCurrentFocusSerial = UINT64_MAX;
+
+	bool IsDirty();
 };
 
 struct CommitDoneEntry_t
@@ -57,13 +63,15 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 	gamescope_xwayland_server_t *xwayland_server;
 	Display			*dpy;
 
+	// Not used for most of steamcompmgr thread. Just to sync whenever
+	// wlserver wants it.
+	std::mutex list_mutex;
 	steamcompmgr_win_t				*list;
 	int				scr;
 	Window			root;
 	XserverRegion	allDamage;
 	bool			clipChanged;
 	int				root_height, root_width;
-	ignore			*ignore_head, **ignore_tail;
 	int				xfixes_event, xfixes_error;
 	int				damage_event, damage_error;
 	int				composite_event, composite_error;
@@ -85,6 +93,9 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 	double accum_y = 0.0;
 
 	bool force_windows_fullscreen = false;
+
+	std::vector< steamcompmgr_win_t* > GetPossibleFocusWindows();
+	void DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows );
 
 	struct {
 		Atom steamAtom;
