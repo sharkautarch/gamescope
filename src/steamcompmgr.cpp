@@ -2193,9 +2193,14 @@ static void paint_pipewire()
 
 	std::shared_ptr<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
 
+	uint32_t uCompositeDebugBackup = g_uCompositeDebug;
+	g_uCompositeDebug = 0;
+
 	std::optional<uint64_t> oPipewireSequence = vulkan_screenshot( &frameInfo, pRGBTexture, pYUVTexture );
 	// If we ever want the fat compositing path, use this.
 	//std::optional<uint64_t> oPipewireSequence = vulkan_composite( &frameInfo, s_pPipewireBuffer->texture, false, pRGBTexture, false );
+
+	g_uCompositeDebug = uCompositeDebugBackup;
 
 	if ( oPipewireSequence )
 	{
