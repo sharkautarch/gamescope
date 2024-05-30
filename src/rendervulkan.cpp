@@ -2668,6 +2668,7 @@ static void present_wait_thread_func( void )
 				mangoapp_output_update( vblanktime );
 			} else if ( g_presentThreadShouldExit.load(std::memory_order_acquire)) {
 				g_presentThreadShouldExit = 0;
+				g_presentThreadShouldExit.notify_all();
 				return;
 			}
 		}
