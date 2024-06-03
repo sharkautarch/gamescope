@@ -171,12 +171,14 @@ struct steamcompmgr_win_t {
 
 	Rect GetGeometry() const
 	{
-		if (type == steamcompmgr_win_type_t::XWAYLAND)
-			return Rect{ xwayland().a.x, xwayland().a.y, xwayland().a.width, xwayland().a.height };
-		else if (type == steamcompmgr_win_type_t::XDG)
-			return Rect{ xdg().geometry.x, xdg().geometry.y, xdg().geometry.width, xdg().geometry.height };
-		else
-			return Rect{};
+		Rect rect{};
+		if (type == steamcompmgr_win_type_t::XWAYLAND) {
+			rect = Rect{ xwayland().a.x, xwayland().a.y, xwayland().a.width, xwayland().a.height };
+		} else if (type == steamcompmgr_win_type_t::XDG) {
+			rect = Rect{ xdg().geometry.x, xdg().geometry.y, xdg().geometry.width, xdg().geometry.height };
+		}
+		
+		return rect;
 	}
 
 	uint32_t id() const
