@@ -1586,6 +1586,8 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 	wlr_xdg_surface_schedule_configure( xdg_toplevel->base );
 }
 
+uint32_t get_appid_from_pid( pid_t pid );
+
 void xdg_surface_new(struct wl_listener *listener, void *data)
 {
 	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
@@ -1605,6 +1607,9 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 
 	window->seq = ++g_lastWinSeq;
 	window->type = steamcompmgr_win_type_t::XDG;
+	pid_t nPid = 0;
+	wl_client_get_credentials( xdg_surface->client->client, &nPid, nullptr, nullptr );
+	window->appID = get_appid_from_pid( nPid );
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
 	static uint32_t s_window_serial = 0;
@@ -1639,6 +1644,8 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 			it++;
 		}
 	}
+
+	wlr_xdg_surface_get_geometry(xdg_surface, &(window->xdg().geometry));
 }
 
 #if HAVE_LIBEIS

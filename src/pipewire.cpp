@@ -177,7 +177,7 @@ static void request_buffer(struct pipewire_state *state)
 
 static void copy_buffer(struct pipewire_state *state, struct pipewire_buffer *buffer)
 {
-	std::shared_ptr<CVulkanTexture> &tex = buffer->texture;
+	gamescope::OwningRc<CVulkanTexture> &tex = buffer->texture;
 	assert(tex != nullptr);
 
 	struct pw_buffer *pw_buffer = buffer->buffer;
@@ -487,7 +487,7 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 
 	uint32_t drmFormat = spa_format_to_drm(state->video_info.format);
 
-	buffer->texture = std::make_shared<CVulkanTexture>();
+	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
 	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;

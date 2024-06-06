@@ -144,6 +144,7 @@ namespace gamescope
         int32_t nDstHeight;
         GamescopeAppTextureColorspace eColorspace;
         bool bOpaque;
+        uint32_t uFractionalScale;
     };
 
     inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
@@ -581,8 +582,8 @@ namespace gamescope
         wp_viewporter *m_pViewporter = nullptr;
         wl_region *m_pFullRegion = nullptr;
         Rc<CWaylandFb> m_BlackFb;
-        std::shared_ptr<CWaylandFb> m_pOwnedBlackFb;
-        std::shared_ptr<CVulkanTexture> m_pBlackTexture;
+        OwningRc<CWaylandFb> m_pOwnedBlackFb;
+        OwningRc<CVulkanTexture> m_pBlackTexture;
         wp_presentation *m_pPresentation = nullptr;
         frog_color_management_factory_v1 *m_pFrogColorMgmtFactory = nullptr;
         zwp_pointer_constraints_v1 *m_pPointerConstraints = nullptr;
@@ -908,7 +909,7 @@ namespace gamescope
             }
 
             // Fraction with denominator of 120 per. spec
-            const uint32_t uScale = GetScale();
+            const uint32_t uScale = oState->uFractionalScale;
 
             wp_viewport_set_source(
                 m_pViewport,
@@ -961,7 +962,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( const FrameInfo_t::Layer_t *pLayer )
     {
-        CWaylandFb *pWaylandFb = pLayer && pLayer->pBackendFb != nullptr ? static_cast<CWaylandFb*>( pLayer->pBackendFb.get() ) : nullptr;
+        CWaylandFb *pWaylandFb = pLayer && pLayer->tex != nullptr ? static_cast<CWaylandFb*>( pLayer->tex->GetBackendFb() ) : nullptr;
         wl_buffer *pBuffer = pWaylandFb ? pWaylandFb->GetHostBuffer() : nullptr;
 
         if ( pBuffer )
@@ -982,6 +983,7 @@ namespace gamescope
                     .nDstHeight  = int32_t( pLayer->tex->height() / double( pLayer->scale.y ) ),
                     .eColorspace = pLayer->colorspace,
                     .bOpaque     = pLayer->zpos == g_zposBase,
+                    .uFractionalScale = GetScale(),
                 } ) );
         }
         else
@@ -1227,7 +1229,7 @@ namespace gamescope
         if ( m_pSinglePixelBufferManager )
         {
             wl_buffer *pBlackBuffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer( m_pSinglePixelBufferManager, 0, 0, 0, ~0u );
-            m_pOwnedBlackFb = std::make_shared<CWaylandFb>( this, pBlackBuffer, nullptr );
+            m_pOwnedBlackFb = new CWaylandFb( this, pBlackBuffer, nullptr );
             m_BlackFb = m_pOwnedBlackFb.get();
         }
         else
@@ -1346,7 +1348,8 @@ namespace gamescope
                 {
                     m_BlackFb->OnCompositorAcquire();
 
-                    m_Planes[uCurrentPlane++].Present(
+                    CWaylandPlane *pPlane = &m_Planes[uCurrentPlane++];
+                    pPlane->Present(
                         WaylandPlaneState
                         {
                             .pBuffer     = m_BlackFb->GetHostBuffer(),
@@ -1356,6 +1359,7 @@ namespace gamescope
                             .nDstHeight  = int32_t( g_nOutputHeight ),
                             .eColorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU,
                             .bOpaque     = true,
+                            .uFractionalScale = pPlane->GetScale(),
                         } );
                 }
 
@@ -1381,7 +1385,6 @@ namespace gamescope
                 compositeLayer.zpos = g_zposBase;
 
                 compositeLayer.tex = vulkan_get_last_output_image( false, false );
-                compositeLayer.pBackendFb = compositeLayer.tex->GetBackendFb();
                 compositeLayer.applyColorMgmt = false;
 
                 compositeLayer.filter = GamescopeUpscaleFilter::NEAREST;
@@ -2266,8 +2269,10 @@ namespace gamescope
         if ( !oState )
             return;
 
-        double flX = ( wl_fixed_to_double( fSurfaceX ) + oState->nDestX ) / g_nOutputWidth;
-        double flY = ( wl_fixed_to_double( fSurfaceY ) + oState->nDestY ) / g_nOutputHeight;
+        uint32_t uScale = oState->uFractionalScale;
+
+        double flX = ( wl_fixed_to_double( fSurfaceX ) * uScale / 120.0 + oState->nDestX ) / g_nOutputWidth;
+        double flY = ( wl_fixed_to_double( fSurfaceY ) * uScale / 120.0 + oState->nDestY ) / g_nOutputHeight;
 
         wlserver_lock();
         wlserver_touchmotion( flX, flY, 0, ++m_uFakeTimestamp );
