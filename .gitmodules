@@ -7,7 +7,6 @@
 [submodule "subprojects/vkroots"]
 	path = subprojects/vkroots
 	url = https://github.com/sharkautarch/vkroots
-	branch = constexpr_func
 [submodule "subprojects/libdisplay-info"]
 	path = subprojects/libdisplay-info
 	url = https://gitlab.freedesktop.org/emersion/libdisplay-info
