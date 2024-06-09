@@ -6,6 +6,7 @@ wayland_client = dependency('wayland-client')
 
 gamescope_wsi_layer = shared_library('VkLayer_FROG_gamescope_wsi_' + build_machine.cpu_family(), 'VkLayer_FROG_gamescope_wsi.cpp', protocols_client_src,
   dependencies     : [ vkroots_dep, dep_xcb, dep_x11, dep_x11_xcb, glm_dep, wayland_client ],
+  cpp_args	   : ['-fno-rtti', '-fvisibility-ms-compat', '-fvisibility-inlines-hidden'],
   install          : true )
 
 out_lib_dir = join_paths(prefix, lib_dir)
