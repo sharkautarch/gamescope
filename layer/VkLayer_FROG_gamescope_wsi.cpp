@@ -1,4 +1,4 @@
-#pragma implementation "vkroots.h"
+#define VKROOTS_USE_CONSTEXPR_FUNC 1
 
 #define VK_USE_PLATFORM_WAYLAND_KHR
 #define VK_USE_PLATFORM_XCB_KHR
