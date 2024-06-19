@@ -44,12 +44,12 @@ struct focus_t
 
 struct CommitDoneEntry_t
 {
-	uint32_t winSeq;
+	uint64_t winSeq;
 	uint64_t commitID;
 	uint64_t desiredPresentTime;
-	bool fifo;
-	uint16_t presentMargin;
+	uint64_t earliestPresentTime;
 	uint64_t earliestLatchTime;
+	bool fifo;
 };
 
 struct CommitDoneList_t

@@ -913,8 +913,8 @@ public:
 	inline void __attribute__((no_stack_protector,nothrow)) uploadConstants(Args&&... args);
 	void bindPipeline(VkPipeline pipeline);
 	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1, unsigned int total_dispatches = 1, unsigned int curr_dispatch_no = 1);
-	void copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst);
-	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst);
+	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
+	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
 
 
 	void prepareSrcImage(CVulkanTexture *image);
