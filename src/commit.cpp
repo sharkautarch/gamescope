@@ -19,8 +19,8 @@ __attribute__((no_stack_protector,nothrow)) commit_t::~commit_t() noexcept
         CloseFenceInternal();
     }
 
-    if ( pBackendFb != nullptr )
-        pBackendFb = nullptr;
+    if ( vulkanTex != nullptr )
+        vulkanTex = nullptr;
 
     wlserver_lock();
     if (!presentation_feedbacks.empty())

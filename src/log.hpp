@@ -4,6 +4,8 @@
 #include <stdio.h>
 #include <errno.h>
 #include <string.h>
+#include <stdint.h>
+#include <functional>
 
 #ifdef __GNUC__
 #define ATTRIB_PRINTF(start, end) __attribute__((format(printf, start, end)))
@@ -37,4 +39,7 @@ public:
 	void debugf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 
 	void errorf_errno(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
+
+	using LoggingListenerFunc = std::function<void(LogPriority ePriority, const char *pScope, const char *pText)>;
+	std::unordered_map<uintptr_t, LoggingListenerFunc> m_LoggingListeners;
 };

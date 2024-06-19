@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include <wlr/util/box.h>
+
 #include "xwayland_ctx.hpp"
 #include "gamescope-control-protocol.h"
 
@@ -89,7 +91,19 @@ struct steamcompmgr_xdg_win_t
 	uint32_t id;
 
 	struct wlserver_xdg_surface_info surface;
+	struct wlr_box geometry;
 };
+
+struct Rect
+{
+	int32_t nX;
+	int32_t nY;
+
+	int32_t nWidth;
+	int32_t nHeight;
+};
+
+extern focus_t g_steamcompmgr_xdg_focus;
 
 struct steamcompmgr_win_t {
 	unsigned int	opacity;
@@ -144,6 +158,26 @@ struct steamcompmgr_win_t {
 
 	std::variant<steamcompmgr_xwayland_win_t, steamcompmgr_xdg_win_t>
 		_window_types;
+
+	focus_t *GetFocus() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return &xwayland().ctx->focus;
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return &g_steamcompmgr_xdg_focus;
+		else
+			return nullptr;
+	}
+
+	Rect GetGeometry() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return Rect{ xwayland().a.x, xwayland().a.y, xwayland().a.width, xwayland().a.height };
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return Rect{ xdg().geometry.x, xdg().geometry.y, xdg().geometry.width, xdg().geometry.height };
+		else
+			return Rect{};
+	}
 
 	uint32_t id() const
 	{

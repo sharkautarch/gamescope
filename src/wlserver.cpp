@@ -44,6 +44,7 @@
 #include "gamescope-xwayland-protocol.h"
 #include "gamescope-pipewire-protocol.h"
 #include "gamescope-control-protocol.h"
+#include "gamescope-private-protocol.h"
 #include "gamescope-swapchain-protocol.h"
 #include "presentation-time-protocol.h"
 
@@ -375,9 +376,6 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unaccel_dy)
 {
 	assert( wlserver_is_lock_held() );
-
-	unaccel_dx *= g_mouseSensitivity;
-	unaccel_dy *= g_mouseSensitivity;
 
 	wlr_relative_pointer_manager_v1_send_relative_motion( wlserver.relative_pointer_manager, wlserver.wlr.seat, 0, unaccel_dx, unaccel_dy, unaccel_dx, unaccel_dy );
 }
@@ -1165,6 +1163,54 @@ static void create_gamescope_control( void )
 }
 
 ////////////////////////
+// gamescope_private
+////////////////////////
+
+static void gamescope_private_execute( struct wl_client *client, struct wl_resource *resource, const char *cvar_name, const char *value )
+{
+	std::vector<std::string_view> args;
+	args.emplace_back( cvar_name );
+	args.emplace_back( value );
+	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+		gamescope_private_send_command_executed( resource );
+	else
+		wl_log.errorf( "gamescope_private_execute: Command not found" );
+}
+
+static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
+{
+	wl_resource_destroy( resource );
+}
+
+static const struct gamescope_private_interface gamescope_private_impl = {
+	.destroy = gamescope_private_handle_destroy,
+	.execute = gamescope_private_execute,
+};
+
+static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
+{
+	struct wl_resource *resource = wl_resource_create( client, &gamescope_private_interface, version, id );
+	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ](LogPriority ePriority, const char *pScope, const char *pText)
+	{
+		if ( !wlserver_is_lock_held() )
+			return;
+		gamescope_private_send_log( resource, pText );
+	};
+	wl_resource_set_implementation( resource, &gamescope_private_impl, NULL,
+		[](struct wl_resource *resource)
+	{
+		console_log.m_LoggingListeners.erase( (uintptr_t)resource );
+	});
+
+}
+
+static void create_gamescope_private( void )
+{
+	uint32_t version = 1;
+	wl_global_create( wlserver.display, &gamescope_private_interface, version, NULL, gamescope_private_bind );
+}
+
+////////////////////////
 // presentation-time
 ////////////////////////
 
@@ -1586,6 +1632,8 @@ void xdg_toplevel_new(struct wl_listener *listener, void *data)
 	wlr_xdg_surface_schedule_configure( xdg_toplevel->base );
 }
 
+uint32_t get_appid_from_pid( pid_t pid );
+
 void xdg_surface_new(struct wl_listener *listener, void *data)
 {
 	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
@@ -1605,6 +1653,9 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 
 	window->seq = ++g_lastWinSeq;
 	window->type = steamcompmgr_win_type_t::XDG;
+	pid_t nPid = 0;
+	wl_client_get_credentials( xdg_surface->client->client, &nPid, nullptr, nullptr );
+	window->appID = get_appid_from_pid( nPid );
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
 	static uint32_t s_window_serial = 0;
@@ -1639,6 +1690,8 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 			it++;
 		}
 	}
+
+	wlr_xdg_surface_get_geometry(xdg_surface, &(window->xdg().geometry));
 }
 
 #if HAVE_LIBEIS
@@ -1697,6 +1750,8 @@ bool wlserver_init( void ) {
 #endif
 
 	create_gamescope_control();
+
+	create_gamescope_private();
 
 	create_presentation_time();
 
@@ -2224,6 +2279,9 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 void wlserver_mousemotion( double dx, double dy, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
+
+	dx *= g_mouseSensitivity;
+	dy *= g_mouseSensitivity;
 
 	wlserver_perform_rel_pointer_motion( dx, dy );
 

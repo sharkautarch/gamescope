@@ -508,7 +508,7 @@ bool set_color_mgmt_enabled( bool bEnabled )
 	return true;
 }
 
-static std::shared_ptr<CVulkanTexture> s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
+static gamescope::OwningRc<CVulkanTexture> s_MuraCorrectionImage[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 static std::shared_ptr<gamescope::BackendBlob> s_MuraCTMBlob[gamescope::GAMESCOPE_SCREEN_TYPE_COUNT];
 static float g_flMuraScale = 1.0f;
 static bool g_bMuraCompensationDisabled = false;
@@ -860,6 +860,7 @@ unsigned int g_BlurFadeStartTime = 0;
 
 pid_t focusWindow_pid;
 
+focus_t g_steamcompmgr_xdg_focus;
 std::vector<std::shared_ptr<steamcompmgr_win_t>> g_steamcompmgr_xdg_wins;
 
 static bool
@@ -946,14 +947,14 @@ static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
 static bool		debugEvents = false;
 bool			steamMode = false;
-bool		alwaysComposite = false;
+
+gamescope::ConVar<bool> cv_composite_force{ "composite_force", false, "Force composition always, never use scanout" };
 static bool		useXRes = true;
 
 struct wlr_buffer_map_entry {
 	struct wl_listener listener;
 	struct wlr_buffer *buf;
-	std::shared_ptr<CVulkanTexture> vulkanTex;
-	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
+	gamescope::OwningRc<CVulkanTexture> vulkanTex;
 };
 
 static std::mutex wlr_buffer_map_lock;
@@ -966,6 +967,30 @@ namespace gamescope
 		static CScreenshotManager s_Instance;
 		return s_Instance;
 	}
+
+	static ConCommand cc_screenshot( "screenshot", "Take a screenshot to a given path.",
+	[]( std::span<std::string_view> args )
+	{
+		std::string_view szPath = "/tmp/gamescope.png";
+		if ( args.size() > 1 )
+			szPath = args[1];
+
+		gamescope_control_screenshot_type eScreenshotType = GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY;
+		if ( args.size() > 2 )
+		{
+			std::optional<uint32_t> oType = Parse<uint32_t>( args[2] );
+			if ( oType )
+				eScreenshotType = static_cast<gamescope_control_screenshot_type>( *oType );
+		}
+
+		gamescope::CScreenshotManager::Get().TakeScreenshot( gamescope::GamescopeScreenshotInfo
+		{
+			.szScreenshotPath      = std::string( szPath ),
+			.eScreenshotType       = eScreenshotType,
+			.uScreenshotFlags      = 0,
+			.bX11PropertyRequested = false,
+		} );
+	});
 }
 
 
@@ -1180,10 +1205,10 @@ destroy_buffer( struct wl_listener *listener, void * )
 	std::lock_guard<std::mutex> lock( wlr_buffer_map_lock );
 	wlr_buffer_map_entry *entry = wl_container_of( listener, entry, listener );
 
-	if ( entry->pBackendFb != nullptr )
+	if ( entry->vulkanTex != nullptr )
 	{
-		assert( entry->pBackendFb->GetRefCount() == 0 );
-		entry->pBackendFb = nullptr;
+		assert( entry->vulkanTex->GetRefCount() == 0 );
+		entry->vulkanTex = nullptr;
 	}
 
 	wl_list_remove( &entry->listener.link );
@@ -1217,10 +1242,8 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	auto it = wlr_buffer_map.find( buf );
 	if ( it != wlr_buffer_map.end() )
 	{
-		commit->vulkanTex = it->second.vulkanTex;
-
-		// Transfer from OwningRc of the import -> Rc of the usage.
-		gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = it->second.pBackendFb;
+		// Transfer from OwningRc of the texture -> Rc of the usage.
+		gamescope::OwningRc<CVulkanTexture> pVulkanTexture = it->second.vulkanTex;
 
 		/* Unlock here to avoid deadlock [1],
 		 * drm_lock_fbid calls wlserver_lock.
@@ -1228,8 +1251,8 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 		 * is no longer accessed. */
 		lock.unlock();
 
-		// Going -> rc now
-		commit->pBackendFb = pBackendFb.get();
+		// Going from OwningRc -> Rc now.
+		commit->vulkanTex = pVulkanTexture;
 
 		return commit;
 	}
@@ -1250,22 +1273,18 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	 *		 valid in all cases, even after a rehash." */
 	lock.unlock();
 
-	commit->vulkanTex = vulkan_create_texture_from_wlr_buffer( buf );
-	assert( commit->vulkanTex );
-
 	struct wlr_dmabuf_attributes dmabuf = {0};
 	gamescope::OwningRc<gamescope::IBackendFb> pBackendFb;
 	if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
 		pBackendFb = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
-		// OwningRc ref -> Rc import for commit
-		commit->pBackendFb = pBackendFb.get();
 	}
 
 	entry.listener.notify = destroy_buffer;
 	entry.buf = buf;
-	entry.vulkanTex = commit->vulkanTex;
-	entry.pBackendFb = pBackendFb;
+	entry.vulkanTex = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
+	
+	commit->vulkanTex = entry.vulkanTex.get();
 
 	wlserver_lock();
 	wl_signal_add( &buf->events.destroy, &entry.listener );
@@ -1406,7 +1425,7 @@ void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth
  * Constructor for a cursor. It is hidden in the beginning (normally until moved by user).
  */
 MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
-	: m_texture(0)
+	: m_texture(nullptr)
 	, m_dirty(true)
 	, m_imageEmpty(false)
 	, m_ctx(ctx)
@@ -1439,7 +1458,7 @@ void MouseCursor::checkSuspension()
 			if ( window_wants_no_focus_when_mouse_hidden(window) )
 			{
 				wlserver_lock();
-				wlserver_fake_mouse_pos( window->xwayland().a.width - 1, window->xwayland().a.height - 1 );
+				wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
 				wlserver_mousehide();
 				wlserver_unlock();
 			}
@@ -1733,14 +1752,14 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		return;
 	}
 
-	uint32_t sourceWidth = window->xwayland().a.width;
-	uint32_t sourceHeight = window->xwayland().a.height;
+	uint32_t sourceWidth = window->GetGeometry().nWidth;
+	uint32_t sourceHeight = window->GetGeometry().nHeight;
 
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->xwayland().a.x + fit->xwayland().a.width, 0, currentOutputWidth ) );
-		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->xwayland().a.y + fit->xwayland().a.height, 0, currentOutputHeight ) );
+		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
+		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1763,8 +1782,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->xwayland().a.x) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->xwayland().a.y) * currentScaleRatio_y + cursorOffsetY;
+	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
+	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
@@ -1792,7 +1811,6 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	layer->applyColorMgmt = false;
 
 	layer->tex = m_texture;
-	layer->pBackendFb = m_texture->GetBackendFb();
 
 	layer->filter = cursor_scale != 1.0f ? GamescopeUpscaleFilter::LINEAR : GamescopeUpscaleFilter::NEAREST;
 	layer->blackBorder = false;
@@ -1848,7 +1866,6 @@ paint_cached_base_layer(const gamescope::Rc<commit_t>& commit, const BaseLayerIn
 	if (layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB)
 		layer->ctm = s_scRGB709To2020Matrix;
 	layer->tex = commit->vulkanTex;
-	layer->pBackendFb = commit->pBackendFb;
 
 	layer->filter = base.filter;
 	layer->blackBorder = true;
@@ -1934,8 +1951,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 
 	if (notificationMode)
 	{
-		sourceWidth = mainOverlayWindow->xwayland().a.width;
-		sourceHeight = mainOverlayWindow->xwayland().a.height;
+		sourceWidth = mainOverlayWindow->GetGeometry().nWidth;
+		sourceHeight = mainOverlayWindow->GetGeometry().nHeight;
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
@@ -1957,21 +1974,19 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			sourceWidth = lastCommit->vulkanTex->width();
 			sourceHeight = lastCommit->vulkanTex->height();
 		} else {
-			sourceWidth = scaleW->xwayland().a.width;
-			sourceHeight = scaleW->xwayland().a.height;
+			sourceWidth = scaleW->GetGeometry().nWidth;
+			sourceHeight = scaleW->GetGeometry().nHeight;
 		}
 
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->xwayland().a.x + fit->xwayland().a.width, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->xwayland().a.y + fit->xwayland().a.height, 0, currentOutputHeight ) );
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
 		}
 	}
 
-	bool offset = false;
-	if ( w->type == steamcompmgr_win_type_t::XWAYLAND )
-		offset = ( ( w->xwayland().a.x || w->xwayland().a.y ) && w != scaleW );
+	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
@@ -1980,10 +1995,10 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
 		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
 
-		if ( w->type == steamcompmgr_win_type_t::XWAYLAND && w != scaleW )
+		if ( w != scaleW )
 		{
-			drawXOffset += w->xwayland().a.x * currentScaleRatio_x;
-			drawYOffset += w->xwayland().a.y * currentScaleRatio_y;
+			drawXOffset += w->GetGeometry().nX * currentScaleRatio_x;
+			drawYOffset += w->GetGeometry().nY * currentScaleRatio_y;
 		}
 
 		if ( zoomScaleRatio != 1.0 )
@@ -2011,8 +2026,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 	{
 		int xOffset = 0, yOffset = 0;
 
-		int width = w->xwayland().a.width * currentScaleRatio_x;
-		int height = w->xwayland().a.height * currentScaleRatio_y;
+		int width = w->GetGeometry().nWidth * currentScaleRatio_x;
+		int height = w->GetGeometry().nHeight * currentScaleRatio_y;
 
 		if (globalScaleRatio != 1.0f)
 		{
@@ -2049,7 +2064,6 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 	}
 
 	layer->tex = lastCommit->vulkanTex;
-	layer->pBackendFb = lastCommit->pBackendFb;
 
 	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
 	layer->colorspace = lastCommit->colorspace();
@@ -2187,11 +2201,11 @@ static void paint_pipewire()
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
 
-	std::shared_ptr<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
+	gamescope::Rc<CVulkanTexture> pRGBTexture = s_pPipewireBuffer->texture->isYcbcr()
 		? vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, false, DRM_FORMAT_XRGB2101010 )
-		: s_pPipewireBuffer->texture;
+		: gamescope::Rc<CVulkanTexture>{ s_pPipewireBuffer->texture };
 
-	std::shared_ptr<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
+	gamescope::Rc<CVulkanTexture> pYUVTexture = s_pPipewireBuffer->texture->isYcbcr() ? s_pPipewireBuffer->texture : nullptr;
 
 	uint32_t uCompositeDebugBackup = g_uCompositeDebug;
 	g_uCompositeDebug = 0;
@@ -2406,7 +2420,6 @@ paint_all(bool async)
 			layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 			layer->ctm = nullptr;
 			layer->tex = tex;
-			layer->pBackendFb = tex->GetBackendFb();
 
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 			layer->blackBorder = true;
@@ -2508,7 +2521,6 @@ paint_all(bool async)
 		FrameInfo_t::Layer_t *layer = &frameInfo.layers[ curLayer ];
 
 		layer->applyColorMgmt = false;
-		layer->pBackendFb = MuraCorrectionImage->GetBackendFb();
 		layer->scale = vec2_t{ 1.0f, 1.0f };
 		layer->blackBorder = true;
 		layer->colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU;
@@ -2552,7 +2564,7 @@ paint_all(bool async)
 		else if ( path.extension() == ".nv12.bin" )
 			drmCaptureFormat = DRM_FORMAT_NV12;
 
-		std::shared_ptr<CVulkanTexture> pScreenshotTexture;
+		gamescope::Rc<CVulkanTexture> pScreenshotTexture;
 		if ( drmCaptureFormat != DRM_FORMAT_INVALID )
 			pScreenshotTexture = vulkan_acquire_screenshot_texture( g_nOutputWidth, g_nOutputHeight, false, drmCaptureFormat );
 
@@ -2584,9 +2596,6 @@ paint_all(bool async)
 							break;
 						}
 					}
-
-					// Re-enable output color management (blending) if it was disabled by mura.
-					frameInfo.applyOutputColorMgmt = true;
 				}
 				else
 				{
@@ -2601,14 +2610,12 @@ paint_all(bool async)
 								break;
 							}
 						}
-
-						// Re-enable output color management (blending) if it was disabled by mura.
-						frameInfo.applyOutputColorMgmt = true;
 					}
 				}
-			}
 
-			frameInfo.applyOutputColorMgmt = true;
+				// Re-enable output color management (blending) if it was disabled by mura.
+				frameInfo.applyOutputColorMgmt = true;
+			}
 
 			frameInfo.outputEncodingEOTF = bHDRScreenshot ? EOTF_PQ : EOTF_Gamma22;
 
@@ -2938,13 +2945,10 @@ win_has_game_id( steamcompmgr_win_t *w )
 static bool
 win_is_useless( steamcompmgr_win_t *w )
 {
-	if (w->type != steamcompmgr_win_type_t::XWAYLAND)
-		return false;
-
 	// Windows that are 1x1 are pretty useless for override redirects.
 	// Just ignore them.
 	// Fixes the Xbox Login in Age of Empires 2: DE.
-	return w->xwayland().a.width == 1 && w->xwayland().a.height == 1;
+	return w->GetGeometry().nWidth == 1 && w->GetGeometry().nHeight == 1;
 }
 
 static bool
@@ -3111,7 +3115,7 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	return override != focus && override->xwayland().a.x >= 0 && override->xwayland().a.y >= 0;
+	return override != focus && override->GetGeometry().nX >= 0 && override->GetGeometry().nY >= 0;
 } 
 
 static bool
@@ -3143,15 +3147,6 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 		{
 			for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
 			{
-				// HACK: Bring any Wayland windows to global focus for now
-				// until appID stuff is plumbed for them.
-				if ( focusable_window->type == steamcompmgr_win_type_t::XDG )
-				{
-					focus = focusable_window;
-					localGameFocused = true;
-					goto found;
-				}
-
 				if ( focusable_window->appID == focusable_appid )
 				{
 					focus = focusable_window;
@@ -3360,7 +3355,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 	{
 		if (w->isOverlay)
 		{
-			if (w->xwayland().a.width > 1200 && w->opacity >= maxOpacity)
+			if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
 			{
 				ctx->focus.overlayWindow = w;
 				maxOpacity = w->opacity;
@@ -3491,7 +3486,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		ctx->focus.focusWindow->nudged = true;
 	}
 
-	if (w->xwayland().a.x != 0 || w->xwayland().a.y != 0)
+	if (w->GetGeometry().nX != 0 || w->GetGeometry().nY != 0)
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 0, 0);
 
 	if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
@@ -3506,14 +3501,14 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 			fs_width  = ctx->root_width * steam_height_scale;
 		}
 
-		if ( w->xwayland().a.width != fs_width || w->xwayland().a.height != fs_height || globalScaleRatio != 1.0f )
+		if ( w->GetGeometry().nWidth != fs_width || w->GetGeometry().nHeight != fs_height || globalScaleRatio != 1.0f )
 			XResizeWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, fs_width, fs_height);
 	}
 	else
 	{
 		if (ctx->focus.focusWindow->sizeHintsSpecified &&
-			((unsigned)ctx->focus.focusWindow->xwayland().a.width != ctx->focus.focusWindow->requestedWidth ||
-			(unsigned)ctx->focus.focusWindow->xwayland().a.height != ctx->focus.focusWindow->requestedHeight))
+			((unsigned)ctx->focus.focusWindow->GetGeometry().nWidth != ctx->focus.focusWindow->requestedWidth ||
+			(unsigned)ctx->focus.focusWindow->GetGeometry().nHeight != ctx->focus.focusWindow->requestedHeight))
 		{
 			XResizeWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, ctx->focus.focusWindow->requestedWidth, ctx->focus.focusWindow->requestedHeight);
 		}
@@ -3555,6 +3550,16 @@ const char *get_win_display_name(steamcompmgr_win_t *window)
 		return "";
 }
 
+
+static std::vector< steamcompmgr_win_t* >
+steamcompmgr_xdg_get_possible_focus_windows()
+{
+	std::vector< steamcompmgr_win_t* > windows;
+	for ( auto &win : g_steamcompmgr_xdg_wins )
+		windows.emplace_back( win.get() );
+	return windows;
+}
+
 static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows()
 {
 	std::vector< steamcompmgr_win_t* > vecPossibleFocusWindows;
@@ -3568,16 +3573,21 @@ static std::vector< steamcompmgr_win_t* > GetGlobalPossibleFocusWindows()
 		}
 	}
 
-	for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
 	{
-		if ( xdg_win->xdg().surface.mapped )
-			vecPossibleFocusWindows.push_back( xdg_win.get() );
+		std::vector< steamcompmgr_win_t* > vecLocalPossibleFocusWindows = steamcompmgr_xdg_get_possible_focus_windows();
+		vecPossibleFocusWindows.insert( vecPossibleFocusWindows.end(), vecLocalPossibleFocusWindows.begin(), vecLocalPossibleFocusWindows.end() );
 	}
 
 	// Determine global primary focus
 	std::stable_sort( vecPossibleFocusWindows.begin(), vecPossibleFocusWindows.end(), is_focus_priority_greater );
 
 	return vecPossibleFocusWindows;
+}
+
+static void
+steamcompmgr_xdg_determine_and_apply_focus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
+{
+	pick_primary_focus_and_override( &g_steamcompmgr_xdg_focus, None, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs );
 }
 
 static void
@@ -3603,6 +3613,13 @@ determine_and_apply_focus()
 			if ( server->ctx->focus.IsDirty() )
 				server->ctx->DetermineAndApplyFocus( vecLocalPossibleFocusWindows );
 		}
+	}
+
+	// Apply focus to XDG contexts (TODO merge me with some nice abstraction of "environments")
+	{
+		std::vector< steamcompmgr_win_t* > vecLocalPossibleFocusWindows = steamcompmgr_xdg_get_possible_focus_windows();
+		if ( g_steamcompmgr_xdg_focus.IsDirty() )
+			steamcompmgr_xdg_determine_and_apply_focus( vecLocalPossibleFocusWindows );
 	}
 
 	// Determine local context focuses
@@ -3730,22 +3747,22 @@ determine_and_apply_focus()
 	{
 		// Cannot simply XWarpPointer here as we immediately go on to
 		// do wlserver_mousefocus and need to update m_x and m_y of the cursor.
-		if ( global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCorner )
+		if ( global_focus.inputFocusWindow->GetFocus()->bResetToCorner )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->xwayland().a.width / 2, global_focus.inputFocusWindow->xwayland().a.height / 2, 0, true );
-			wlserver_fake_mouse_pos( global_focus.inputFocusWindow->xwayland().a.width - 1, global_focus.inputFocusWindow->xwayland().a.height - 1 );
+			wlserver_mousewarp( global_focus.inputFocusWindow->GetGeometry().nWidth / 2, global_focus.inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
+			wlserver_fake_mouse_pos( global_focus.inputFocusWindow->GetGeometry().nWidth - 1, global_focus.inputFocusWindow->GetGeometry().nHeight - 1 );
 			wlserver_unlock();
 		}
-		else if ( global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCenter )
+		else if ( global_focus.inputFocusWindow->GetFocus()->bResetToCenter )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->xwayland().a.width / 2, global_focus.inputFocusWindow->xwayland().a.height / 2, 0, true );
+			wlserver_mousewarp( global_focus.inputFocusWindow->GetGeometry().nWidth / 2, global_focus.inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
 			wlserver_unlock();
 		}
 
-		global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCorner = false;
-		global_focus.inputFocusWindow->xwayland().ctx->focus.bResetToCenter = false;
+		global_focus.inputFocusWindow->GetFocus()->bResetToCorner = false;
+		global_focus.inputFocusWindow->GetFocus()->bResetToCenter = false;
 	}
 
 	// Determine if we need to repaints
@@ -3951,8 +3968,8 @@ get_size_hints(xwayland_ctx_t *ctx, steamcompmgr_win_t *w)
 				// If we have a unique children that isn't override-reidrect that is
 				// contained inside this fullscreen window, it's probably it.
 				if (attribs.override_redirect == false &&
-					attribs.width <= w->xwayland().a.width &&
-					attribs.height <= w->xwayland().a.height)
+					attribs.width <= w->GetGeometry().nWidth &&
+					attribs.height <= w->GetGeometry().nHeight)
 				{
 					w->sizeHintsSpecified = true;
 
@@ -4171,7 +4188,7 @@ unmap_win(xwayland_ctx_t *ctx, Window id, bool fade)
 	finish_unmap_win(ctx, w);
 }
 
-static uint32_t
+uint32_t
 get_appid_from_pid( pid_t pid )
 {
 	uint32_t unFoundAppId = 0;
@@ -5052,7 +5069,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			{
 				if (w->isOverlay)
 				{
-					if (w->xwayland().a.width > 1200 && w->opacity >= maxOpacity)
+					if (w->GetGeometry().nWidth > 1200 && w->opacity >= maxOpacity)
 					{
 						ctx->focus.overlayWindow = w;
 						maxOpacity = w->opacity;
@@ -5409,12 +5426,12 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeCompositeForce )
 	{
-		alwaysComposite = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeCompositeForce, 0 );
+		cv_composite_force = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeCompositeForce, 0 );
 		hasRepaint = true;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeCompositeDebug )
 	{
-		g_uCompositeDebug = get_prop( ctx, ctx->root, ctx->atoms.gamescopeCompositeDebug, 0 );
+		cv_composite_debug = get_prop( ctx, ctx->root, ctx->atoms.gamescopeCompositeDebug, 0 );
 
 		hasRepaint = true;
 	}
@@ -5479,15 +5496,15 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeDebugHDRHeatmap )
 	{
 		uint32_t heatmap = get_prop( ctx, ctx->root, ctx->atoms.gamescopeDebugHDRHeatmap, 0 );
-		g_uCompositeDebug &= ~CompositeDebugFlag::Heatmap;
-		g_uCompositeDebug &= ~CompositeDebugFlag::Heatmap_MSWCG;
-		g_uCompositeDebug &= ~CompositeDebugFlag::Heatmap_Hard;
+		cv_composite_debug &= ~CompositeDebugFlag::Heatmap;
+		cv_composite_debug &= ~CompositeDebugFlag::Heatmap_MSWCG;
+		cv_composite_debug &= ~CompositeDebugFlag::Heatmap_Hard;
 		if (heatmap != 0)
-			g_uCompositeDebug |= CompositeDebugFlag::Heatmap;
+			cv_composite_debug |= CompositeDebugFlag::Heatmap;
 		if (heatmap == 2)
-			g_uCompositeDebug |= CompositeDebugFlag::Heatmap_MSWCG;
+			cv_composite_debug |= CompositeDebugFlag::Heatmap_MSWCG;
 		if (heatmap == 3)
-			g_uCompositeDebug |= CompositeDebugFlag::Heatmap_Hard;
+			cv_composite_debug |= CompositeDebugFlag::Heatmap_Hard;
 		hasRepaint = true;
 	}
 
@@ -6086,24 +6103,36 @@ void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwaylan
 	
 }
 
-void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg()
+void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	auto commits_before_their_time = [](std::vector<CommitDoneEntry_t>& vec, CommitDoneEntry_t& entry, const uint32_t index) {
-		vec[index] = std::move(entry);
-	};
+	static std::vector< CommitDoneEntry_t > commits_before_their_time;
+	commits_before_their_time.clear();
+	commits_before_their_time.reserve( 32 );
+
+	// windows in FIFO mode we got a new frame to present for this vblank
+	static std::unordered_set< uint64_t > fifo_win_seqs;
+	fifo_win_seqs.clear();
+	fifo_win_seqs.reserve( 32 );
 
 	uint64_t now = get_time_in_nanos();
 
-	uint32_t index = 0;
+	vblank = vblank && steamcompmgr_should_vblank_window( true, vblank_idx );
+
 	// very fast loop yes
 	for ( auto& entry : g_steamcompmgr_xdg_done_commits.listCommitsDone )
 	{
-		if (!entry.presentMargin)
+		if (entry.fifo && (!vblank || fifo_win_seqs.count(entry.winSeq) > 0))
+		{
+			commits_before_their_time.push_back( entry );
+			continue;
+		}
+		
+		if (!entry.earliestPresentTime)
 		{
 			entry.presentMargin = next_refresh_time - now;
 			entry.earliestLatchTime = now;
@@ -6117,21 +6146,18 @@ void __attribute__((no_stack_protector,nothrow)) handle_done_commits_xdg()
 
 		for (const auto& xdg_win : g_steamcompmgr_xdg_wins)
 		{
-			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.presentMargin, entry.earliestLatchTime))
+			if (xdg_win->seq != entry.winSeq)
+				continue;
+			if (handle_done_commit(xdg_win.get(), nullptr, entry.commitID, entry.earliestPresentTime, entry.earliestLatchTime))
+			{
+				if (entry.fifo)
+					fifo_win_seqs.insert(entry.winSeq);
 				break;
+			}
 		}
 	}
-	if (index > 0) {
-		//using erase() instead of resize(), because using resize() causes the compiler
-		//to add code that checks if vector size would increase and do reallocation in that case.
-		//We know w/ 100% certainty that the vector's size can't increase here, but the compiler is dumb dumb...
-		auto start = g_steamcompmgr_xdg_done_commits.listCommitsDone.begin();
-		std::advance(start, index);
-		auto end = g_steamcompmgr_xdg_done_commits.listCommitsDone.end();
-		g_steamcompmgr_xdg_done_commits.listCommitsDone.erase(start, end);
-	} else {
-		g_steamcompmgr_xdg_done_commits.listCommitsDone.clear();
-	}
+
+	g_steamcompmgr_xdg_done_commits.listCommitsDone.swap( commits_before_their_time );
 }
 
 void handle_presented_for_window( steamcompmgr_win_t* w )
@@ -7129,7 +7155,7 @@ extern int g_nPreferredOutputHeight;
 
 static bool g_bWasFSRActive = false;
 
-void steamcompmgr_check_xdg(bool vblank)
+void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 {
 	if (wlserver_xdg_dirty())
 	{
@@ -7149,7 +7175,7 @@ void steamcompmgr_check_xdg(bool vblank)
 		MakeFocusDirty();
 	}
 
-	handle_done_commits_xdg();
+	handle_done_commits_xdg( vblank, vblank_idx );
 
 	// When we have observed both a complete commit and a VBlank, we should request a new frame.
 	if (vblank)
@@ -7226,7 +7252,7 @@ steamcompmgr_main(int argc, char **argv)
 				steamMode = true;
 				break;
 			case 'c':
-				alwaysComposite = true;
+				cv_composite_force = true;
 				break;
 			case 'x':
 				useXRes = false;
@@ -7289,7 +7315,7 @@ steamcompmgr_main(int argc, char **argv)
 	const char *pchEnableVkBasalt = getenv( "ENABLE_VKBASALT" );
 	if ( pchEnableVkBasalt != nullptr && pchEnableVkBasalt[0] == '1' )
 	{
-		alwaysComposite = true;
+		cv_composite_force = true;
 	}
 
 	// Enable color mgmt by default.
@@ -7372,7 +7398,95 @@ steamcompmgr_main(int argc, char **argv)
 	auto body = [&]() __attribute__((hot)) {
 		for (;;)
 		{
-			vblank = false;
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			{
+				assert(server->ctx);
+				if (server->ctx->HasQueuedEvents())
+					server->ctx->Dispatch();
+			}
+		}
+
+		g_SteamCompMgrWaiter.PollEvents();
+
+		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
+		{
+			g_SteamCompMgrVBlankTime = *pendingVBlank;
+			vblank = true;
+		}
+
+		if ( g_bRun == false )
+		{
+			break;
+		}
+
+		bool flush_root = false;
+
+		if ( inputCounter != lastPublishedInputCounter )
+		{
+			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeInputCounterAtom, XA_CARDINAL, 32, PropModeReplace,
+							 (unsigned char *)&inputCounter, 1 );
+
+			lastPublishedInputCounter = inputCounter;
+			flush_root = true;
+		}
+
+		if ( g_bFSRActive != g_bWasFSRActive )
+		{
+			uint32_t active = g_bFSRActive ? 1 : 0;
+			XChangeProperty( root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeFSRFeedback, XA_CARDINAL, 32, PropModeReplace,
+					(unsigned char *)&active, 1 );
+
+			g_bWasFSRActive = g_bFSRActive;
+			flush_root = true;
+		}
+
+		if (global_focus.IsDirty())
+			determine_and_apply_focus();
+
+		// If our DRM state is out-of-date, refresh it. This might update
+		// the output size.
+		if ( GetBackend()->PollState() )
+		{
+			hasRepaint = true;
+
+			update_mode_atoms(root_ctx, &flush_root);
+		}
+
+		g_uCompositeDebug = cv_composite_debug;
+
+		g_bOutputHDREnabled = (g_bSupportsHDR_CachedValue || g_bForceHDR10OutputDebug) && cv_hdr_enabled;
+
+		// Pick our width/height for this potential frame, regardless of how it might change later
+		// At some point we might even add proper locking so we get real updates atomically instead
+		// of whatever jumble of races the below might cause over a couple of frames
+		if ( currentOutputWidth != g_nOutputWidth ||
+			 currentOutputHeight != g_nOutputHeight ||
+			 currentHDROutput != g_bOutputHDREnabled ||
+			 currentHDRForce != g_bForceHDRSupportDebug )
+		{
+			if ( steamMode && g_nXWaylandCount > 1 )
+			{
+				g_nNestedHeight = ( g_nNestedWidth * g_nOutputHeight ) / g_nOutputWidth;
+				wlserver_lock();
+				// Update only Steam, the root ctx, with the new output size for now
+				wlserver_set_xwayland_server_mode( 0, g_nOutputWidth, g_nOutputHeight, g_nOutputRefresh );
+				wlserver_unlock();
+			}
+
+			// XXX(JoshA): Remake this. It sucks.
+			if ( GetBackend()->UsesVulkanSwapchain() )
+			{
+				vulkan_remake_swapchain();
+
+				while ( !acquire_next_image() )
+					vulkan_remake_swapchain();
+			}
+			else
+			{
+				vulkan_remake_output_images();
+			}
+
 
 			{
 				gamescope_xwayland_server_t *server = NULL;
@@ -7388,8 +7502,101 @@ steamcompmgr_main(int argc, char **argv)
 
 			if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 			{
-				g_SteamCompMgrVBlankTime = *pendingVBlank;
-				vblank = true;
+				gamescope_xwayland_server_t *server = NULL;
+				for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				{
+					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
+					{
+						steamcompmgr_latch_frame_done( w, vblank_idx );
+					}
+				}
+
+				for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
+				{
+					steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
+				}
+			}
+		}
+
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+			{
+				handle_done_commits_xwayland(server->ctx.get(), vblank, vblank_idx);
+
+				// When we have observed both a complete commit and a VBlank, we should request a new frame.
+				if (vblank)
+				{
+					for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
+					{
+						steamcompmgr_flush_frame_done(w);
+					}
+				}
+			}
+		}
+
+		steamcompmgr_check_xdg(vblank, vblank_idx);
+
+		if ( vblank )
+		{
+			vblank_idx++;
+
+			int nRealRefreshmHz = g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh;
+			int nRealRefreshHz = gamescope::ConvertmHzToHz( nRealRefreshmHz );
+			int nTargetFPS = g_nSteamCompMgrTargetFPS ? g_nSteamCompMgrTargetFPS : nRealRefreshHz;
+			nTargetFPS = std::min<int>( nTargetFPS, nRealRefreshHz );
+			int nVblankDivisor = nRealRefreshHz / nTargetFPS;
+
+			g_SteamCompMgrAppRefreshCycle = gamescope::mHzToRefreshCycle( nRealRefreshmHz );
+			g_SteamCompMgrLimitedAppRefreshCycle = g_SteamCompMgrAppRefreshCycle * nVblankDivisor;
+		}
+
+		// Handle presentation-time stuff
+		//
+		// Notes:
+		//
+		// We send the presented event just after the latest latch time possible so PresentWait in Vulkan
+		// still returns pretty optimally. The extra 2ms or so can be "display latency"
+		// We still provide the predicted TTL refresh time in the presented event though.
+		//
+		// We ignore or lie most of the flags because they aren't particularly useful for a client
+		// to know anyway and it would delay us sending this at an optimal time.
+		// (particularly for DXGI frame latency handles under Proton.)
+		//
+		// The boat is still out as to whether we should do latest latch or pageflip/ttl for the event.
+		// For now, going to keep this, and if we change our minds later, it's no big deal.
+		//
+		// It's a little strange, but we return `presented` for any window not visible
+		// and `presented` for anything visible. It's a little disingenuous because we didn't
+		// actually show a window if it wasn't visible, but we could! And that is the first
+		// opportunity it had. It's confusing but we need this for forward progress.
+
+		if ( vblank )
+		{
+			wlserver_lock();
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				handle_presented_xwayland( server->ctx.get() );
+			wlserver_unlock();
+		}
+
+		//
+
+		{
+			gamescope_xwayland_server_t *server = NULL;
+			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+				check_new_xwayland_res(server->ctx.get());
+		}
+
+
+		{
+			GamescopeAppTextureColorspace current_app_colorspace = GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
+			std::shared_ptr<gamescope::BackendBlob> app_hdr_metadata = nullptr;
+			if ( g_HeldCommits[HELD_COMMIT_BASE] != nullptr )
+			{
+				current_app_colorspace = g_HeldCommits[HELD_COMMIT_BASE]->colorspace();
+				if (g_HeldCommits[HELD_COMMIT_BASE]->feedback)
+					app_hdr_metadata = g_HeldCommits[HELD_COMMIT_BASE]->feedback->hdr_metadata_blob;
 			}
 
 			if ( g_bRun == false )
@@ -7494,30 +7701,11 @@ steamcompmgr_main(int argc, char **argv)
 	#endif
 			}
 
-			// Ask for a new surface every vblank
-			// When we observe a new commit being complete for a surface, we ask for a new frame.
-			// This ensures that FIFO works properly, since otherwise we might ask for a new frame
-			// application can commit a new frame that completes before we ever displayed
-			// the current pending commit.
-			static uint64_t vblank_idx = 0;
-			if ( vblank == true )
-			{
-				{
-					gamescope_xwayland_server_t *server = NULL;
-					for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-					{
-						for (steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next)
-						{
-							steamcompmgr_latch_frame_done( w, vblank_idx );
-						}
-					}
-
-					for ( const auto& xdg_win : g_steamcompmgr_xdg_wins )
-					{
-						steamcompmgr_latch_frame_done( xdg_win.get(), vblank_idx );
-					}
-				}
-			}
+		// Handles if we got a commit for the window we want to focus
+		// to switch to it for painting (outdatedInteractiveFocus)
+		// Doesn't realllly matter but avoids an extra frame of being on the wrong window.
+		if (global_focus.IsDirty())
+			determine_and_apply_focus();
 
 			{
 				gamescope_xwayland_server_t *server = NULL;

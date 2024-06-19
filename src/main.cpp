@@ -162,8 +162,12 @@ const char usage[] =
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
 	"  --backend                      select rendering backend\n"
 	"                                     auto => autodetect (default)\n"
+#if HAVE_DRM
 	"                                     drm => use DRM backend (standalone display session)\n"
+#endif
+#if HAVE_SDL2
 	"                                     sdl => use SDL backend\n"
+#endif
 #if HAVE_OPENVR
 	"                                     openvr => use OpenVR backend (outputs as a VR overlay)\n"
 #endif
@@ -399,10 +403,14 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 {
 	if (strcmp(str, "auto") == 0) {
 		return gamescope::GamescopeBackend::Auto;
+#if HAVE_DRM
 	} else if (strcmp(str, "drm") == 0) {
 		return gamescope::GamescopeBackend::DRM;
+#endif
+#if HAVE_SDL2
 	} else if (strcmp(str, "sdl") == 0) {
 		return gamescope::GamescopeBackend::SDL;
+#endif
 #if HAVE_OPENVR
 	} else if (strcmp(str, "openvr") == 0) {
 		return gamescope::GamescopeBackend::OpenVR;
@@ -666,10 +674,10 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
-					g_uCompositeDebug |= CompositeDebugFlag::Markers;
-					g_uCompositeDebug |= CompositeDebugFlag::PlaneBorders;
+					cv_composite_debug |= CompositeDebugFlag::Markers;
+					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
 				} else if (strcmp(opt_name, "hdr-debug-heatmap") == 0) {
-					g_uCompositeDebug |= CompositeDebugFlag::Heatmap;
+					cv_composite_debug |= CompositeDebugFlag::Heatmap;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
 					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) atoi( optarg );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
@@ -834,8 +842,10 @@ int main(int argc, char **argv)
 
 		case gamescope::GamescopeBackend::Wayland:
 			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
+#if HAVE_SDL2
 			if ( !GetBackend() )
 				gamescope::IBackend::Set<gamescope::CSDLBackend>();
+#endif
 			break;
 		default:
 			abort();

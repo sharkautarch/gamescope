@@ -12,6 +12,10 @@
 #include <functional>
 #include <cassert>
 
+#include "log.hpp"
+
+extern LogScope console_log;
+
 namespace gamescope
 {
     class ConCommand;
@@ -92,7 +96,12 @@ namespace gamescope
                 m_Func( args );
         }
 
-        static Dict<ConCommand *>& __attribute__((cold)) GetCommands();
+        static bool Exec( std::span<std::string_view> args );
+
+        std::string_view GetName() const { return m_pszName; }
+        std::string_view GetDescription() const { return m_pszDescription; }
+
+        static Dict<ConCommand *>& GetCommands();
     protected:
         std::string_view m_pszName;
         std::string_view m_pszDescription;
@@ -138,7 +147,12 @@ namespace gamescope
         template <typename J> bool __attribute__((cold)) operator != ( const J &other ) const { return m_Value !=  other; }
         template <typename J> bool __attribute__((cold)) operator <=>( const J &other ) const { return m_Value <=> other; }
 
-        void __attribute__((cold)) InvokeFunc( std::span<std::string_view> pArgs )
+        T  operator | (T other) { return m_Value | other; }
+        T &operator |=(T other) { return m_Value |= other; }
+        T  operator & (T other) { return m_Value & other; }
+        T &operator &=(T other) { return m_Value &= other; }
+
+        void InvokeFunc( std::span<std::string_view> pArgs )
         {
             if ( pArgs.size() != 2 )
                 return;
