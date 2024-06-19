@@ -16,6 +16,13 @@ namespace xcb {
   
   //Note: this class is currently only meant to be used within GamescopeWSILayer::VkDeviceOverrides::QueuePresentKHR:
   struct Prefetcher {
+    static std::optional<Prefetcher> GetPrefetcherIf(bool bCond, xcb_connection_t* connection, const xcb_window_t window) {
+       if (bCond)
+         return std::optional<Prefetcher>(std::in_place_t{}, connection, window);
+       
+       return std::nullopt;
+    }
+    
     explicit Prefetcher(xcb_connection_t* connection, const xcb_window_t window) {
         g_cache = {
             .window = window,
@@ -90,7 +97,7 @@ namespace xcb {
         inline Reply<Reply_RetType> operator()(xcb_connection_t* conn, xcb_window_t window) {
             const bool tryCached = pthread_equal(g_cache_tid, pthread_self())
                                    && g_cache.window == window;
-            if (!tryCached) [[unlikely]]
+            if (!tryCached)
                 return Reply<Reply_RetType> { m_replyFunc(conn, m_cookieFunc(conn, window), nullptr) };
             
             auto ret = getCachedReply(conn);
