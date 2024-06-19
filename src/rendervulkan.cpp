@@ -119,6 +119,7 @@ static VkResult vulkan_load_module()
 VulkanOutput_t g_output;
 
 uint32_t g_uCompositeDebug = 0u;
+gamescope::ConVar<uint32_t> cv_composite_debug{ "composite_debug", 0, "Debug composition flags" };
 
 template <typename T>
 static bool Contains( const std::span<const T> x, T value )
@@ -166,7 +167,6 @@ Target *pNextFind(const Base *base, VkStructureType sType)
 }
 
 #define VK_STRUCTURE_TYPE_WSI_IMAGE_CREATE_INFO_MESA (VkStructureType)1000001002
-#define VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA (VkStructureType)1000001003
 
 struct wsi_image_create_info {
 	VkStructureType sType;
@@ -177,11 +177,6 @@ struct wsi_image_create_info {
 	const uint64_t *modifiers;
 };
 
-struct wsi_memory_allocate_info {
-	VkStructureType sType;
-	const void *pNext;
-	bool implicit_sync;
-};
 
 // DRM doesn't have 32bit floating point formats, so add our own
 #define DRM_FORMAT_ABGR32323232F fourcc_code('A', 'B', '8', 'F')
@@ -612,7 +607,6 @@ bool CVulkanDevice::createDevice()
 	VkPhysicalDeviceVulkan12Features vulkan12Features = {
 		.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_VULKAN_1_2_FEATURES,
 		.pNext = std::exchange(features2.pNext, &vulkan12Features),
-		.uniformAndStorageBuffer8BitAccess = VK_TRUE,
 		.shaderFloat16 = m_bSupportsFp16,
 		.scalarBlockLayout = VK_TRUE,
 		.timelineSemaphore = VK_TRUE,
@@ -1358,22 +1352,22 @@ void CVulkanCmdBuffer::end()
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
-void CVulkanCmdBuffer::bindTexture(uint32_t slot, std::shared_ptr<CVulkanTexture> texture)
+void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture)
 {
 	m_boundTextures[slot] = texture.get();
 	if (texture)
-		m_textureRefs.emplace(texture.get(), texture);
+		m_textureRefs.emplace_back(std::move(texture));
 }
 
-void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d)
+void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d)
 {
 	m_shaperLut[slot] = lut1d.get();
 	m_lut3D[slot] = lut3d.get();
 
 	if (lut1d != nullptr)
-		m_textureRefs.emplace(lut1d.get(), lut1d);
+		m_textureRefs.emplace_back(std::move(lut1d));
 	if (lut3d != nullptr)
-		m_textureRefs.emplace(lut3d.get(), lut3d);
+		m_textureRefs.emplace_back(std::move(lut3d));
 }
 
 void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
@@ -1391,11 +1385,11 @@ void CVulkanCmdBuffer::setSamplerUnnormalized(uint32_t slot, bool unnormalized)
 	m_samplerState[slot].bUnnormalized = unnormalized;
 }
 
-void CVulkanCmdBuffer::bindTarget(std::shared_ptr<CVulkanTexture> target)
+void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
 {
 	m_target = target.get();
 	if (target)
-		m_textureRefs.emplace(target.get(), target);
+		m_textureRefs.emplace_back(std::move(target));
 }
 
 void CVulkanCmdBuffer::clearState()
@@ -1579,12 +1573,10 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	markDirty(m_target);
 }
 
-void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::shared_ptr<CVulkanTexture> dst)
+void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
 {
 	assert(src->width() == dst->width());
 	assert(src->height() == dst->height());
-	m_textureRefs.emplace(src.get(), src);
-	m_textureRefs.emplace(dst.get(), dst);
 	prepareSrcImage(src.get());
 	prepareDestImage(dst.get());
 	insertBarrier();
@@ -1608,11 +1600,12 @@ void CVulkanCmdBuffer::copyImage(std::shared_ptr<CVulkanTexture> src, std::share
 	m_device->vk.CmdCopyImage(m_cmdBuffer, src->vkImage(), VK_IMAGE_LAYOUT_GENERAL, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
 	markDirty(dst.get());
+	m_textureRefs.emplace_back(std::move(src));
+	m_textureRefs.emplace_back(std::move(dst));
 }
 
-void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, std::shared_ptr<CVulkanTexture> dst)
+void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst)
 {
-	m_textureRefs.emplace(dst.get(), dst);
 	prepareDestImage(dst.get());
 	insertBarrier();
 	VkBufferImageCopy region = {
@@ -1632,6 +1625,8 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	m_device->vk.CmdCopyBufferToImage(m_cmdBuffer, buffer, dst->vkImage(), VK_IMAGE_LAYOUT_GENERAL, 1, &region);
 
 	markDirty(dst.get());
+
+	m_textureRefs.emplace_back(std::move(dst));
 }
 
 void CVulkanCmdBuffer::prepareSrcImage(CVulkanTexture *image)
@@ -1709,7 +1704,7 @@ void CVulkanCmdBuffer::insertBarrier(bool flush)
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
 			.srcAccessMask = state.dirty ? write_bits : 0u,
 			.dstAccessMask = flush ? 0u : read_bits | write_bits,
-			.oldLayout = (state.discarded || state.needsImport) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
+			.oldLayout = state.discarded ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
 			.newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
 			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
@@ -1809,8 +1804,9 @@ static VkImageViewType VulkanImageTypeToViewType(VkImageType type)
 	}
 }
 
-bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */, CVulkanTexture *pExistingImageToReuseMemory )
+bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA /* = nullptr */,  uint32_t contentWidth /* = 0 */, uint32_t contentHeight /* =  0 */, CVulkanTexture *pExistingImageToReuseMemory, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb )
 {
+	m_pBackendFb = std::move( pBackendFb );
 	m_drmFormat = drmFormat;
 	VkResult res = VK_ERROR_INITIALIZATION_FAILED;
 
@@ -2065,7 +2061,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 	if ( pExistingImageToReuseMemory == nullptr )
 	{
 		// Possible pNexts
-		wsi_memory_allocate_info wsiAllocInfo = {};
 		VkImportMemoryFdInfoKHR importMemoryInfo = {};
 		VkExportMemoryAllocateInfo memory_export_info = {};
 		VkMemoryDedicatedAllocateInfo memory_dedicated_info = {};
@@ -2102,13 +2097,6 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 				vk_log.errorf_errno( "dup failed" );
 				return false;
 			}
-
-			// We're importing WSI buffers from GL or Vulkan, set implicit_sync
-			wsiAllocInfo = {
-					.sType = VK_STRUCTURE_TYPE_WSI_MEMORY_ALLOCATE_INFO_MESA,
-					.pNext = std::exchange(allocInfo.pNext, &wsiAllocInfo),
-					.implicit_sync = true,
-			};
 
 			// Memory already provided by pDMA
 			importMemoryInfo = {
@@ -2271,7 +2259,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 
 	if ( flags.bFlippable == true )
 	{
-		m_FBID = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
+		m_pBackendFb = GetBackend()->ImportDmabufToBackend( nullptr, &m_dmabuf );
 	}
 
 	bool bHasAlpha = pDMA ? DRMFormatHasAlpha( pDMA->format ) : true;
@@ -2429,6 +2417,28 @@ bool CVulkanTexture::BInitFromSwapchain( VkImage image, uint32_t width, uint32_t
 	return true;
 }
 
+uint32_t CVulkanTexture::IncRef()
+{
+	uint32_t uRefCount = gamescope::RcObject::IncRef();
+	if ( m_pBackendFb && !uRefCount )
+	{
+		m_pBackendFb->IncRef();
+	}
+	return uRefCount;
+}
+uint32_t CVulkanTexture::DecRef()
+{
+	// Need to pull it out as we could be destroyed in DecRef.
+	gamescope::IBackendFb *pBackendFb = m_pBackendFb.get();
+
+	uint32_t uRefCount = gamescope::RcObject::DecRef();
+	if ( pBackendFb && !uRefCount )
+	{
+		pBackendFb->DecRef();
+	}
+	return uRefCount;
+}
+
 CVulkanTexture::CVulkanTexture( void )
 {
 }
@@ -2455,12 +2465,8 @@ CVulkanTexture::~CVulkanTexture( void )
 		m_linearView = VK_NULL_HANDLE;
 	}
 
-	if ( m_FBID != 0 )
-	{
-		GetBackend()->DropBackendFb( m_FBID );
-		m_FBID = 0;
-	}
-
+	if ( m_pBackendFb != nullptr )
+		m_pBackendFb = nullptr;
 
 	if ( m_vkImageMemory != VK_NULL_HANDLE )
 	{
@@ -2799,14 +2805,14 @@ void vulkan_present_to_window( void )
 		vulkan_remake_swapchain();
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
+gamescope::Rc<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
 {
 	CVulkanTexture::createFlags flags;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 	flags.imageType = VK_IMAGE_TYPE_1D;
 
-	auto texture = std::make_shared<CVulkanTexture>();
+	auto texture = new CVulkanTexture();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
 	bool bRes = texture->BInit( size, 1u, 1u, drmFormat, flags );
 	assert( bRes );
@@ -2814,14 +2820,14 @@ std::shared_ptr<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)
 	return texture;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth)
+gamescope::Rc<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t height, uint32_t depth)
 {
 	CVulkanTexture::createFlags flags;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 	flags.imageType = VK_IMAGE_TYPE_3D;
 
-	auto texture = std::make_shared<CVulkanTexture>();
+	auto texture = new CVulkanTexture();
 	auto drmFormat = VulkanFormatToDRM( VK_FORMAT_R16G16B16A16_UNORM );
 	bool bRes = texture->BInit( width, height, depth, drmFormat, flags );
 	assert( bRes );
@@ -2829,7 +2835,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t he
 	return texture;
 }
 
-void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std::shared_ptr<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data)
+void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamescope::Rc<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data)
 {
 	size_t lut1d_size = lut1d->width() * sizeof(uint16_t) * 4;
 	size_t lut3d_size = lut3d->width() * lut3d->height() * lut3d->depth() * sizeof(uint16_t) * 4;
@@ -2848,35 +2854,46 @@ void vulkan_update_luts(const std::shared_ptr<CVulkanTexture>& lut1d, const std:
 	g_device.waitIdle(); // TODO: Sync this better
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_get_hacky_blank_texture()
+gamescope::Rc<CVulkanTexture> vulkan_get_hacky_blank_texture()
 {
-	return g_output.temporaryHackyBlankImage;
+	return g_output.temporaryHackyBlankImage.get();
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_debug_blank_texture()
+gamescope::OwningRc<CVulkanTexture> vulkan_create_flat_texture( uint32_t width, uint32_t height, uint8_t r, uint8_t g, uint8_t b, uint8_t a )
 {
 	CVulkanTexture::createFlags flags;
 	flags.bFlippable = true;
 	flags.bSampled = true;
 	flags.bTransferDst = true;
 
-	// To match Steam's scaling, which is capped at 1080p
-	int width = std::min<int>( g_nOutputWidth, 1920 );
-	int height = std::min<int>( g_nOutputHeight, 1080 );
-
-	auto texture = std::make_shared<CVulkanTexture>();
+	gamescope::OwningRc<CVulkanTexture> texture = new CVulkanTexture();
 	bool bRes = texture->BInit( width, height, 1u, VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM ), flags );
 	assert( bRes );
 
-	void* dst = g_device.uploadBufferData( width * height * 4 );
-	memset( dst, 0x0, width * height * 4 );
+	uint8_t* dst = (uint8_t *)g_device.uploadBufferData( width * height * 4 );
+	for ( uint32_t i = 0; i < width * height * 4; i += 4 )
+	{
+		dst[i + 0] = b;
+		dst[i + 1] = g;
+		dst[i + 2] = r;
+		dst[i + 3] = a;
+	}
 
 	auto cmdBuffer = g_device.commandBuffer();
-	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture);
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, texture.get());
 	g_device.submit(std::move(cmdBuffer));
 	g_device.waitIdle();
 
 	return texture;
+}
+
+gamescope::OwningRc<CVulkanTexture> vulkan_create_debug_blank_texture()
+{
+	// To match Steam's scaling, which is capped at 1080p
+	int width = std::min<int>( g_nOutputWidth, 1920 );
+	int height = std::min<int>( g_nOutputHeight, 1080 );
+
+	return vulkan_create_flat_texture( width, height, 0, 0, 0, 0 );
 }
 
 bool vulkan_supports_hdr10()
@@ -2981,7 +2998,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 	for ( uint32_t i = 0; i < pOutput->outputImages.size(); i++ )
 	{
-		pOutput->outputImages[i] = std::make_shared<CVulkanTexture>();
+		pOutput->outputImages[i] = new CVulkanTexture();
 
 		if ( !pOutput->outputImages[i]->BInitFromSwapchain(swapchainImages[i], g_nOutputWidth, g_nOutputHeight, pOutput->outputFormat))
 			return false;
@@ -3042,7 +3059,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 
 	VkFormat format = pOutput->outputFormat;
 
-	pOutput->outputImages[0] = std::make_shared<CVulkanTexture>();
+	pOutput->outputImages[0] = new CVulkanTexture();
 	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
 	if ( bSuccess != true )
 	{
@@ -3050,7 +3067,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		return false;
 	}
 
-	pOutput->outputImages[1] = std::make_shared<CVulkanTexture>();
+	pOutput->outputImages[1] = new CVulkanTexture();
 	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
 	if ( bSuccess != true )
 	{
@@ -3058,7 +3075,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 		return false;
 	}
 
-	pOutput->outputImages[2] = std::make_shared<CVulkanTexture>();
+	pOutput->outputImages[2] = new CVulkanTexture();
 	bSuccess = pOutput->outputImages[2]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
 	if ( bSuccess != true )
 	{
@@ -3073,7 +3090,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	{
 		VkFormat partialFormat = pOutput->outputFormatOverlay;
 
-		pOutput->outputImagesPartialOverlay[0] = std::make_shared<CVulkanTexture>();
+		pOutput->outputImagesPartialOverlay[0] = new CVulkanTexture();
 		bool bSuccess = pOutput->outputImagesPartialOverlay[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(partialFormat), outputImageflags, nullptr, 0, 0, pOutput->outputImages[0].get() );
 		if ( bSuccess != true )
 		{
@@ -3081,7 +3098,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 			return false;
 		}
 
-		pOutput->outputImagesPartialOverlay[1] = std::make_shared<CVulkanTexture>();
+		pOutput->outputImagesPartialOverlay[1] = new CVulkanTexture();
 		bSuccess = pOutput->outputImagesPartialOverlay[1]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(partialFormat), outputImageflags, nullptr, 0, 0, pOutput->outputImages[1].get() );
 		if ( bSuccess != true )
 		{
@@ -3089,7 +3106,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 			return false;
 		}
 
-		pOutput->outputImagesPartialOverlay[2] = std::make_shared<CVulkanTexture>();
+		pOutput->outputImagesPartialOverlay[2] = new CVulkanTexture();
 		bSuccess = pOutput->outputImagesPartialOverlay[2]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(partialFormat), outputImageflags, nullptr, 0, 0, pOutput->outputImages[2].get() );
 		if ( bSuccess != true )
 		{
@@ -3210,7 +3227,7 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 	createFlags.bSampled = true;
 	createFlags.bStorage = true;
 
-	g_output.tmpOutput = std::make_shared<CVulkanTexture>();
+	g_output.tmpOutput = new CVulkanTexture();
 	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
 
 	if ( !bSuccess )
@@ -3301,9 +3318,9 @@ bool vulkan_init( VkInstance instance, VkSurfaceKHR surface )
 	return true;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA )
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dmabuf_attributes *pDMA, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb )
 {
-	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
+	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
@@ -3311,15 +3328,15 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wlr_dm
 	//fprintf(stderr, "pDMA->width: %d pDMA->height: %d pDMA->format: 0x%x pDMA->modifier: 0x%lx pDMA->n_planes: %d\n",
 	//	pDMA->width, pDMA->height, pDMA->format, pDMA->modifier, pDMA->n_planes);
 	
-	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA ) == false )
+	if ( pTex->BInit( pDMA->width, pDMA->height, 1u, pDMA->format, texCreateFlags, pDMA, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 	
 	return pTex;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
 {
-	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
+	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
@@ -3332,7 +3349,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width,
 
 	auto cmdBuffer = g_device.commandBuffer();
 
-	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex);
+	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex.get());
 	// TODO: Sync this copyBufferToImage.
 
 	g_device.submit(std::move(cmdBuffer));
@@ -3348,13 +3365,13 @@ void vulkan_garbage_collect( void )
 	g_device.garbageCollect();
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
+gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace)
 {
 	for (auto& pScreenshotImage : g_output.pScreenshotImages)
 	{
 		if (pScreenshotImage == nullptr)
 		{
-			pScreenshotImage = std::make_shared<CVulkanTexture>();
+			pScreenshotImage = new CVulkanTexture();
 
 			CVulkanTexture::createFlags screenshotImageFlags;
 			screenshotImageFlags.bMappable = true;
@@ -3371,13 +3388,13 @@ std::shared_ptr<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width
 			assert( bSuccess );
 		}
 
-		if (pScreenshotImage.use_count() > 1 ||
+		if (pScreenshotImage->GetRefCount() != 0 ||
 			width != pScreenshotImage->width() ||
 			height != pScreenshotImage->height() ||
 			drmFormat != pScreenshotImage->drmFormat())
 			continue;
 
-		return pScreenshotImage;
+		return pScreenshotImage.get();
 	}
 
 	vk_log.errorf("Unable to acquire screenshot texture. Out of textures.");
@@ -3626,7 +3643,7 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 	}
 }
 
-std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pScreenshotTexture )
+std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
@@ -3646,6 +3663,37 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 
 	cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
 
+	if ( pYUVOutTexture != nullptr )
+	{
+		float scale = (float)pScreenshotTexture->width() / pYUVOutTexture->width();
+
+		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pScreenshotTexture->streamColorspace() ) );
+		constants.halfExtent[0] = pYUVOutTexture->width() / 2.0f;
+		constants.halfExtent[1] = pYUVOutTexture->height() / 2.0f;
+		cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
+
+		for (uint32_t i = 0; i < EOTF_Count; i++)
+			cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
+
+		cmdBuffer->bindPipeline(g_device.pipeline( SHADER_TYPE_RGB_TO_NV12, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
+		cmdBuffer->bindTexture(0, pScreenshotTexture);
+		cmdBuffer->setTextureSrgb(0, true);
+		cmdBuffer->setSamplerNearest(0, false);
+		cmdBuffer->setSamplerUnnormalized(0, true);
+		for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
+		{
+			cmdBuffer->bindTexture(i, nullptr);
+		}
+		cmdBuffer->bindTarget(pYUVOutTexture);
+
+		const int pixelsPerGroup = 8;
+
+		// For ycbcr, we operate on 2 pixels at a time, so use the half-extent.
+		const int dispatchSize = pixelsPerGroup * 2;
+
+		cmdBuffer->dispatch(div_roundup(pYUVOutTexture->width(), dispatchSize), div_roundup(pYUVOutTexture->height(), dispatchSize));
+	}
+
 	uint64_t sequence = g_device.submit(std::move(cmdBuffer));
 	return sequence;
 }
@@ -3653,7 +3701,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::shared_ptr<CVulkanTexture> pPipewireTexture, bool partial, std::shared_ptr<CVulkanTexture> pOutputOverride, bool increment )
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
@@ -3686,7 +3734,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		g_reshadeManager.clear();
 	}
 
-	std::shared_ptr<CVulkanTexture> compositeImage;
+	gamescope::Rc<CVulkanTexture> compositeImage;
 	if ( pOutputOverride )
 		compositeImage = pOutputOverride;
 	else
@@ -3766,7 +3814,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, std::sh
 		nisFrameInfo.layers[0].scale.x = 1.0f;
 		nisFrameInfo.layers[0].scale.y = 1.0f;
 
-		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask()));
+		cmdBuffer->bindPipeline( g_device.pipeline(SHADER_TYPE_BLIT, nisFrameInfo.layerCount, nisFrameInfo.ycbcrMask(), 0u, nisFrameInfo.colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), &nisFrameInfo);
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<BlitPushData_t>(&nisFrameInfo);
@@ -3888,7 +3936,7 @@ void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 	return g_device.wait( ulSeqNo, bReset );
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
+gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer )
 {
 	// Get previous image ( +2 )
 	// 1 2 3
@@ -3990,13 +4038,13 @@ struct wlr_renderer *vulkan_renderer_create( void )
 	return &renderer->base;
 }
 
-std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf )
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb )
 {
 
 	struct wlr_dmabuf_attributes dmabuf = {0};
 	if ( wlr_buffer_get_dmabuf( buf, &dmabuf ) )
 	{
-		return vulkan_create_texture_from_dmabuf( &dmabuf );
+		return vulkan_create_texture_from_dmabuf( &dmabuf, pBackendFb );
 	}
 
 	VkResult result;
@@ -4006,7 +4054,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	size_t stride;
 	if ( !wlr_buffer_begin_data_ptr_access( buf, WLR_BUFFER_DATA_PTR_ACCESS_READ, &src, &drmFormat, &stride ) )
 	{
-		return 0;
+		return nullptr;
 	}
 
 	uint32_t width = buf->width;
@@ -4022,7 +4070,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
-		return 0;
+		return nullptr;
 	}
 
 	VkMemoryRequirements memRequirements;
@@ -4032,7 +4080,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	if ( memTypeIndex == ~0u )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
-		return 0;
+		return nullptr;
 	}
 
 	VkMemoryAllocateInfo allocInfo = {
@@ -4046,14 +4094,14 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
-		return 0;
+		return nullptr;
 	}
 
 	result = g_device.vk.BindBufferMemory( g_device.device(), buffer, bufferMemory, 0 );
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
-		return 0;
+		return nullptr;
 	}
 
 	void *dst;
@@ -4061,7 +4109,7 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 	if ( result != VK_SUCCESS )
 	{
 		wlr_buffer_end_data_ptr_access( buf );
-		return 0;
+		return nullptr;
 	}
 
 	memcpy( dst, src, stride * height );
@@ -4070,11 +4118,11 @@ std::shared_ptr<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wl
 
 	wlr_buffer_end_data_ptr_access( buf );
 
-	std::shared_ptr<CVulkanTexture> pTex = std::make_shared<CVulkanTexture>();
+	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
-	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags ) == false )
+	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 
 	auto cmdBuffer = g_device.commandBuffer();

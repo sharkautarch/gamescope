@@ -111,7 +111,7 @@ namespace gamescope
     class CFunctionWaitable final : public IWaitable
     {
     public:
-        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc )
+        CFunctionWaitable( int nFD, std::function<void()> fnPollFunc = nullptr )
             : m_nFD{ nFD }
             , m_fnPollFunc{ fnPollFunc }
         {
@@ -119,7 +119,8 @@ namespace gamescope
 
         void OnPollIn() final
         {
-            m_fnPollFunc();
+            if ( m_fnPollFunc )
+                m_fnPollFunc();
         }
 
         void Drain()
@@ -260,7 +261,7 @@ namespace gamescope
             epoll_ctl( m_nEpollFD, EPOLL_CTL_DEL, pWaitable->GetFD(), nullptr );
         }
 
-        void PollEvents( int nTimeOut = -1 )
+        int PollEvents( int nTimeOut = -1 )
         {
             epoll_event events[MaxEvents];
 
@@ -269,15 +270,15 @@ namespace gamescope
                 int nEventCount = epoll_wait( m_nEpollFD, events, MaxEvents, nTimeOut );
 
                 if ( !m_bRunning )
-                    return;
+                    return 0;
 
                 if ( nEventCount < 0 )
                 {
-                    if ( errno == EAGAIN )
+                    if ( errno == EAGAIN || errno == EINTR )
                         continue;
 
                     g_WaitableLog.errorf_errno( "Failed to epoll_wait in CAsyncWaiter" );
-                    return;
+                    return nEventCount;
                 }
 
                 for ( int i = 0; i < nEventCount; i++ )
@@ -288,7 +289,7 @@ namespace gamescope
                     pWaitable->HandleEvents( event.events );
                 }
 
-                return;
+                return nEventCount;
             }
         }
 
@@ -309,14 +310,80 @@ namespace gamescope
         int m_nEpollFD = -1;
     };
 
-    template <typename GCWaitableType = IWaitable*, size_t MaxEvents = 1024>
-    class CAsyncWaiter : public CWaiter<MaxEvents>
+    // A raw pointer class that's compatible with shared/unique_ptr + Rc semantics
+    // eg. .get(), etc.
+    // for compatibility with structures that use other types that assume ownership/lifetime
+    // in some way.
+    template <typename T>
+    class CRawPointer
+    {
+    public:
+        CRawPointer() {}
+        CRawPointer( std::nullptr_t ) {}
+
+        CRawPointer( const CRawPointer &other )
+            : m_pObject{ other.m_pObject }
+        {
+        }
+
+        CRawPointer( CRawPointer&& other )
+            : m_pObject{ other.m_pObject }
+        {
+            other.m_pObject = nullptr;
+        }
+
+        CRawPointer( T* pObject )
+            : m_pObject{ pObject }
+        {
+        }
+
+        CRawPointer& operator = ( std::nullptr_t )
+        {
+            m_pObject = nullptr;
+            return *this;
+        }
+
+        CRawPointer& operator = ( const CRawPointer& other )
+        {
+            m_pObject = other.m_pObject;
+            return *this;
+        }
+
+        CRawPointer& operator = ( CRawPointer&& other )
+        {
+            this->m_pObject = other.m_pObject;
+            other.m_pObject = nullptr;
+            return *this;
+        }
+
+        T& operator *  () const { return *m_pObject; }
+        T* operator -> () const { return  m_pObject; }
+        T* get() const { return m_pObject; }
+
+        bool operator == ( const CRawPointer& other ) const { return m_pObject == other.m_pObject; }
+        bool operator != ( const CRawPointer& other ) const { return m_pObject != other.m_pObject; }
+
+        bool operator == ( T *pOther ) const { return m_pObject == pOther; }
+        bool operator != ( T *pOther ) const { return m_pObject == pOther; }
+
+        bool operator == ( std::nullptr_t ) const { return m_pObject == nullptr; }
+        bool operator != ( std::nullptr_t ) const { return m_pObject != nullptr; }
+    private:
+        T* m_pObject = nullptr;
+    };
+
+    template <typename WaitableType = CRawPointer<IWaitable>, size_t MaxEvents = 1024>
+    class CAsyncWaiter : private CWaiter<MaxEvents>
     {
     public:
         CAsyncWaiter( const char *pszThreadName )
             : m_Thread{ [cWaiter = this, cName = pszThreadName](){ cWaiter->WaiterThreadFunc(cName); } }
         {
-            m_WaitableGarbageCollector.reserve( 32 );
+            if constexpr ( UseTracking() )
+            {
+                m_AddedWaitables.reserve( 32 );
+                m_RemovedWaitables.reserve( 32 );
+            }
         }
 
         ~CAsyncWaiter()
@@ -331,18 +398,53 @@ namespace gamescope
             if ( m_Thread.joinable() )
                 m_Thread.join();
 
-            std::unique_lock lock( m_WaitableGCMutex );
-            m_WaitableGarbageCollector.clear();
+            if constexpr ( UseTracking() )
+            {
+                {
+                    std::unique_lock lock( m_AddedWaitablesMutex );
+                    m_AddedWaitables.clear();
+                }
+
+                {
+                    std::unique_lock lock( m_RemovedWaitablesMutex );
+                    m_RemovedWaitables.clear();
+                }
+            }
         }
 
-        void GCWaitable( GCWaitableType GCWaitable, IWaitable *pWaitable )
+        bool AddWaitable( WaitableType pWaitable, uint32_t nEvents = EPOLLIN | EPOLLHUP )
         {
-            std::unique_lock lock( m_WaitableGCMutex );
+            if constexpr ( UseTracking() )
+            {
+                if ( !pWaitable->HasLiveReferences() )
+                    return false;
 
-            m_WaitableGarbageCollector.emplace_back( std::move( GCWaitable ) );
+                std::unique_lock lock( m_AddedWaitablesMutex );
 
-            this->RemoveWaitable( pWaitable );
-            this->Nudge();
+                if ( !CWaiter<MaxEvents>::AddWaitable( pWaitable.get(), nEvents ) )
+                    return false;
+
+                m_AddedWaitables.emplace_back( pWaitable );
+                return true;
+            }
+            else
+            {
+                return CWaiter<MaxEvents>::AddWaitable( pWaitable.get(), nEvents );
+            }
+        }
+
+        void RemoveWaitable( WaitableType pWaitable )
+        {
+            if constexpr ( UseTracking() )
+            {
+                if ( !pWaitable->HasLiveReferences() )
+                    return;
+
+                std::unique_lock lock( m_RemovedWaitablesMutex );
+                m_RemovedWaitables.emplace_back( pWaitable.get() );
+            }
+
+            CWaiter<MaxEvents>::RemoveWaitable( pWaitable.get() );
         }
 
         void WaiterThreadFunc( const char *pszThreadName )
@@ -353,19 +455,32 @@ namespace gamescope
             {
                 CWaiter<MaxEvents>::PollEvents();
 
-                std::unique_lock lock( m_WaitableGCMutex );
-                m_WaitableGarbageCollector.clear();
+                if constexpr ( UseTracking() )
+                {
+                    std::scoped_lock lock( m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
+                    for ( auto& pRemoved : m_RemovedWaitables )
+                        std::erase( m_AddedWaitables, pRemoved );
+                    m_RemovedWaitables.clear();
+                }
             }
         }
     private:
+        static constexpr bool UseTracking()
+        {
+            return !std::is_same<WaitableType, CRawPointer<IWaitable>>::value;
+        }
+
         std::thread m_Thread;
 
         // Avoids bubble in the waiter thread func where lifetimes
         // of objects (eg. shared_ptr) could be too short.
         // Eg. RemoveWaitable but still processing events, or about
         // to start processing events.
-        std::mutex m_WaitableGCMutex;
-        std::vector<GCWaitableType> m_WaitableGarbageCollector;
+        std::mutex m_AddedWaitablesMutex;
+        std::vector<WaitableType> m_AddedWaitables;
+
+        std::mutex m_RemovedWaitablesMutex;        
+        std::vector<WaitableType> m_RemovedWaitables;
     };
 
 

@@ -12,6 +12,10 @@
 #include <functional>
 #include <cassert>
 
+#include "log.hpp"
+
+extern LogScope console_log;
+
 namespace gamescope
 {
     class ConCommand;
@@ -38,6 +42,22 @@ namespace gamescope
             return true;
         else
             return false;
+    }
+
+    inline std::vector<std::string_view> Split( std::string_view string, std::string_view delims = " " )
+    {
+        std::vector<std::string_view> tokens;
+        
+        size_t end = 0;
+        for ( size_t start = 0; start < string.size() && end != std::string_view::npos; start = end + 1 )
+        {
+            end = string.find_first_of( delims, start );
+
+            if ( start != end )
+                tokens.emplace_back( string.substr( start, end-start ) );
+        }
+
+        return tokens;
     }
 
     struct StringHash
@@ -75,6 +95,11 @@ namespace gamescope
             if ( m_Func )
                 m_Func( args );
         }
+
+        static bool Exec( std::span<std::string_view> args );
+
+        std::string_view GetName() const { return m_pszName; }
+        std::string_view GetDescription() const { return m_pszDescription; }
 
         static Dict<ConCommand *>& GetCommands();
     protected:
@@ -122,12 +147,23 @@ namespace gamescope
         template <typename J> bool operator != ( const J &other ) const { return m_Value !=  other; }
         template <typename J> bool operator <=>( const J &other ) const { return m_Value <=> other; }
 
+        T  operator | (T other) { return m_Value | other; }
+        T &operator |=(T other) { return m_Value |= other; }
+        T  operator & (T other) { return m_Value & other; }
+        T &operator &=(T other) { return m_Value &= other; }
+
         void InvokeFunc( std::span<std::string_view> pArgs )
         {
             if ( pArgs.size() != 2 )
                 return;
 
-            if constexpr ( std::is_integral<T>::value )
+            if constexpr ( std::is_enum<T>::value )
+            {
+                using Underlying = std::underlying_type<T>::type;
+                std::optional<Underlying> oResult = Parse<Underlying>( pArgs[1] );
+                SetValue( oResult ? static_cast<T>( *oResult ) : T{} );
+            }
+            else if constexpr ( std::is_integral<T>::value )
             {
                 std::optional<T> oResult = Parse<T>( pArgs[1] );
                 SetValue( oResult ? *oResult : T{} );

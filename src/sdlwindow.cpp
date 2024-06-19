@@ -18,6 +18,7 @@
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
 #include "defer.hpp"
+#include "refresh_rate.h"
 
 #include "sdlscancodetable.hpp"
 
@@ -27,7 +28,6 @@ static bool g_bWindowFocused = true;
 static int g_nOutputWidthPts = 0;
 static int g_nOutputHeightPts = 0;
 
-extern const char *g_pOriginalDisplay;
 extern bool g_bForceHDR10OutputDebug;
 extern bool steamMode;
 extern bool g_bFirstFrame;
@@ -36,6 +36,8 @@ extern int g_nPreferredOutputHeight;
 
 namespace gamescope
 {
+	extern std::shared_ptr<INestedHints::CursorInfo> GetX11HostCursor();
+
 	enum class SDLInitState
 	{
 		SDLInit_Waiting,
@@ -129,10 +131,7 @@ namespace gamescope
 
 		virtual std::shared_ptr<BackendBlob> CreateBackendBlob( const std::type_info &type, std::span<const uint8_t> data ) override;
 
-        virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
-        virtual void LockBackendFb( uint32_t uFbId ) override;
-        virtual void UnlockBackendFb( uint32_t uFbId ) override;
-        virtual void DropBackendFb( uint32_t uFbId ) override;
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override;
 		virtual bool UsesModifiers() const override;
 		virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const override;
 
@@ -146,6 +145,7 @@ namespace gamescope
 		virtual bool UsesVulkanSwapchain() const override;
 
 		virtual bool IsSessionBased() const override;
+		virtual bool SupportsExplicitSync() const override;
 
 		virtual bool IsVisible() const override;
 
@@ -162,7 +162,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) override;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
-		virtual std::optional<INestedHints::CursorInfo> GetHostCursor() override;
+		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
 	protected:
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 	private:
@@ -221,7 +221,7 @@ namespace gamescope
 		if ( g_nOutputWidth == 0 )
 			g_nOutputWidth = g_nOutputHeight * 16 / 9;
 		if ( g_nOutputRefresh == 0 )
-			g_nOutputRefresh = 60;
+			g_nOutputRefresh = gamescope::ConvertHztomHz( 60 );
 
 		uint32_t uSDLWindowFlags = SDL_WINDOW_VULKAN | SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIDDEN | SDL_WINDOW_ALLOW_HIGHDPI;
 
@@ -395,21 +395,9 @@ namespace gamescope
 		return std::make_shared<BackendBlob>( data );
 	}
 
-	uint32_t CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
+	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
 	{
-		return 0;
-	}
-	void CSDLBackend::LockBackendFb( uint32_t uFbId )
-	{
-		abort();
-	}
-	void CSDLBackend::UnlockBackendFb( uint32_t uFbId )
-	{
-		abort();
-	}
-	void CSDLBackend::DropBackendFb( uint32_t uFbId )
-	{
-		abort();
+		return nullptr;
 	}
 
 	bool CSDLBackend::UsesModifiers() const
@@ -458,6 +446,12 @@ namespace gamescope
 		return false;
 	}
 
+	bool CSDLBackend::SupportsExplicitSync() const
+	{
+		// We use a Vulkan swapchain, so yes.
+		return true;
+	}
+
 	bool CSDLBackend::IsVisible() const
 	{
 		return true;
@@ -503,47 +497,9 @@ namespace gamescope
 		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
 	}
 
-	std::optional<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
+	std::shared_ptr<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
 	{
-		if ( !g_pOriginalDisplay )
-			return std::nullopt;
-
-		Display *display = XOpenDisplay( g_pOriginalDisplay );
-		if ( !display )
-			return std::nullopt;
-		defer( XCloseDisplay( display ) );
-
-		int xfixes_event, xfixes_error;
-		if ( !XFixesQueryExtension( display, &xfixes_event, &xfixes_error ) )
-		{
-			xwm_log.errorf("No XFixes extension on current compositor");
-			return std::nullopt;
-		}
-
-		XFixesCursorImage *image = XFixesGetCursorImage( display );
-		if ( !image )
-			return std::nullopt;
-		defer( XFree( image ) );
-
-		// image->pixels is `unsigned long*` :/
-		// Thanks X11.
-		std::vector<uint32_t> cursorData = std::vector<uint32_t>( image->width * image->height );
-		for (uint32_t y = 0; y < image->height; y++)
-		{
-			for (uint32_t x = 0; x < image->width; x++)
-			{
-				cursorData[y * image->width + x] = static_cast<uint32_t>( image->pixels[image->height * y + x] );
-			}
-		}
-
-		return CursorInfo
-		{
-			.pPixels   = std::move( cursorData ),
-			.uWidth    = image->width,
-			.uHeight   = image->height,
-			.uXHotspot = image->xhot,
-			.uYHotspot = image->yhot,
-		};
+		return GetX11HostCursor();
 	}
 
 	void CSDLBackend::OnBackendBlobDestroyed( BackendBlob *pBlob )
@@ -828,7 +784,7 @@ namespace gamescope
 								display_index = SDL_GetWindowDisplayIndex( m_Connector.GetSDLWindow() );
 								if ( SDL_GetDesktopDisplayMode( display_index, &mode ) == 0 )
 								{
-									g_nOutputRefresh = mode.refresh_rate;
+									g_nOutputRefresh = ConvertHztomHz( mode.refresh_rate );
 								}
 							}
 							break;

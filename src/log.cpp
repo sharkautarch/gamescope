@@ -3,8 +3,9 @@
 #include <errno.h>
 #include <string.h>
 
-#include <string>
+#include <memory>
 
+#include "defer.hpp"
 #include "log.hpp"
 
 LogScope::LogScope(const char *name) {
@@ -25,9 +26,17 @@ void LogScope::vlogf(enum LogPriority priority, const char *fmt, va_list args) {
 	if (!this->has(priority)) {
 		return;
 	}
-	fprintf(stderr, "%s: ", this->name);
-	vfprintf(stderr, fmt, args);
-	fprintf(stderr, "\n");
+
+	char *buf = nullptr;
+	vasprintf(&buf, fmt, args);
+	if (!buf)
+		return;
+	defer( free(buf); );
+
+	for (auto& listener : m_LoggingListeners)
+		listener.second( priority, this->name, buf );
+
+	fprintf(stderr, "%s: %s\n", this->name, buf);
 }
 
 void LogScope::logf(enum LogPriority priority, const char *fmt, ...) {

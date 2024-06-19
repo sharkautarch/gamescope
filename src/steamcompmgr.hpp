@@ -65,9 +65,6 @@ public:
 	int x() const;
 	int y() const;
 
-	void move(int x, int y);
-	void constrainPosition();
-
 	void paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, FrameInfo_t *frameInfo);
 	void setDirty();
 
@@ -75,17 +72,18 @@ public:
 	bool setCursorImage(char *data, int w, int h, int hx, int hy);
 	bool setCursorImageByName(const char *name);
 
-	void hide() { m_lastMovedTime = 0; checkSuspension(); }
-
-	bool isHidden() { return m_hideForMovement || m_imageEmpty; }
-	bool imageEmpty() const { return m_imageEmpty; }
-
-	void forcePosition(int x, int y)
+	void hide()
 	{
-		warp(x, y);
-		m_x = x;
-		m_y = y;
+		wlserver_lock();
+		wlserver_mousehide();
+		wlserver_unlock( false );
+		checkSuspension();
 	}
+
+	void UpdatePosition();
+
+	bool isHidden() { return wlserver.bCursorHidden || m_imageEmpty; }
+	bool imageEmpty() const { return m_imageEmpty; }
 
 	void undirty() { getTexture(); }
 
@@ -96,12 +94,8 @@ public:
 
 	void GetDesiredSize( int& nWidth, int &nHeight );
 
-	void UpdateXInputMotionMasks();
-	void UpdatePosition();
-
 	void checkSuspension();
 private:
-	void warp(int x, int y);
 
 	bool getTexture();
 
@@ -110,21 +104,11 @@ private:
 	int m_x = 0, m_y = 0;
 	int m_hotspotX = 0, m_hotspotY = 0;
 
-	std::shared_ptr<CVulkanTexture> m_texture;
+	gamescope::OwningRc<CVulkanTexture> m_texture;
 	bool m_dirty;
 	bool m_imageEmpty;
 
-	unsigned int m_lastMovedTime = 0;
-	bool m_hideForMovement;
-
-	bool m_bMotionMaskEnabled = false;
-
-	CursorBarrier m_barriers[4] = {};
-
 	xwayland_ctx_t *m_ctx;
-
-	int m_lastX = 0;
-	int m_lastY = 0;
 
 	bool m_bCursorVisibleFeedback = false;
 	bool m_needs_server_flush = false;
@@ -166,4 +150,4 @@ MouseCursor *steamcompmgr_get_server_cursor(uint32_t serverId);
 
 extern int g_nAsyncFlipsEnabled;
 
-extern void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps );
+extern void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType type, int override_fps, bool change_refresh, bool change_fps_cap );

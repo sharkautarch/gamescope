@@ -22,9 +22,11 @@
 #include "steamcompmgr.hpp"
 #include "rendervulkan.hpp"
 #include "wlserver.hpp"
+#include "convar.h"
 #include "gpuvis_trace_utils.h"
 
 #include "backends.h"
+#include "refresh_rate.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -59,8 +61,9 @@ const struct option *gamescope_options = (struct option[]){
 	{ "prefer-vk-device", required_argument, 0 },
 	{ "expose-wayland", no_argument, 0 },
 	{ "mouse-sensitivity", required_argument, nullptr, 's' },
+	{ "mangoapp", no_argument, nullptr, 0 },
 
-	{ "headless", no_argument, 0 },
+	{ "backend", required_argument, nullptr, 0 },
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -82,7 +85,6 @@ const struct option *gamescope_options = (struct option[]){
 
 	// openvr options
 #if HAVE_OPENVR
-	{ "openvr", no_argument, nullptr, 0 },
 	{ "vr-overlay-key", required_argument, nullptr, 0 },
 	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
@@ -158,7 +160,19 @@ const char usage[] =
 	"  --sharpness, --fsr-sharpness   upscaler sharpness from 0 (max) to 20 (min)\n"
 	"  --expose-wayland               support wayland clients using xdg-shell\n"
 	"  -s, --mouse-sensitivity        multiply mouse movement by given decimal number\n"
-	"  --headless                     use headless backend (no window, no DRM output)\n"
+	"  --backend                      select rendering backend\n"
+	"                                     auto => autodetect (default)\n"
+#if HAVE_DRM
+	"                                     drm => use DRM backend (standalone display session)\n"
+#endif
+#if HAVE_SDL2
+	"                                     sdl => use SDL backend\n"
+#endif
+#if HAVE_OPENVR
+	"                                     openvr => use OpenVR backend (outputs as a VR overlay)\n"
+#endif
+	"                                     headless => use headless backend (no window, no DRM output)\n"
+	"                                     wayland => use Wayland backend\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
@@ -180,6 +194,7 @@ const char usage[] =
 	"  --hdr-itm-target-nits          set the target luminace of the inverse tone mapping process.\n"
 	"                                 Default: 1000 nits, Max: 10000 nits\n"
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
+	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -198,7 +213,6 @@ const char usage[] =
 	"\n"
 #if HAVE_OPENVR
 	"VR mode options:\n"
-	"  --openvr                                 Uses the openvr backend and outputs as a VR overlay\n"
 	"  --vr-overlay-key                         Sets the SteamVR overlay key to this string\n"
 	"  --vr-overlay-explicit-name               Force the SteamVR overlay name to always be this string\n"
 	"  --vr-overlay-default-name                Sets the fallback SteamVR overlay name when there is no window title\n"
@@ -385,8 +399,35 @@ static enum GamescopeUpscaleFilter parse_upscaler_filter(const char *str)
 	}
 }
 
+static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
+{
+	if (strcmp(str, "auto") == 0) {
+		return gamescope::GamescopeBackend::Auto;
+#if HAVE_DRM
+	} else if (strcmp(str, "drm") == 0) {
+		return gamescope::GamescopeBackend::DRM;
+#endif
+#if HAVE_SDL2
+	} else if (strcmp(str, "sdl") == 0) {
+		return gamescope::GamescopeBackend::SDL;
+#endif
+#if HAVE_OPENVR
+	} else if (strcmp(str, "openvr") == 0) {
+		return gamescope::GamescopeBackend::OpenVR;
+#endif
+	} else if (strcmp(str, "headless") == 0) {
+		return gamescope::GamescopeBackend::Headless;
+	} else if (strcmp(str, "wayland") == 0) {
+		return gamescope::GamescopeBackend::Wayland;
+	} else {
+		fprintf( stderr, "gamescope: invalid value for --backend\n" );
+		exit(1);
+	}
+}
+
 struct sigaction handle_signal_action = {};
-extern pid_t child_pid;
+extern std::mutex g_ChildPidMutex;
+extern std::vector<pid_t> g_ChildPids;
 
 static void handle_signal( int sig )
 {
@@ -398,10 +439,16 @@ static void handle_signal( int sig )
 	case SIGQUIT:
 	case SIGTERM:
 	case SIGINT:
-		if (child_pid != 0)
 		{
-			fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
-			kill(child_pid, sig);
+			std::unique_lock lock( g_ChildPidMutex );
+			for ( auto& child_pid : g_ChildPids )
+			{
+				if (child_pid != 0)
+				{
+					fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
+					kill(child_pid, sig);
+				}
+			}
 		}
 
 		fprintf( stderr, "gamescope: Received %s signal, attempting shutdown!\n", strsignal(sig) );
@@ -580,7 +627,7 @@ int main(int argc, char **argv)
 				g_nNestedHeight = atoi( optarg );
 				break;
 			case 'r':
-				g_nNestedRefresh = atoi( optarg );
+				g_nNestedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'W':
 				g_nPreferredOutputWidth = atoi( optarg );
@@ -589,7 +636,7 @@ int main(int argc, char **argv)
 				g_nPreferredOutputHeight = atoi( optarg );
 				break;
 			case 'o':
-				g_nNestedUnfocusedRefresh = atoi( optarg );
+				g_nNestedUnfocusedRefresh = gamescope::ConvertHztomHz( atoi( optarg ) );
 				break;
 			case 'm':
 				g_flMaxWindowScale = atof( optarg );
@@ -627,13 +674,12 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "xwayland-count") == 0) {
 					g_nXWaylandCount = atoi( optarg );
 				} else if (strcmp(opt_name, "composite-debug") == 0) {
-					g_uCompositeDebug |= CompositeDebugFlag::Markers;
-					g_uCompositeDebug |= CompositeDebugFlag::PlaneBorders;
+					cv_composite_debug |= CompositeDebugFlag::Markers;
+					cv_composite_debug |= CompositeDebugFlag::PlaneBorders;
 				} else if (strcmp(opt_name, "hdr-debug-heatmap") == 0) {
-					g_uCompositeDebug |= CompositeDebugFlag::Heatmap;
+					cv_composite_debug |= CompositeDebugFlag::Heatmap;
 				} else if (strcmp(opt_name, "default-touch-mode") == 0) {
-					g_nDefaultTouchClickMode = (enum wlserver_touch_click_mode) atoi( optarg );
-					g_nTouchClickMode = g_nDefaultTouchClickMode;
+					gamescope::cv_touch_click_mode = (gamescope::TouchClickMode) atoi( optarg );
 				} else if (strcmp(opt_name, "generate-drm-mode") == 0) {
 					g_eGamescopeModeGeneration = parse_gamescope_mode_generation( optarg );
 				} else if (strcmp(opt_name, "force-orientation") == 0) {
@@ -659,16 +705,11 @@ int main(int argc, char **argv)
 					g_bAllowVRR = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
-				} else if (strcmp(opt_name, "headless") == 0) {
-					eCurrentBackend = gamescope::GamescopeBackend::Headless;
+				} else if (strcmp(opt_name, "backend") == 0) {
+					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = atoi(optarg);
 				}
-#if HAVE_OPENVR
-				else if (strcmp(opt_name, "openvr") == 0) {
-					eCurrentBackend = gamescope::GamescopeBackend::OpenVR;
-				}
-#endif
 				break;
 			case '?':
 				fprintf( stderr, "See --help for a list of options.\n" );
@@ -751,7 +792,9 @@ int main(int argc, char **argv)
 
 	if ( eCurrentBackend == gamescope::GamescopeBackend::Auto )
 	{
-		if ( g_pOriginalDisplay != NULL || g_pOriginalWaylandDisplay != NULL )
+		if ( g_pOriginalWaylandDisplay != NULL )
+			eCurrentBackend = gamescope::GamescopeBackend::Wayland;
+		else if ( g_pOriginalDisplay != NULL )
 			eCurrentBackend = gamescope::GamescopeBackend::SDL;
 		else
 			eCurrentBackend = gamescope::GamescopeBackend::DRM;
@@ -795,6 +838,14 @@ int main(int argc, char **argv)
 #endif
 		case gamescope::GamescopeBackend::Headless:
 			gamescope::IBackend::Set<gamescope::CHeadlessBackend>();
+			break;
+
+		case gamescope::GamescopeBackend::Wayland:
+			gamescope::IBackend::Set<gamescope::CWaylandBackend>();
+#if HAVE_SDL2
+			if ( !GetBackend() )
+				gamescope::IBackend::Set<gamescope::CSDLBackend>();
+#endif
 			break;
 		default:
 			abort();

@@ -3,6 +3,8 @@
 #include "color_helpers.h"
 #include "gamescope_shared.h"
 #include "vulkan_include.h"
+#include "convar.h"
+#include "rc.h"
 
 #include <cassert>
 #include <span>
@@ -20,6 +22,21 @@ namespace gamescope
 {
     struct VBlankScheduleTime;
     class BackendBlob;
+
+    namespace TouchClickModes
+    {
+        enum TouchClickMode : uint32_t
+        {
+            Hover,
+            Left,
+            Right,
+            Middle,
+            Passthrough,
+            Disabled,
+            Trackpad,
+        };
+    }
+    using TouchClickMode = TouchClickModes::TouchClickMode;
 
     struct BackendConnectorHDRInfo
     {
@@ -109,7 +126,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) = 0;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
-        virtual std::optional<CursorInfo> GetHostCursor() = 0;
+        virtual std::shared_ptr<CursorInfo> GetHostCursor() = 0;
     };
 
     struct BackendPresentFeedback
@@ -123,6 +140,24 @@ namespace gamescope
 
         std::atomic<uint64_t> m_uQueuedPresents = { 0u };
         std::atomic<uint64_t> m_uCompletedPresents = { 0u };
+    };
+
+    class IBackendFb : public IRcObject
+    {
+        // Dummy
+    };
+
+    class CBaseBackendFb : public IBackendFb
+    {
+    public:
+        CBaseBackendFb( wlr_buffer *pClientBuffer );
+        virtual ~CBaseBackendFb();
+
+        uint32_t IncRef() override;
+        uint32_t DecRef() override;
+
+    private:
+        wlr_buffer *m_pClientBuffer = nullptr;
     };
 
     class IBackend
@@ -153,10 +188,10 @@ namespace gamescope
 
         // For DRM, this is
         // dmabuf -> fb_id.
-        virtual uint32_t ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) = 0;
-        virtual void LockBackendFb( uint32_t uFbId ) = 0;
-        virtual void UnlockBackendFb( uint32_t uFbId ) = 0;
-        virtual void DropBackendFb( uint32_t uFbId ) = 0;
+        //
+        // shared_ptr owns the structure.
+        // Rc manages acquire/release of buffer to/from client while imported.
+        virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) = 0;
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
@@ -172,6 +207,8 @@ namespace gamescope
 
         virtual bool UsesVulkanSwapchain() const = 0;
         virtual bool IsSessionBased() const = 0;
+
+        virtual bool SupportsExplicitSync() const = 0;
 
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
@@ -197,15 +234,18 @@ namespace gamescope
         // TODO: Make me const someday.
         virtual BackendPresentFeedback& PresentationFeedback() = 0;
 
+        virtual TouchClickMode GetTouchClickMode() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
+
+        static bool Set( IBackend *pBackend );
     protected:
         friend BackendBlob;
 
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) = 0;
     private:
-        static bool Set( IBackend *pBackend );
     };
 
 
@@ -221,6 +261,8 @@ namespace gamescope
         virtual VBlankScheduleTime FrameSync() override;
 
         virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
+
+        virtual TouchClickMode GetTouchClickMode() override;
     protected:
         BackendPresentFeedback m_PresentFeedback{};
     };
@@ -251,7 +293,11 @@ namespace gamescope
         ~BackendBlob()
         {
             if ( m_bOwned )
-                IBackend::Get()->OnBackendBlobDestroyed( this );
+            {
+                IBackend *pBackend = IBackend::Get();
+                if ( pBackend )
+                    pBackend->OnBackendBlobDestroyed( this );
+            }
         }
 
         // No copy constructor, because we can't duplicate the blob handle.
@@ -275,6 +321,8 @@ namespace gamescope
         uint32_t m_uBlob = 0;
         bool m_bOwned = false;
     };
+
+    extern ConVar<TouchClickMode> cv_touch_click_mode;
 }
 
 inline gamescope::IBackend *GetBackend()

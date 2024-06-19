@@ -4,6 +4,8 @@
 #include <string>
 #include <utility>
 
+#include <wlr/util/box.h>
+
 #include "xwayland_ctx.hpp"
 #include "gamescope-control-protocol.h"
 
@@ -48,7 +50,7 @@ struct wlserver_xdg_surface_info
 	}
 
 	// owned by wlserver
-	struct wlr_xdg_toplevel *xdg_toplevel = nullptr;
+	struct wlr_xdg_surface *xdg_surface = nullptr;
 	steamcompmgr_win_t *win = nullptr;
 
 	std::atomic<bool> mapped = { false };
@@ -89,7 +91,19 @@ struct steamcompmgr_xdg_win_t
 	uint32_t id;
 
 	struct wlserver_xdg_surface_info surface;
+	struct wlr_box geometry;
 };
+
+struct Rect
+{
+	int32_t nX;
+	int32_t nY;
+
+	int32_t nWidth;
+	int32_t nHeight;
+};
+
+extern focus_t g_steamcompmgr_xdg_focus;
 
 struct steamcompmgr_win_t {
 	unsigned int	opacity;
@@ -116,11 +130,11 @@ struct steamcompmgr_win_t {
 	unsigned int requestedHeight;
 	bool is_dialog;
 	bool maybe_a_dropdown;
+	bool outdatedInteractiveFocus = false;
 
 	bool hasHwndStyle;
 	uint32_t hwndStyle;
 	bool hasHwndStyleEx;
-	int ignoreNextClickForVisibility;
 	uint32_t hwndStyleEx;
 
 	motif_hints_t *motif_hints;
@@ -131,9 +145,7 @@ struct steamcompmgr_win_t {
 	bool unlockedForFrameCallback;
 	bool receivedDoneCommit;
 
-	unsigned int mouseMoved;
-
-	std::vector< std::shared_ptr<commit_t> > commit_queue;
+	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;
 
 	steamcompmgr_win_type_t		type;
@@ -146,6 +158,26 @@ struct steamcompmgr_win_t {
 
 	std::variant<steamcompmgr_xwayland_win_t, steamcompmgr_xdg_win_t>
 		_window_types;
+
+	focus_t *GetFocus() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return &xwayland().ctx->focus;
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return &g_steamcompmgr_xdg_focus;
+		else
+			return nullptr;
+	}
+
+	Rect GetGeometry() const
+	{
+		if (type == steamcompmgr_win_type_t::XWAYLAND)
+			return Rect{ xwayland().a.x, xwayland().a.y, xwayland().a.width, xwayland().a.height };
+		else if (type == steamcompmgr_win_type_t::XDG)
+			return Rect{ xdg().geometry.x, xdg().geometry.y, xdg().geometry.width, xdg().geometry.height };
+		else
+			return Rect{};
+	}
 
 	uint32_t id() const
 	{
@@ -192,6 +224,7 @@ namespace gamescope
 		gamescope_control_screenshot_type eScreenshotType = GAMESCOPE_CONTROL_SCREENSHOT_TYPE_BASE_PLANE_ONLY;
 		uint32_t uScreenshotFlags = 0;
 		bool bX11PropertyRequested = false;
+		bool bWaylandRequested = false;
 	};
 
 	class CScreenshotManager

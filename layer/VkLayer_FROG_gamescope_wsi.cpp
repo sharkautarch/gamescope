@@ -90,7 +90,7 @@ namespace GamescopeWSILayer {
     return atoi(appid);
   }
 
-  static GamescopeLayerClient::Flags defaultLayerClientFlags(uint32_t appid) {
+  static GamescopeLayerClient::Flags defaultLayerClientFlags(const VkApplicationInfo *pApplicationInfo, uint32_t appid) {
     GamescopeLayerClient::Flags flags = 0;
 
     const char *bypassEnv = getenv("GAMESCOPE_WSI_FORCE_BYPASS");
@@ -101,6 +101,19 @@ namespace GamescopeWSILayer {
     // but does not render as HDR at all.
     if (appid == 1600780)
       flags |= GamescopeLayerClient::Flag::DisableHDR;
+
+    const char *frameLimiterAwareEnv = getenv("GAMESCOPE_WSI_FRAME_LIMITER_AWARE");
+    if (frameLimiterAwareEnv && *frameLimiterAwareEnv) {
+      if (atoi(frameLimiterAwareEnv) != 0)
+        flags |= GamescopeLayerClient::Flag::FrameLimiterAware;
+    } else if (pApplicationInfo && pApplicationInfo->pEngineName) {
+      // This matches regular vkd3d, not just vkd3d-proton as well...
+      // Oh well... /shrug.
+      if ((pApplicationInfo->pEngineName == "vkd3d"sv && pApplicationInfo->engineVersion >= VK_MAKE_VERSION(2, 12, 0)) ||
+          (pApplicationInfo->pEngineName == "DXVK"sv  && pApplicationInfo->engineVersion >= VK_MAKE_VERSION(2, 3,  0))) {
+        flags |= GamescopeLayerClient::Flag::FrameLimiterAware;
+      }
+    }
 
     return flags;
   }
@@ -134,10 +147,51 @@ namespace GamescopeWSILayer {
     return overrideValue;
   }
 
+  static bool gamescopeIsForcingFifo() {
+    return gamescopeFrameLimiterOverride() == 1;
+  }
+
+  struct GamescopeWaylandObjects {
+    wl_compositor* compositor;
+    gamescope_swapchain_factory_v2* gamescopeSwapchainFactory;
+
+    static GamescopeWaylandObjects get(wl_display *display) {
+      wl_registry *registry = wl_display_get_registry(display);
+      if (!registry)
+        return {};
+      GamescopeWaylandObjects waylandObjects{};
+      wl_registry_add_listener(registry, &s_registryListener, reinterpret_cast<void *>(&waylandObjects));
+      // Dispatch then roundtrip to get registry info.
+      wl_display_dispatch(display);
+      wl_display_roundtrip(display);
+      wl_registry_destroy(registry);
+
+      return waylandObjects;
+    }
+
+    bool valid() const { return compositor && gamescopeSwapchainFactory; }
+
+    static const wl_registry_listener s_registryListener;
+  };
+
+  const wl_registry_listener GamescopeWaylandObjects::s_registryListener = {
+    .global = [](void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
+      auto objects = reinterpret_cast<GamescopeWaylandObjects *>(data);
+
+      if (interface == "wl_compositor"sv) {
+        objects->compositor = reinterpret_cast<wl_compositor *>(
+          wl_registry_bind(registry, name, &wl_compositor_interface, version));
+      } else if (interface == "gamescope_swapchain_factory_v2"sv) {
+        objects->gamescopeSwapchainFactory = reinterpret_cast<gamescope_swapchain_factory_v2 *>(
+          wl_registry_bind(registry, name, &gamescope_swapchain_factory_v2_interface, version));
+      }
+    },
+    .global_remove = [](void* data, wl_registry* registry, uint32_t name) {
+    },
+  };
+
   struct GamescopeInstanceData {
     wl_display* display;
-    wl_compositor* compositor;
-    gamescope_swapchain_factory* gamescopeSwapchainFactory;
     uint32_t appId = 0;
     GamescopeLayerClient::Flags flags = 0;
   };
@@ -146,6 +200,7 @@ namespace GamescopeWSILayer {
   struct GamescopeSurfaceData {
     VkInstance instance;
     wl_display *display;
+    GamescopeWaylandObjects waylandObjects;
     VkSurfaceKHR fallbackSurface;
     wl_surface* surface;
 
@@ -154,12 +209,23 @@ namespace GamescopeWSILayer {
     GamescopeLayerClient::Flags flags;
     bool hdrOutput;
 
+    bool isWayland() const {
+      return connection == nullptr;
+    }
+
+    bool frameLimiterAware() const {
+      return !!(flags & GamescopeLayerClient::Flag::FrameLimiterAware);
+    }
+
     bool shouldExposeHDR() const {
       const bool hdrAllowed = !(flags & GamescopeLayerClient::Flag::DisableHDR);
       return hdrOutput && hdrAllowed;
     }
 
     bool canBypassXWayland() const {
+      if (isWayland())
+        return true;
+
       auto rect = xcb::getWindowRect(connection, window);
       auto largestObscuringWindowSize = xcb::getLargestObscuringChildWindowSize(connection, window);
       auto toplevelWindow = xcb::getToplevelWindow(connection, window);
@@ -191,13 +257,16 @@ namespace GamescopeWSILayer {
         return false;
       }
 
-      // If this window is not within 1px margin of error for the size of
+      // If this window is not within 2px margin of error for the size of
       // it's top level window, then it cannot be flipped.
+      //
+      // Some games like Halo Infinite, make a child window that is 1280x802px
+      // I have no idea how thtat happens, or whether its an app or Wine bug or not.
       if (*toplevelWindow != window) {
         if (iabs(rect->offset.x) > 1 ||
             iabs(rect->offset.y) > 1 ||
-            iabs(int32_t(toplevelRect->extent.width)  - int32_t(rect->extent.width)) > 1 ||
-            iabs(int32_t(toplevelRect->extent.height) - int32_t(rect->extent.height)) > 1) {
+            iabs(int32_t(toplevelRect->extent.width)  - int32_t(rect->extent.width)) > 2 ||
+            iabs(int32_t(toplevelRect->extent.height) - int32_t(rect->extent.height)) > 2) {
   #if GAMESCOPE_WSI_BYPASS_DEBUG
           fprintf(stderr, "[Gamescope WSI] Not within 1px margin of error. Offset: %d %d Extent: %u %u vs %u %u\n",
             rect->offset.x, rect->offset.y,
@@ -221,9 +290,12 @@ namespace GamescopeWSILayer {
     gamescope_swapchain *object;
     wl_display* display;
     VkSurfaceKHR surface; // Always the Gamescope Surface surface -- so the Wayland one.
+    bool isWayland;
     bool isBypassingXWayland;
+    bool forceFifo;
     VkPresentModeKHR presentMode;
-    VkPresentModeKHR originalPresentMode;
+    uint32_t serverId = 0;
+    bool retired = false;
 
     std::unique_ptr<std::mutex> presentTimingMutex = std::make_unique<std::mutex>();
     std::vector<VkPastPresentationTimingGOOGLE> pastPresentTimings;
@@ -268,7 +340,17 @@ namespace GamescopeWSILayer {
         swapchain->refreshCycle = (uint64_t(refresh_cycle_hi) << 32) | refresh_cycle_lo;
       }
       fprintf(stderr, "[Gamescope WSI] Swapchain recieved new refresh cycle: %.2fms\n", swapchain->refreshCycle / 1'000'000.0);
-    }
+    },
+
+    .retired = [](
+            void *data,
+            gamescope_swapchain *object) {
+      GamescopeSwapchainData *swapchain = reinterpret_cast<GamescopeSwapchainData*>(data);
+      {
+        swapchain->retired = true;
+      }
+      fprintf(stderr, "[Gamescope WSI] Swapchain retired\n");
+    },
   };
 
   class VkInstanceOverrides {
@@ -308,28 +390,21 @@ namespace GamescopeWSILayer {
         fprintf(stderr, "[Gamescope WSI] Failed to connect to gamescope socket: %s. Bypass layer will be unavailable.\n", gamescopeWaylandSocket());
         return result;
       }
-      wl_registry *registry = wl_display_get_registry(display);
-
+      
       {
         uint32_t appId = clientAppId();
 
         auto state = GamescopeInstance::create(*pInstance, GamescopeInstanceData {
           .display = display,
           .appId   = appId,
-          .flags   = defaultLayerClientFlags(appId),
+          .flags   = defaultLayerClientFlags(pCreateInfo->pApplicationInfo, appId),
         });
-        wl_registry_add_listener(registry, &s_registryListener, reinterpret_cast<void *>(state.get()));
 
         // If we know at instance creation time we should disable HDR, force off
         // DXVK_HDR now.
         if (state->flags & GamescopeLayerClient::Flag::DisableHDR)
           setenv("DXVK_HDR", "0", 1);
       }
-      // Dispatch then roundtrip to get registry info.
-      wl_display_dispatch(display);
-      wl_display_roundtrip(display);
-
-      wl_registry_destroy(registry);
 
       return result;
     }
@@ -343,6 +418,31 @@ namespace GamescopeWSILayer {
       }
       GamescopeInstance::remove(instance);
       pDispatch->DestroyInstance(instance, pAllocator);
+    }
+
+    static VkResult CreateDevice(
+      const vkroots::VkInstanceDispatch* pDispatch,
+            VkPhysicalDevice             physicalDevice,
+      const VkDeviceCreateInfo*          pCreateInfo,
+      const VkAllocationCallbacks*       pAllocator,
+            VkDevice*                    pDevice) {
+      VkDeviceCreateInfo deviceCreateInfo = *pCreateInfo;
+
+      std::vector<const char *> extensions(pCreateInfo->ppEnabledExtensionNames, pCreateInfo->ppEnabledExtensionNames + pCreateInfo->enabledExtensionCount);
+      if (!contains(extensions, VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME))
+        extensions.push_back(VK_EXT_SWAPCHAIN_MAINTENANCE_1_EXTENSION_NAME);
+      deviceCreateInfo.ppEnabledExtensionNames = extensions.data();
+      deviceCreateInfo.enabledExtensionCount   = uint32_t(extensions.size());
+
+      vkroots::ChainPatcher<VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT>
+        maintenance1Patcher(&deviceCreateInfo, [&](VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT *pMaintenance1)
+      {
+        fprintf(stderr, "[Gamescope WSI] Forcing on VK_EXT_swapchain_maintenance1.\n");
+        pMaintenance1->swapchainMaintenance1 = VK_TRUE;
+        return true;
+      });
+
+      return pDispatch->CreateDevice(physicalDevice, &deviceCreateInfo, pAllocator, pDevice);
     }
 
     static VkBool32 GetPhysicalDeviceXcbPresentationSupportKHR(
@@ -395,6 +495,40 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateXlibSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
 
       return CreateGamescopeSurface(pDispatch, gamescopeInstance, instance, XGetXCBConnection(pCreateInfo->dpy), xcb_window_t(pCreateInfo->window), pAllocator, pSurface);
+    }
+
+    static VkResult CreateWaylandSurfaceKHR(
+      const vkroots::VkInstanceDispatch*   pDispatch,
+            VkInstance                     instance,
+      const VkWaylandSurfaceCreateInfoKHR* pCreateInfo,
+      const VkAllocationCallbacks*         pAllocator,
+            VkSurfaceKHR*                  pSurface) {
+      auto gamescopeInstance = GamescopeInstance::get(instance);
+      if (!gamescopeInstance)
+        return pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+
+      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(pCreateInfo->display);
+      if (!waylandObjects.valid()) {
+        fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects\n");
+        return VK_ERROR_SURFACE_LOST_KHR;
+      }
+
+      VkResult res = pDispatch->CreateWaylandSurfaceKHR(instance, pCreateInfo, pAllocator, pSurface);
+      if (res != VK_SUCCESS)
+        return res;
+
+      auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
+        .instance        = instance,
+        .display         = pCreateInfo->display,
+        .waylandObjects  = waylandObjects,
+        .surface         = pCreateInfo->surface,
+        .flags           = gamescopeInstance->flags,
+        .hdrOutput       = false, // XXXX FIXME FIXME FIXME //hdrOutput,
+      });
+
+      DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
+
+      return res;
     }
 
     static constexpr std::array<VkSurfaceFormat2KHR, 3> s_ExtraHDRSurfaceFormat2s = {{
@@ -474,11 +608,13 @@ namespace GamescopeWSILayer {
       if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, pSurfaceCapabilities)) != VK_SUCCESS)
         return res;
 
-      auto rect = xcb::getWindowRect(gamescopeSurface->connection, gamescopeSurface->window);
-      if (!rect)
-        return VK_ERROR_SURFACE_LOST_KHR;
+      if (!gamescopeSurface->isWayland()) {
+        auto rect = xcb::getWindowRect(gamescopeSurface->connection, gamescopeSurface->window);
+        if (!rect)
+          return VK_ERROR_SURFACE_LOST_KHR;
 
-      pSurfaceCapabilities->currentExtent = rect->extent;
+        pSurfaceCapabilities->currentExtent = rect->extent;
+      }
       pSurfaceCapabilities->minImageCount = getMinImageCount();
 
       return VK_SUCCESS;
@@ -493,15 +629,35 @@ namespace GamescopeWSILayer {
       if (!gamescopeSurface)
         return pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities);
 
-      VkResult res = VK_SUCCESS;
-      if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
-        return res;
+      // Incomplete writes here, do not return VK_INCOMPLETE.
+      if (gamescopeIsForcingFifo() && gamescopeSurface->frameLimiterAware()) {
+        const auto *pPresentMode = vkroots::FindInChain<VkSurfacePresentModeEXT>(pSurfaceInfo);
+        const std::array<VkPresentModeKHR, 1> s_SingleMode = {{
+          pPresentMode ? pPresentMode->presentMode : VK_PRESENT_MODE_FIFO_KHR,
+        }};
+        auto [pPresentModeCompat, pPresentModeCompatParent] = vkroots::RemoveFromChain<VkSurfacePresentModeCompatibilityEXT>(pSurfaceCapabilities);
+        if (pPresentModeCompat)
+          vkroots::helpers::array(s_SingleMode, &pPresentModeCompat->presentModeCount, pPresentModeCompat->pPresentModes);
 
-      auto rect = xcb::getWindowRect(gamescopeSurface->connection, gamescopeSurface->window);
-      if (!rect)
-        return VK_ERROR_SURFACE_LOST_KHR;
+        VkResult res = VK_SUCCESS;
+        if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
+          return res;
 
-      pSurfaceCapabilities->surfaceCapabilities.currentExtent = rect->extent;
+        if (pPresentModeCompat)
+          vkroots::AddToChain(pPresentModeCompatParent, pPresentModeCompat);
+      } else {
+        VkResult res = VK_SUCCESS;
+        if ((res = pDispatch->GetPhysicalDeviceSurfaceCapabilities2KHR(physicalDevice, pSurfaceInfo, pSurfaceCapabilities)) != VK_SUCCESS)
+          return res;
+      }
+
+      if (!gamescopeSurface->isWayland()) {
+        auto rect = xcb::getWindowRect(gamescopeSurface->connection, gamescopeSurface->window);
+        if (!rect)
+          return VK_ERROR_SURFACE_LOST_KHR;
+
+        pSurfaceCapabilities->surfaceCapabilities.currentExtent = rect->extent;
+      }
       pSurfaceCapabilities->surfaceCapabilities.minImageCount = getMinImageCount();
 
       return VK_SUCCESS;
@@ -512,10 +668,6 @@ namespace GamescopeWSILayer {
             VkPhysicalDevice             physicalDevice,
             VkPhysicalDeviceFeatures2*   pFeatures) {
       pDispatch->GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
-
-      auto pSwapchainMaintenance1Features = vkroots::FindInChainMutable<VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SWAPCHAIN_MAINTENANCE_1_FEATURES_EXT, VkPhysicalDeviceSwapchainMaintenance1FeaturesEXT>(pFeatures);
-      if (pSwapchainMaintenance1Features)
-        pSwapchainMaintenance1Features->swapchainMaintenance1 = VK_FALSE;
     }
 
     static void GetPhysicalDeviceFeatures2KHR(
@@ -523,6 +675,24 @@ namespace GamescopeWSILayer {
             VkPhysicalDevice             physicalDevice,
             VkPhysicalDeviceFeatures2*   pFeatures) {
       GetPhysicalDeviceFeatures2(pDispatch, physicalDevice, pFeatures);
+    }
+
+    static VkResult GetPhysicalDeviceSurfacePresentModesKHR(
+      const vkroots::VkInstanceDispatch* pDispatch,
+        VkPhysicalDevice                 physicalDevice,
+        VkSurfaceKHR                     surface,
+        uint32_t*                        pPresentModeCount,
+        VkPresentModeKHR*                pPresentModes) {
+      static constexpr std::array<VkPresentModeKHR, 1> s_FifoPresentModes = {{
+        VK_PRESENT_MODE_FIFO_KHR,
+      }};
+
+      if (auto state = GamescopeSurface::get(surface)) {
+        if (gamescopeIsForcingFifo() && state->frameLimiterAware())
+          return vkroots::helpers::array(s_FifoPresentModes, pPresentModeCount, pPresentModes);
+      }
+
+      return pDispatch->GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
     }
 
     static void DestroySurfaceKHR(
@@ -567,16 +737,6 @@ namespace GamescopeWSILayer {
         physicalDevice,
         pLayerName);
 
-      // Filter out extensions we don't/can't support in the layer.
-      if (pProperties) {
-        for (uint32_t i = 0; i < *pPropertyCount; i++) {
-          if (pProperties[i].extensionName == "VK_EXT_swapchain_maintenance1"sv) {
-            strcpy(pProperties[i].extensionName, "DISABLED_EXT_swapchain_maintenance1");
-            pProperties[i].specVersion = 0;
-          }
-        }
-      }
-
       return result;
     }
 
@@ -591,7 +751,13 @@ namespace GamescopeWSILayer {
             VkSurfaceKHR*                pSurface) {
       fprintf(stderr, "[Gamescope WSI] Creating Gamescope surface: xid: 0x%x\n", window);
 
-      wl_surface* waylandSurface = wl_compositor_create_surface(gamescopeInstance->compositor);
+      GamescopeWaylandObjects waylandObjects = GamescopeWaylandObjects::get(gamescopeInstance->display);
+      if (!waylandObjects.valid()) {
+        fprintf(stderr, "[Gamescope WSI] Failed to get Wayland objects\n");
+        return VK_ERROR_SURFACE_LOST_KHR;
+      }
+
+      wl_surface* waylandSurface = wl_compositor_create_surface(waylandObjects.compositor);
       if (!waylandSurface) {
         fprintf(stderr, "[Gamescope WSI] Failed to create wayland surface - xid: 0x%x\n", window);
         return VK_ERROR_SURFACE_LOST_KHR;
@@ -639,6 +805,7 @@ namespace GamescopeWSILayer {
       auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = gamescopeInstance->display,
+        .waylandObjects  = waylandObjects,
         .fallbackSurface = fallbackSurface,
         .surface         = waylandSurface,
         .connection      = connection,
@@ -687,11 +854,11 @@ namespace GamescopeWSILayer {
         if (!gamescopeSocketName || !*gamescopeSocketName)
           return false;
 
-        // Gamescope always unsets WAYLAND_SOCKET.
-        // So if that is set, we know we cannot be running under Gamescope
-        // and must be in a nested Wayland session inside of gamescope.
+        // Gamescope always sets or unsets WAYLAND_SOCKET.
+        // So if that is set to something else, we know we cannot be running
+        // under Gamescope and must be in a nested Wayland session inside of gamescope.
         const char *waylandSocketName = std::getenv("WAYLAND_DISPLAY");
-        if (waylandSocketName && *waylandSocketName)
+        if (waylandSocketName && *waylandSocketName && strcmp(gamescopeSocketName, waylandSocketName) != 0)
           return false;
 
         return true;
@@ -737,22 +904,6 @@ namespace GamescopeWSILayer {
       return s_minImageCount;
     }
 
-    static constexpr wl_registry_listener s_registryListener = {
-      .global = [](void* data, wl_registry* registry, uint32_t name, const char* interface, uint32_t version) {
-        auto instance = reinterpret_cast<GamescopeInstanceData *>(data);
-
-        if (interface == "wl_compositor"sv) {
-          instance->compositor = reinterpret_cast<wl_compositor *>(
-            wl_registry_bind(registry, name, &wl_compositor_interface, version));
-        } else if (interface == "gamescope_swapchain_factory"sv) {
-          instance->gamescopeSwapchainFactory = reinterpret_cast<gamescope_swapchain_factory *>(
-            wl_registry_bind(registry, name, &gamescope_swapchain_factory_interface, version));
-        }
-      },
-      .global_remove = [](void* data, wl_registry* registry, uint32_t name) {
-      },
-    };
-
   };
 
   class VkDeviceOverrides {
@@ -793,22 +944,38 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
-      VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
-
-      const VkPresentModeKHR originalPresentMode = swapchainInfo.presentMode;
-      const uint32_t limiterOverride = gamescopeFrameLimiterOverride();
-      if (limiterOverride == 1) {
-        fprintf(stderr, "[Gamescope WSI] Overriding present mode to FIFO from frame limiter override.\n");
-        swapchainInfo.presentMode = VK_PRESENT_MODE_FIFO_KHR;
+      if (pCreateInfo->oldSwapchain) {
+        if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
+          gamescopeSwapchain->retired = true;
+        }
       }
+
+      VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
 
       const bool canBypass = gamescopeSurface->canBypassXWayland();
       // If we can't flip, fallback to the regular XCB surface on the XCB window.
       if (!canBypass)
         swapchainInfo.surface = gamescopeSurface->fallbackSurface;
 
+      // We yolo to 3 min images always in Gamescope WSI, regardless of the underlying implementation.
+      // Anyway, deal with present modes passed in...
+      vkroots::ChainPatcher<VkSwapchainPresentModesCreateInfoEXT>
+        presentModePatcher(&swapchainInfo, [&](VkSwapchainPresentModesCreateInfoEXT *pPresentModesCreateInfo)
+      {
+        // Always send MAILBOX as the mode to the driver, as we implement FIFO ourselves -- using the
+        // Gamescope swapchain protocol.
+        static constexpr std::array<VkPresentModeKHR, 1> s_MailboxMode = {{
+          VK_PRESENT_MODE_MAILBOX_KHR,
+        }};
+        pPresentModesCreateInfo->presentModeCount = uint32_t(s_MailboxMode.size());
+        pPresentModesCreateInfo->pPresentModes    = s_MailboxMode.data();
+        return true;
+      });
+
       // Force the colorspace to sRGB before sending to the driver.
       swapchainInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
+      // We always send MAILBOX to the driver.
+      swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 
       fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
@@ -830,7 +997,7 @@ namespace GamescopeWSILayer {
         bool supportedSwapchainFormat = std::ranges::any_of(
           supportedSurfaceFormats,
           std::bind_front(std::equal_to{}, swapchainInfo.imageFormat),
-          &VkSurfaceFormatKHR::format);
+          &VkSurfaceFormatKHR::format)  ;
 
         if (!supportedSwapchainFormat) {
           fprintf(stderr, "[Gamescope WSI] Refusing to make swapchain (unsupported VkFormat) for xid: 0x%0x - format: %s - colorspace: %s - flip: %s\n",
@@ -843,10 +1010,14 @@ namespace GamescopeWSILayer {
         }
       }
 
-      auto serverId = xcb::getPropertyValue<uint32_t>(gamescopeSurface->connection, "GAMESCOPE_XWAYLAND_SERVER_ID"sv);
-      if (!serverId) {
-        fprintf(stderr, "[Gamescope WSI] Failed to get Xwayland server id. Failing swapchain creation.\n");
-        return VK_ERROR_SURFACE_LOST_KHR;
+      uint32_t serverId = ~0u;
+      if (!gamescopeSurface->isWayland()) {
+        auto oServerId = xcb::getPropertyValue<uint32_t>(gamescopeSurface->connection, "GAMESCOPE_XWAYLAND_SERVER_ID"sv);
+        if (!oServerId) {
+          fprintf(stderr, "[Gamescope WSI] Failed to get Xwayland server id. Failing swapchain creation.\n");
+          return VK_ERROR_SURFACE_LOST_KHR;
+        }
+        serverId = *oServerId;
       }
 
       auto gamescopeInstance = GamescopeInstance::get(gamescopeSurface->instance);
@@ -861,21 +1032,20 @@ namespace GamescopeWSILayer {
         return result;
       }
 
-      gamescope_swapchain *gamescopeSwapchainObject = gamescope_swapchain_factory_create_swapchain(
-        gamescopeInstance->gamescopeSwapchainFactory,
+      gamescope_swapchain *gamescopeSwapchainObject = gamescope_swapchain_factory_v2_create_swapchain(
+        gamescopeSurface->waylandObjects.gamescopeSwapchainFactory,
         gamescopeSurface->surface);
-
-      if (canBypass)
-        gamescope_swapchain_override_window_content(gamescopeSwapchainObject, *serverId, gamescopeSurface->window);
 
       {
         auto gamescopeSwapchain = GamescopeSwapchain::create(*pSwapchain, GamescopeSwapchainData{
           .object              = gamescopeSwapchainObject,
-          .display             = gamescopeInstance->display,
+          .display             = gamescopeSurface->display,
           .surface             = pCreateInfo->surface, // Always the Wayland side surface.
+          .isWayland           = gamescopeSurface->isWayland(),
           .isBypassingXWayland = canBypass,
-          .presentMode         = swapchainInfo.presentMode, // The new present mode.
-          .originalPresentMode = originalPresentMode,
+          .forceFifo           = gamescopeIsForcingFifo(), // Were we forcing fifo when this swapchain was made?
+          .presentMode         = pCreateInfo->presentMode, // The new present mode.
+          .serverId            = serverId,
         });
         gamescopeSwapchain->pastPresentTimings.reserve(MaxPastPresentationTimes);
 
@@ -896,25 +1066,63 @@ namespace GamescopeWSILayer {
         uint32_t(pCreateInfo->imageColorSpace),
         uint32_t(pCreateInfo->compositeAlpha),
         uint32_t(pCreateInfo->preTransform),
-        uint32_t(pCreateInfo->presentMode),
         uint32_t(pCreateInfo->clipped));
 
       return VK_SUCCESS;
+    }
+
+    static VkResult AcquireNextImageKHR(
+      const vkroots::VkDeviceDispatch* pDispatch,
+            VkDevice                   device,
+            VkSwapchainKHR             swapchain,
+            uint64_t                   timeout,
+            VkSemaphore                semaphore,
+            VkFence                    fence,
+            uint32_t*                  pImageIndex) {
+      VkAcquireNextImageInfoKHR acquireInfo = {
+        .sType      = VK_STRUCTURE_TYPE_ACQUIRE_NEXT_IMAGE_INFO_KHR,
+        .swapchain  = swapchain,
+        .timeout    = timeout,
+        .semaphore  = semaphore,
+        .fence      = fence,
+        .deviceMask = 0x1,
+      };
+
+      return AcquireNextImage2KHR(pDispatch, device, &acquireInfo, pImageIndex);
+    }
+
+    static VkResult AcquireNextImage2KHR(
+      const vkroots::VkDeviceDispatch* pDispatch,
+            VkDevice                   device,
+      const VkAcquireNextImageInfoKHR* pAcquireInfo,
+            uint32_t*                  pImageIndex) {
+      if (auto gamescopeSwapchain = GamescopeSwapchain::get(pAcquireInfo->swapchain)) {
+        if (gamescopeSwapchain->retired)
+          return VK_ERROR_OUT_OF_DATE_KHR;
+      }
+
+      return pDispatch->AcquireNextImage2KHR(device, pAcquireInfo, pImageIndex);
     }
 
     static VkResult QueuePresentKHR(
       const vkroots::VkDeviceDispatch* pDispatch,
             VkQueue                    queue,
       const VkPresentInfoKHR*          pPresentInfo) {
-      const uint32_t limiterOverride = gamescopeFrameLimiterOverride();
+      VkPresentInfoKHR presentInfo = *pPresentInfo;
 
-      auto pPresentTimes = vkroots::FindInChain<VK_STRUCTURE_TYPE_PRESENT_TIMES_INFO_GOOGLE, const VkPresentTimesInfoGOOGLE>(pPresentInfo);
+      bool forceFifo = gamescopeIsForcingFifo();
+
+      auto pPresentTimes = vkroots::FindInChain<const VkPresentTimesInfoGOOGLE>(&presentInfo);
 
       wl_display *display = nullptr;
-      for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
-        if (auto gamescopeSwapchain = GamescopeSwapchain::get(pPresentInfo->pSwapchains[i])) {
+      for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+        if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+          if (gamescopeSwapchain->retired) {
+            return VK_ERROR_OUT_OF_DATE_KHR;
+          }
+
           if (pPresentTimes && pPresentTimes->pTimes) {
-            assert(pPresentTimes->swapchainCount == pPresentInfo->swapchainCount);
+            assert(pPresentTimes->swapchainCount == presentInfo.swapchainCount);
 
 #if GAMESCOPE_WSI_DISPLAY_TIMING_DEBUG
             fprintf(stderr, "[Gamescope WSI] QueuePresentKHR: presentID: %u - desiredPresentTime: %lu - now: %lu\n", pPresentTimes->pTimes[i].presentID, pPresentTimes->pTimes[i].desiredPresentTime, getTimeMonotonic());
@@ -930,6 +1138,40 @@ namespace GamescopeWSILayer {
           display = gamescopeSwapchain->display;
         }
       }
+
+      // All VkSurfaceKHR's come from the same VkInstance, so we only need to check one surface.
+      bool frameLimiterAware = [&]() {
+        for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+              auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+              if (gamescopeSurface)
+                return gamescopeSurface->frameLimiterAware();
+          }
+        }
+        return false;
+      }();
+
+      // Grab the actual intended present modes.
+      std::optional<VkSwapchainPresentModeInfoEXT> oOriginalPresentModeInfo;
+      const auto *pPresentModeInfo = vkroots::FindInChain<VkSwapchainPresentModeInfoEXT>(&presentInfo);
+      if (pPresentModeInfo)
+        oOriginalPresentModeInfo = *pPresentModeInfo;
+
+      // Force all present modes to MAILBOX to the underlying driver
+      // We implement fifo ourselves.
+      vkroots::ChainPatcher<VkSwapchainPresentModeInfoEXT, std::vector<VkPresentModeKHR>>
+        presentModePatcher(&presentInfo, [&](std::vector<VkPresentModeKHR>& mailboxModes, VkSwapchainPresentModeInfoEXT *pMaintenance1)
+      {
+        for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+          if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+            mailboxModes.emplace_back(VK_PRESENT_MODE_MAILBOX_KHR);
+          }
+        }
+
+        pMaintenance1->pPresentModes = mailboxModes.data();
+        return true;
+      });
+
 
       if (display) {
         waylandPumpEvents(display);
@@ -948,23 +1190,40 @@ namespace GamescopeWSILayer {
         }
       }
 
-      VkResult result = pDispatch->QueuePresentKHR(queue, pPresentInfo);
+      for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+        if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
+          auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+          if (gamescopeSwapchain->isWayland || gamescopeSwapchain->isBypassingXWayland) {
+            if (!gamescopeSwapchain->isWayland) {
+              gamescope_swapchain_override_window_content(gamescopeSwapchain->object, gamescopeSwapchain->serverId, gamescopeSurface->window);
+            }
+            VkPresentModeKHR presentMode = oOriginalPresentModeInfo ? oOriginalPresentModeInfo->pPresentModes[i] : gamescopeSwapchain->presentMode;
+            if (forceFifo && !frameLimiterAware)
+              presentMode = VK_PRESENT_MODE_FIFO_KHR;
+            gamescope_swapchain_set_present_mode(gamescopeSwapchain->object, uint32_t(presentMode));
+          }
+        }
+      }
 
-      for (uint32_t i = 0; i < pPresentInfo->swapchainCount; i++) {
-        VkSwapchainKHR swapchain = pPresentInfo->pSwapchains[i];
+      VkResult result = pDispatch->QueuePresentKHR(queue, &presentInfo);
+
+      for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
+        VkSwapchainKHR swapchain = presentInfo.pSwapchains[i];
 
         auto UpdateSwapchainResult = [&](VkResult newResult) {
-          if (pPresentInfo->pResults && pPresentInfo->pResults[i] >= VK_SUCCESS)
-            pPresentInfo->pResults[i] = newResult;
+          if (presentInfo.pResults && presentInfo.pResults[i] >= VK_SUCCESS)
+            presentInfo.pResults[i] = newResult;
           if (result >= VK_SUCCESS)
             result = newResult;
         };
 
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(swapchain)) {
-
-          if ((limiterOverride == 1 && gamescopeSwapchain->presentMode != VK_PRESENT_MODE_FIFO_KHR) ||
-              (limiterOverride != 1 && gamescopeSwapchain->presentMode != gamescopeSwapchain->originalPresentMode)) {
-              fprintf(stderr, "[Gamescope WSI] Forcing swapchain recreation as frame limiter changed.\n");
+          // If we are a frame limiter aware application like DXVK or VKD3D-Proton, we don't
+          // transparently change their vkQueuePresent to just FIFO modes, we change what is
+          // exposed as supported in order for them to handle presentation latency like they
+          // would as in FIFO mode.
+          if (frameLimiterAware && gamescopeSwapchain->forceFifo != forceFifo) {
+              fprintf(stderr, "[Gamescope WSI] Forcing swapchain recreation as frame limiter changed, and we want the app to know the exposed modes changed.\n");
               UpdateSwapchainResult(VK_ERROR_OUT_OF_DATE_KHR);
           }
 
