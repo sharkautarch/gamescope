@@ -8,6 +8,7 @@
 #include "convar.h"
 #include "refresh_rate.h"
 #include "waitable.h"
+#include "Utils/TempFiles.h"
 
 #include <cstring>
 #include <unordered_map>
@@ -1593,16 +1594,8 @@ namespace gamescope
 
     static int CreateShmBuffer( uint32_t uSize, void *pData )
     {
-        static constexpr char szTemplate[] = "/gamescope-shared-XXXXXX";
-
-        const char *pXDGPath = getenv( "XDG_RUNTIME_DIR" );
-        if ( !pXDGPath || !*pXDGPath )
-            return -1;
-
-        char szPath[ PATH_MAX ];
-        snprintf( szPath, PATH_MAX, "%s%s", pXDGPath, szTemplate );
-
-        int nFd = mkostemp( szPath, O_CLOEXEC );
+        char szShmBufferPath[ PATH_MAX ];
+        int nFd = MakeTempFile( szShmBufferPath, k_szGamescopeTempShmTemplate );
         if ( nFd < 0 )
             return -1;
 

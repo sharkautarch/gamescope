@@ -97,13 +97,15 @@ phmap_include = include_directories([
 required_wlroots_features = ['xwayland']
 
 src = [
+  'Backends/HeadlessBackend.cpp',
+  'Backends/WaylandBackend.cpp',
+  'Utils/TempFiles.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
   'commit.cpp',
   'color_helpers.cpp',
   'main.cpp',
   'edid.cpp',
-  'headless.cpp',
   'wlserver.cpp',
   'vblankmanager.cpp',
   'rendervulkan.cpp',
@@ -113,13 +115,12 @@ src = [
   'reshade_effect_manager.cpp',
   'backend.cpp',
   'x11cursor.cpp',
-  'wayland_backend.cpp',
   'InputEmulation.cpp',
 ]
 
 gamescope_cpp_args = []
 if drm_dep.found()
-  src += 'drm.cpp'
+  src += 'Backends/DRMBackend.cpp'
   src += 'modegen.cpp'
   required_wlroots_features += 'libinput_backend'
   liftoff_dep = dependency(
@@ -133,7 +134,7 @@ else
 endif
 
 if sdl2_dep.found()
-  src += 'sdlwindow.cpp'
+  src += 'Backends/SDLBackend.cpp'
 endif
 
 gamescope_cpp_args += '-DHAVE_DRM=@0@'.format(drm_dep.found().to_int())
@@ -151,7 +152,7 @@ if pipewire_dep.found()
 endif
 
 if openvr_dep.found()
-  src += 'vr_session.cpp'
+  src += 'Backends/OpenVRBackend.cpp'
 endif
 
 foreach feat : required_wlroots_features

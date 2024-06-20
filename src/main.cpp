@@ -17,6 +17,7 @@
 #include <signal.h>
 #include <unistd.h>
 #include <float.h>
+#include <climits>
 
 #include "main.hpp"
 #include "steamcompmgr.hpp"
@@ -24,6 +25,7 @@
 #include "wlserver.hpp"
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
+#include "Utils/TempFiles.h"
 
 #include "backends.h"
 #include "refresh_rate.h"
@@ -589,6 +591,87 @@ static bool IsInDebugSession()
 }
 #endif
 
+bool steamMode = false;
+bool g_bLaunchMangoapp = false;
+
+static void UpdateCompatEnvVars()
+{
+	// Legacy env vars for compat.
+	if ( steamMode )
+	{
+		// We have NIS support.
+		setenv( "STEAM_GAMESCOPE_NIS_SUPPORTED", "1", 0 );
+		// Have SteamRT's xdg-open send http:// and https:// URLs to Steam
+		setenv( "SRT_URLOPEN_PREFER_STEAM", "1", 0 );
+		if ( g_nXWaylandCount > 1 )
+		{
+			setenv( "STEAM_MULTIPLE_XWAYLANDS", "1", 0 );
+		}
+		// If the backend exposes tearing, expose that to Steam.
+		if ( GetBackend()->SupportsTearing() )
+		{
+			setenv( "STEAM_GAMESCOPE_TEARING_SUPPORTED", "1", 0 );
+			setenv( "STEAM_GAMESCOPE_HAS_TEARING_SUPPORT", "1", 0 );
+		}
+		// We always support VRR (but not necessarily on every connector, etc.)
+		setenv( "STEAM_GAMESCOPE_VRR_SUPPORTED", "1", 0 );
+		// We no longer need to set GAMESCOPE_EXTERNAL_OVERLAY from steam, mangoapp now does it itself
+		setenv( "STEAM_DISABLE_MANGOAPP_ATOM_WORKAROUND", "1", 0 );
+		// Enable horizontal mangoapp bar
+		setenv( "STEAM_MANGOAPP_HORIZONTAL_SUPPORTED", "1", 0 );
+		// Scaling support
+		setenv( "STEAM_GAMESCOPE_FANCY_SCALING_SUPPORT", "1", 0 );
+		// We support HDR.
+		setenv( "STEAM_GAMESCOPE_HDR_SUPPORTED", "1", 0 );
+		// Gamescope WSI layer implements this.
+		setenv( "STEAM_GAMESCOPE_DYNAMIC_FPSLIMITER", "1", 0 );
+
+		// Set input method modules for Qt/GTK that will show the Steam keyboard
+		// These are mostly SteamOS specific, and are set by our Gamescope session,
+		// but might be useful for you.
+		//setenv( "QT_IM_MODULE", "steam", 1 );
+		//setenv( "GTK_IM_MODULE", "Steam", 1 );
+		//setenv( "QT_QPA_PLATFORM_THEME", "kde", 1 );
+
+		// Maybe we should expose a backend check for this...
+		// STEAM_GAMESCOPE_COLOR_MANAGED
+		// STEAM_GAMESCOPE_VIRTUAL_WHITE
+
+		// STEAM_USE_DYNAMIC_VRS is RADV specific, so don't expose this right now.
+
+		setenv( "STEAM_MANGOAPP_PRESETS_SUPPORTED", "1", 0 );
+		setenv( "STEAM_USE_MANGOAPP", "1", 0 );
+	}
+
+	// Always set this to false, we never want buffers to be waited on by Mesa.
+	// That is our job!
+	setenv( "vk_xwayland_wait_ready", "false", 1 );
+	if ( g_nCursorScaleHeight > 0 )
+	{
+		// We always want the biggest cursor size so we can scale it.
+		setenv( "XCURSOR_SIZE", "256", 1 );
+	}
+
+	// Legacy support for SteamOS.
+	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
+
+	// Don't minimise stuff on focus loss with SDL.
+	setenv( "SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0", 1 );
+
+	// A sane default here.
+	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
+
+	if ( g_bLaunchMangoapp )
+	{
+		char szMangoConfigPath[ PATH_MAX ];
+		int nMangoConfigFd = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate );
+		if ( nMangoConfigFd >= 0 )
+		{
+			setenv( "MANGOHUD_CONFIGFILE", szMangoConfigPath, 1 );
+		}
+	}
+}
+
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
@@ -662,6 +745,9 @@ int main(int argc, char **argv)
 			case 's':
 				g_mouseSensitivity = atof( optarg );
 				break;
+			case 'e':
+				steamMode = true;
+				break;
 			case 0: // long options without a short option
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
@@ -709,6 +795,8 @@ int main(int argc, char **argv)
 					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = atoi(optarg);
+				} else if (strcmp(opt_name, "mangoapp") == 0) {
+					g_bLaunchMangoapp = true;
 				}
 				break;
 			case '?':
@@ -762,13 +850,6 @@ int main(int argc, char **argv)
 		fprintf( stderr, "No CAP_SYS_NICE, falling back to regular-priority compute and threads.\nPerformance will be affected.\n" );
 	}
 #endif
-
-	setenv( "XWAYLAND_FORCE_ENABLE_EXTRA_MODES", "1", 1 );
-
-	if ( g_nCursorScaleHeight > 0 )
-	{
-		setenv( "XCURSOR_SIZE", "256", 1 );
-	}
 
 #if 0
 	while( !IsInDebugSession() )
@@ -856,6 +937,8 @@ int main(int argc, char **argv)
 		fprintf( stderr, "Failed to create backend.\n" );
 		exit(1);
 	}
+
+	UpdateCompatEnvVars();
 
 	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
 

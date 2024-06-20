@@ -303,7 +303,7 @@ namespace gamescope
         COpenVRBackend *m_pBackend = nullptr;
 
         bool m_bIsSubview = false;
-        uint32_t m_uSortOrder = 2;
+        uint32_t m_uSortOrder = 0;
         vr::VROverlayHandle_t m_hOverlay = vr::k_ulOverlayHandleInvalid;
         vr::VROverlayHandle_t m_hOverlayThumbnail = vr::k_ulOverlayHandleInvalid;
     };
@@ -611,6 +611,9 @@ namespace gamescope
                 compositeLayer.colorspace = pFrameInfo->outputEncodingEOTF == EOTF_PQ ? GAMESCOPE_APP_TEXTURE_COLORSPACE_HDR10_PQ : GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB;
 
                 GetPrimaryPlane()->Present( &compositeLayer );
+
+                for ( int i = 1; i < 8; i++ )
+                    m_Planes[i].Present( nullptr );
             }
 
 
