@@ -26,6 +26,7 @@
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
 #include "Utils/TempFiles.h"
+#include "defer.hpp"
 
 #include "backends.h"
 #include "refresh_rate.h"
@@ -556,6 +557,7 @@ static bool CheckWaylandPresentationTime()
 	wl_display_roundtrip(display);
 
 	wl_registry_destroy(registry);
+	wl_display_disconnect(display);
 
     return g_bSupportsWaylandPresentationTime;
 }
@@ -806,41 +808,44 @@ int main(int argc, char **argv)
 	}
 
 #if defined(__linux__) && HAVE_LIBCAP
-	cap_t caps = cap_get_proc();
-	if ( caps != nullptr )
 	{
-		cap_flag_value_t nicecapvalue = CAP_CLEAR;
-		cap_get_flag( caps, CAP_SYS_NICE, CAP_EFFECTIVE, &nicecapvalue );
-
-		if ( nicecapvalue == CAP_SET )
+		cap_t pCaps = cap_get_proc();
+		defer( cap_free( pCaps ) );
+		if ( pCaps )
 		{
-			g_bNiceCap = true;
+			cap_flag_value_t nicecapvalue = CAP_CLEAR;
+			cap_get_flag( pCaps, CAP_SYS_NICE, CAP_EFFECTIVE, &nicecapvalue );
 
-			errno = 0;
-			int nOldNice = nice( 0 );
-			if ( nOldNice != -1 && errno == 0 )
+			if ( nicecapvalue == CAP_SET )
 			{
-				g_nOldNice = nOldNice;
-			}
+				g_bNiceCap = true;
 
-			errno = 0;
-			int nNewNice = nice( -20 );
-			if ( nNewNice != -1 && errno == 0 )
-			{
-				g_nNewNice = nNewNice;
-			}
-			if ( g_bRt )
-			{
-				struct sched_param sched;
-				sched_getparam(0, &sched);
-				sched.sched_priority = sched_get_priority_min(SCHED_RR);
-
-				if (pthread_getschedparam(pthread_self(), &g_nOldPolicy, &g_schedOldParam)) {
-					fprintf(stderr, "Failed to get old scheduling parameters: %s", strerror(errno));
-					exit(1);
+				errno = 0;
+				int nOldNice = nice( 0 );
+				if ( nOldNice != -1 && errno == 0 )
+				{
+					g_nOldNice = nOldNice;
 				}
-				if (sched_setscheduler(0, SCHED_RR, &sched))
-					fprintf(stderr, "Failed to set realtime: %s", strerror(errno));
+
+				errno = 0;
+				int nNewNice = nice( -20 );
+				if ( nNewNice != -1 && errno == 0 )
+				{
+					g_nNewNice = nNewNice;
+				}
+				if ( g_bRt )
+				{
+					struct sched_param sched;
+					sched_getparam(0, &sched);
+					sched.sched_priority = sched_get_priority_min(SCHED_RR);
+
+					if (pthread_getschedparam(pthread_self(), &g_nOldPolicy, &g_schedOldParam)) {
+						fprintf(stderr, "Failed to get old scheduling parameters: %s", strerror(errno));
+						exit(1);
+					}
+					if (sched_setscheduler(0, SCHED_RR, &sched))
+						fprintf(stderr, "Failed to set realtime: %s", strerror(errno));
+				}
 			}
 		}
 	}

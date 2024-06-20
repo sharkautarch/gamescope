@@ -12,15 +12,6 @@
 struct commit_t;
 struct wlserver_vk_swapchain_feedback;
 
-struct motif_hints_t
-{
-	unsigned long flags;
-	unsigned long functions;
-	unsigned long decorations;
-	long input_mode;
-	unsigned long status;
-};
-
 struct wlserver_x11_surface_info
 {
 	std::atomic<struct wlr_surface *> override_surface;
@@ -136,8 +127,6 @@ struct steamcompmgr_win_t {
 	uint32_t hwndStyle;
 	bool hasHwndStyleEx;
 	uint32_t hwndStyleEx;
-
-	motif_hints_t *motif_hints;
 
 	bool nudged;
 	bool ignoreOverrideRedirect;
