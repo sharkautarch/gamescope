@@ -1351,7 +1351,7 @@ void CVulkanCmdBuffer::end()
 	const barrier_info_t barrier_info = {
 	};
 
-	insertBarrier<static_cast<int>(pipeline_task::end)>(&barrier_info);
+	insertBarrier<pipeline_task::end>(barrier_info);
 	
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
@@ -1440,7 +1440,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		}
 	};
 
-	insertBarrier<static_cast<int>(pipeline_task::shader)>(&barrier_info);
+	insertBarrier<pipeline_task::shader>(barrier_info);
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 	
@@ -1600,7 +1600,7 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 	const barrier_info_t barrier_info = {
 	};
 
-	insertBarrier<static_cast<int>(pipeline_task::copy)>(&barrier_info);
+	insertBarrier<pipeline_task::copy>(barrier_info);
 
 	VkImageCopy region = {
 		.srcSubresource = {
@@ -1632,7 +1632,7 @@ void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, u
 	const barrier_info_t barrier_info = {
 	};
 
-	insertBarrier<static_cast<int>(pipeline_task::copy)>(&barrier_info);
+	insertBarrier<pipeline_task::copy>(barrier_info);
 
 	VkBufferImageCopy region = {
 		.bufferOffset = offset,

@@ -922,8 +922,8 @@ public:
 	void discardImage(CVulkanTexture *image);
 	void markDirty(CVulkanTexture *image);
 	
-	template <int task = 0>
-	void insertBarrier(const barrier_info_t * const barrier_info = nullptr)
+	template <pipeline_task_t task>
+	void insertBarrier(const barrier_info_t barrier_info)
 	{
 		std::vector<VkImageMemoryBarrier> barriers;
 
@@ -945,11 +945,10 @@ public:
 		VkAccessFlags dst_read_bits = 0;
 
 		bool flush = false;
-		assert( barrier_info != nullptr);
 		
 		switch (task) {
-			case ( static_cast<int>(pipeline_task::reshade) ): {
-				if (barrier_info->reshade_target == reshade_target::init) {
+			case (pipeline_task::reshade): {
+				if (barrier_info.reshade_target == reshade_target::init) {
 					srcStageMask = dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 					dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
 					dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
@@ -959,15 +958,14 @@ public:
 				}
 				break;
 			}
-			case ( static_cast<int>(pipeline_task::shader) ): {
+			case ( pipeline_task::shader ): {
 
-				const bool isFirst = (barrier_info->shader_sync_info.curr_sync_point == 1u);
-				//const bool isLast = (barrier_info->shader_sync_info.curr_sync_point == barrier_info->shader_sync_info.total_sync_points);
-				const bool multipleShaders = barrier_info->shader_sync_info.total_sync_points > 1u;
+				const bool isFirst = (barrier_info.shader_sync_info.curr_sync_point == 1u);
+				const bool multipleShaders = barrier_info.shader_sync_info.total_sync_points > 1u;
 
 	#ifdef DEBUG_BARRIER
 				printf("\n pipeline_task::shader\n");
-				printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info->shader_sync_info.curr_sync_point, barrier_info->shader_sync_info.total_sync_points);
+				printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info.shader_sync_info.curr_sync_point, barrier_info.shader_sync_info.total_sync_points);
 	#endif
 
 				src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
@@ -985,7 +983,7 @@ public:
 
 				break;
 
-			} case ( static_cast<int>(pipeline_task::copy) ): {
+			} case ( pipeline_task::copy ): {
 	#ifdef DEBUG_BARRIER
 				printf("\n pipeline_task::copy\n");
 	#endif
@@ -996,7 +994,7 @@ public:
 				dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 				break;
 
-			} case ( static_cast<int>(pipeline_task::end) ): {
+			} case ( pipeline_task::end ): {
 				flush = true;
 
 	#ifdef DEBUG_BARRIER
@@ -1077,7 +1075,7 @@ public:
 		m_device->vk.CmdPipelineBarrier(m_cmdBuffer, srcStageMask, dstStageMask,
 										0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
 
-		m_previousCopy = ( task == static_cast<int>(pipeline_task::copy) );
+		m_previousCopy = ( task == pipeline_task::copy );
 	}
 
 	VkQueue queue() { return m_queue; }
