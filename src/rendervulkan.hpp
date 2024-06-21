@@ -925,7 +925,7 @@ public:
 	template <pipeline_task_t task>
 	void insertBarrier(const barrier_info_t barrier_info)
 	{
-		std::vector<VkImageMemoryBarrier> barriers;
+		std::vector<VkImageMemoryBarrier> barriers(m_textureState.size());
 
 		uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
 
@@ -1018,6 +1018,7 @@ public:
 
     const auto backendPresentLayout = GetBackend()->GetPresentLayout();
 
+    int barrier_offset = 0;
 		for (auto& pair : m_textureState)
 		{
 			CVulkanTexture *image = pair.first;
@@ -1064,17 +1065,19 @@ public:
 
 
 
-			barriers.push_back(memoryBarrier);
+			barriers[barrier_offset]=memoryBarrier;
 
 			state.discarded = false;
 			state.dirty = false;
 			state.needsImport = false;
+			
+			barrier_offset++;
 		}
 
 		// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
 		// ^ Done ^_^
 		m_device->vk.CmdPipelineBarrier(m_cmdBuffer, srcStageMask, dstStageMask,
-										0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+										0, 0, nullptr, 0, nullptr, barrier_offset, barriers.data());
 
 		m_previousCopy = ( task == pipeline_task::copy );
 	}
