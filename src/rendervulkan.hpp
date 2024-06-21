@@ -1016,6 +1016,7 @@ public:
 		if (dstStageMask == 0)
 			dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 
+    const auto backendPresentLayout = GetBackend()->GetPresentLayout();
 
 		for (auto& pair : m_textureState)
 		{
@@ -1043,7 +1044,7 @@ public:
 
 				.dstAccessMask = dst_read_bits | dst_write_bits,
 				.oldLayout = state.discarded ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-				.newLayout =  isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
+				.newLayout =  isPresent ? backendPresentLayout : VK_IMAGE_LAYOUT_GENERAL,
 				.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 				.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
 				.image = image->vkImage(),
