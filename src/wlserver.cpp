@@ -37,7 +37,7 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
@@ -118,7 +118,7 @@ void GamescopeTimelinePoint::Release()
 
 	//fprintf( stderr, "Release: %lu\n", ulPoint );
 	drmSyncobjTimelineSignal( pTimeline->drm_fd, &pTimeline->handle, &ulPoint, 1 );
-	wlr_render_timeline_unref( pTimeline );
+	wlr_drm_syncobj_timeline_unref( pTimeline );
 }
 
 //
@@ -181,8 +181,8 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 
 	const auto& pFeedback = wlserver_surface_swapchain_feedback(surf);
 
-	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
-		wlr_linux_drm_syncobj_v1_get_surface_state( wlserver.wlr.drm_syncobj_manager_v1, surf );
+	struct wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
+		wlr_linux_drm_syncobj_v1_get_surface_state( surf );
 
 	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {
 			std::in_place_t{},
@@ -199,7 +199,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		}
 
 		oReleasePoint.emplace(
-			  wlr_render_timeline_ref( pSyncState->release_timeline ),
+			  wlr_drm_syncobj_timeline_ref( pSyncState->release_timeline ),
 			  pSyncState->release_point 
 		);
 	}

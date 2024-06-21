@@ -1,6 +1,3 @@
-[submodule "subprojects/wlroots"]
-	path = subprojects/wlroots
-	url = https://github.com/Joshua-Ashton/wlroots.git
 [submodule "subprojects/libliftoff"]
 	path = subprojects/libliftoff
 	url = https://gitlab.freedesktop.org/emersion/libliftoff.git
@@ -22,3 +19,9 @@
 [submodule "subprojects/parallel-hashmap"]
 	path = subprojects/parallel-hashmap
 	url = https://github.com/greg7mdp/parallel-hashmap.git
+[submodule "subprojects/wayland-protocols"]
+	path = subprojects/wayland-protocols
+	url = https://gitlab.freedesktop.org/wayland/wayland-protocols.git
+[submodule "subprojects/wlroots"]
+	path = subprojects/wlroots
+	url = https://gitlab.freedesktop.org/wlroots/wlroots.git
