@@ -11,9 +11,6 @@
 
 #undef wlr_linux_drm_syncobj_v1_get_surface_state
 #undef wlr_linux_drm_syncobj_manager_v1_create
-extern "C" struct wlr_linux_drm_syncobj_surface_v1_state * wlr_linux_drm_syncobj_v1_get_surface_state(struct wlr_surface *wlr_surface);
-extern "C" struct wlr_linux_drm_syncobj_manager_v1 *wlr_linux_drm_syncobj_manager_v1_create(struct wl_display *display, uint32_t version, int drm_fd);
-
 
 #include <wayland-server-core.h>
 #include <atomic>
@@ -123,7 +120,7 @@ private:
 
 	std::unordered_map<uint32_t, wlserver_content_override *> content_overrides;
 
-	bool xwayland_ready = false;
+	mutable std::binary_semaphore xwayland_ready{0};
 	_XDisplay *dpy = NULL;
 
 	std::mutex wayland_commit_lock;
@@ -169,8 +166,8 @@ struct wlserver_t {
 	std::set <uint32_t> touch_down_ids;
 
 	struct {
-		char *name;
-		char *description;
+		char * __restrict__ name;
+		char * __restrict__ description;
 		int phys_width, phys_height; // millimeters
 	} output_info;
 
@@ -257,7 +254,7 @@ std::vector<std::shared_ptr<steamcompmgr_win_t>> wlserver_get_xdg_shell_windows(
 bool wlserver_xdg_dirty();
 
 struct wlserver_output_info {
-	const char *description;
+	const char * __restrict__ description;
 	int phys_width, phys_height; // millimeters
 };
 

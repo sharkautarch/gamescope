@@ -68,7 +68,10 @@
 #include <algorithm>
 #include <list>
 #include <set>
-
+extern "C" {
+   __attribute__((visibility("hidden"))) struct wlr_linux_drm_syncobj_surface_v1_state * wlr_linux_drm_syncobj_v1_get_surface_state(struct wlr_surface *wlr_surface);
+   __attribute__((visibility("hidden"))) struct wlr_linux_drm_syncobj_manager_v1 *wlr_linux_drm_syncobj_manager_v1_create(struct wl_display *display, uint32_t version, int drm_fd);
+}
 static LogScope wl_log("wlserver");
 
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
@@ -130,7 +133,7 @@ void GamescopeTimelinePoint::Release()
 
 static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
 {
-	if (!oPoint)
+	if (!oPoint || !(oPoint->pTimeline) )
 		return std::nullopt;
 
 	uint64_t uSignalledPoint = 0;
@@ -302,12 +305,15 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 
 void gamescope_xwayland_server_t::on_xwayland_ready(void *data)
 {
-	xwayland_ready = true;
-
+  static bool bAlreadyReleasedSem = false;
 	if (!xwayland_server->options.no_touch_pointer_emulation)
 		wl_log.infof("Xwayland doesn't support -noTouchPointerEmulation, touch events might get duplicated");
 
 	dpy = XOpenDisplay( get_nested_display_name() );
+	if (!bAlreadyReleasedSem) {
+		xwayland_ready.release();
+		bAlreadyReleasedSem = true;
+	}
 }
 
 void gamescope_xwayland_server_t::xwayland_ready_callback(struct wl_listener *listener, void *data)
@@ -380,7 +386,7 @@ static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unacce
 	wlr_relative_pointer_manager_v1_send_relative_motion( wlserver.relative_pointer_manager, wlserver.wlr.seat, 0, unaccel_dx, unaccel_dy, unaccel_dx, unaccel_dy );
 }
 
-static void wlserver_handle_pointer_motion(struct wl_listener *listener, void *data)
+static void wlserver_handle_pointer_motion(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlr_pointer_motion_event *event = (struct wlr_pointer_motion_event *) data;
 
@@ -402,7 +408,7 @@ void wlserver_open_steam_menu( bool qam )
 	XTestFakeKeyEvent(server->get_xdisplay(), XKeysymToKeycode( server->get_xdisplay(), XK_Control_L ), False, CurrentTime);
 }
 
-static void wlserver_handle_pointer_button(struct wl_listener *listener, void *data)
+static void wlserver_handle_pointer_button(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, button );
 	struct wlr_pointer_button_event *event = (struct wlr_pointer_button_event *) data;
@@ -410,7 +416,7 @@ static void wlserver_handle_pointer_button(struct wl_listener *listener, void *d
 	wlr_seat_pointer_notify_button( wlserver.wlr.seat, event->time_msec, event->button, event->state );
 }
 
-static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *data)
+static void wlserver_handle_pointer_axis(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlserver_pointer *pointer = wl_container_of( listener, pointer, axis );
 	struct wlr_pointer_axis_event *event = (struct wlr_pointer_axis_event *) data;
@@ -418,7 +424,7 @@ static void wlserver_handle_pointer_axis(struct wl_listener *listener, void *dat
 	wlr_seat_pointer_notify_axis( wlserver.wlr.seat, event->time_msec, event->orientation, event->delta, event->delta_discrete, event->source, event->relative_direction );
 }
 
-static void wlserver_handle_pointer_frame(struct wl_listener *listener, void *data)
+static void wlserver_handle_pointer_frame(struct wl_listener *listener, void * __restrict__ data)
 {
 	wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
 
@@ -444,7 +450,7 @@ static inline uint32_t TouchClickModeToLinuxButton( gamescope::TouchClickMode eT
 
 std::atomic<bool> g_bPendingTouchMovement = { false };
 
-static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
+static void wlserver_handle_touch_down(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, down );
 	struct wlr_touch_down_event *event = (struct wlr_touch_down_event *) data;
@@ -452,7 +458,7 @@ static void wlserver_handle_touch_down(struct wl_listener *listener, void *data)
 	wlserver_touchdown( event->x, event->y, event->touch_id, event->time_msec );
 }
 
-static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
+static void wlserver_handle_touch_up(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, up );
 	struct wlr_touch_up_event *event = (struct wlr_touch_up_event *) data;
@@ -460,7 +466,7 @@ static void wlserver_handle_touch_up(struct wl_listener *listener, void *data)
 	wlserver_touchup( event->touch_id, event->time_msec );
 }
 
-static void wlserver_handle_touch_motion(struct wl_listener *listener, void *data)
+static void wlserver_handle_touch_motion(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlserver_touch *touch = wl_container_of( listener, touch, motion );
 	struct wlr_touch_motion_event *event = (struct wlr_touch_motion_event *) data;
@@ -468,7 +474,7 @@ static void wlserver_handle_touch_motion(struct wl_listener *listener, void *dat
 	wlserver_touchmotion( event->x, event->y, event->touch_id, event->time_msec );
 }
 
-static void wlserver_new_input(struct wl_listener *listener, void *data)
+static void wlserver_new_input(struct wl_listener *listener, void * __restrict__ data)
 {
 	struct wlr_input_device *device = (struct wlr_input_device *) data;
 
@@ -548,13 +554,13 @@ wlserver_wl_surface_info *get_wl_surface_info(struct wlr_surface *wlr_surf)
 	return reinterpret_cast<wlserver_wl_surface_info *>(wlr_surf->data);
 }
 
-static void handle_wl_surface_commit( struct wl_listener *l, void *data )
+static void handle_wl_surface_commit( struct wl_listener *l, void * __restrict__ data )
 {
 	wlserver_wl_surface_info *surf = wl_container_of( l, surf, commit );
 	xwayland_surface_commit(surf->wlr);
 }
 
-static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
+static void handle_wl_surface_destroy( struct wl_listener *l, void *__restrict__ data )
 {
 	wlserver_wl_surface_info *surf = wl_container_of( l, surf, destroy );
 	if (surf->x11_surface)
@@ -607,7 +613,7 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	delete surf;
 }
 
-static void wlserver_new_surface(struct wl_listener *l, void *data)
+static void wlserver_new_surface(struct wl_listener *l, void * __restrict__ data)
 {
 	struct wlr_surface *wlr_surf = (struct wlr_surface *)data;
 	uint32_t id = wl_resource_get_id(wlr_surf->resource);
@@ -2727,7 +2733,9 @@ void gamescope_xwayland_server_t::set_wl_id( struct wlserver_x11_surface_info *s
 
 bool gamescope_xwayland_server_t::is_xwayland_ready() const
 {
-	return xwayland_ready;
+  using namespace std::literals;
+  constexpr const auto waitDuration = 500ms;
+	return xwayland_ready.try_acquire_for(waitDuration);
 }
 
 _XDisplay *gamescope_xwayland_server_t::get_xdisplay()

@@ -3101,7 +3101,7 @@ namespace gamescope
 			return init_drm( &g_DRM, g_nPreferredOutputWidth, g_nPreferredOutputHeight, g_nNestedRefresh );
 		}
 
-		virtual bool __attribute__((cold)) PostInit() override
+		virtual bool PostInit() override
 		{
 			if ( g_DRM.pConnector )
 				WritePatchedEdid( g_DRM.pConnector->GetRawEDID(), g_DRM.pConnector->GetHDRInfo(), g_bRotated );

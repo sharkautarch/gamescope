@@ -1363,7 +1363,7 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> 
 		m_textureRefs.emplace_back(std::move(texture));
 }
 
-void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d)
+void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d) __restrict__
 {
 	m_shaperLut[slot] = lut1d.get();
 	m_lut3D[slot] = lut3d.get();
@@ -1372,6 +1372,35 @@ void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTex
 		m_textureRefs.emplace_back(std::move(lut1d));
 	if (lut3d != nullptr)
 		m_textureRefs.emplace_back(std::move(lut3d));
+}
+
+template <uint32_t slotEnd, bool bEmpty>
+void CVulkanCmdBuffer::bindVecColorMgmtLuts( auto lut1d, auto lut3d)
+{
+	if constexpr (!bEmpty) 
+	{
+		if (lut1d == lut3d)
+		  __builtin_unreachable();
+
+		uint32_t len = m_textureRefs.size();
+		m_textureRefs.resize(len+slotEnd*2);
+		for (uint32_t slot = 0; slot < slotEnd; slot++) {
+			m_shaperLut[slot] = lut1d[slot].get();
+			m_textureRefs[len+slot] = std::move(lut1d[slot]);
+		}
+		
+		for (uint32_t slot = 0; slot < slotEnd; slot++) {
+			m_lut3D[slot] = lut3d[slot].get();
+			m_textureRefs[len+slotEnd+slot] = std::move(lut3d[slot]);
+		}
+	} 
+	else 
+	{
+		for (uint32_t slot = 0; slot < slotEnd; slot++) {
+			m_shaperLut[slot] = nullptr;
+			m_lut3D[slot] = nullptr;
+		}
+	}
 }
 
 void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
@@ -2815,7 +2844,7 @@ gamescope::Rc<CVulkanTexture> vulkan_create_3d_lut(uint32_t width, uint32_t heig
 	return texture;
 }
 
-void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& lut1d, const gamescope::Rc<CVulkanTexture>& lut3d, void* lut1d_data, void* lut3d_data)
+void vulkan_update_luts(const gamescope::Rc<CVulkanTexture>& __restrict__ lut1d, const gamescope::Rc<CVulkanTexture>& __restrict__ lut3d, void* __restrict__ lut1d_data, void* __restrict__ lut3d_data)
 {
 	size_t lut1d_size = lut1d->width() * sizeof(uint16_t) * 4;
 	size_t lut3d_size = lut3d->width() * lut3d->height() * lut3d->depth() * sizeof(uint16_t) * 4;
@@ -3314,7 +3343,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 	return pTex;
 }
 
-gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits )
+gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void * __restrict__ bits )
 {
 	gamescope::OwningRc<CVulkanTexture> pTex = new CVulkanTexture();
 
@@ -3714,16 +3743,19 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		g_reshadeManager.clear();
 	}
 
-	gamescope::Rc<CVulkanTexture> compositeImage;
-	if ( pOutputOverride )
-		compositeImage = pOutputOverride;
-	else
-		compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
-
+	gamescope::Rc<CVulkanTexture> compositeImage = [&]() -> gamescope::Rc<CVulkanTexture> {
+		if ( pOutputOverride )
+			return std::move(pOutputOverride);
+		else
+			return std::move(partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ]);
+  }();
+  
 	auto cmdBuffer = g_device.commandBuffer();
 
-	for (uint32_t i = 0; i < EOTF_Count; i++)
-		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
+
+  cmdBuffer->bindVecColorMgmtLuts<EOTF_Count>(frameInfo->shaperLut, frameInfo->lut3D);
+	//for (uint32_t i = 0; i < EOTF_Count; i++)
+	//	cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
 
 
@@ -3890,9 +3922,12 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 				cmdBuffer->uploadConstants<BlitPushData_t>(constants);
 			}
 
-			for (uint32_t i = 0; i < EOTF_Count; i++)
-				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);
-
+			/*for (uint32_t i = 0; i < EOTF_Count; i++)
+				cmdBuffer->bindColorMgmtLuts(i, nullptr, nullptr);*/
+			{
+				static constexpr bool bEmpty = true;
+		  	cmdBuffer->bindVecColorMgmtLuts<EOTF_Count, bEmpty>(nullptr, nullptr);
+		  }
 			cmdBuffer->bindPipeline(g_device.pipeline( ycbcr ? SHADER_TYPE_RGB_TO_NV12 : SHADER_TYPE_BLIT, 1, 0, 0, GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB, EOTF_Count ));
 			cmdBuffer->bindTexture(0, compositeImage);
 			cmdBuffer->setTextureSrgb(0, true);

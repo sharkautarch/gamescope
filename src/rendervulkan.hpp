@@ -902,6 +902,8 @@ public:
 	void begin();
 	void end();
 	void bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture);
+	template <uint32_t slotEnd, bool bEmpty = false>
+  void bindVecColorMgmtLuts( auto lut1d, auto lut3d);
 	void bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d);
 	void setTextureStorage(bool storage);
 	void setTextureSrgb(uint32_t slot, bool srgb);

@@ -169,7 +169,7 @@ namespace gamescope
     	virtual void releaseLatch() { return; } //currently only used by sdl
 
         virtual bool Init() = 0;
-        virtual bool __attribute__((cold)) PostInit() = 0;
+        virtual bool PostInit() = 0;
         virtual std::span<const char *const> GetInstanceExtensions() const = 0;
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
         virtual VkImageLayout GetPresentLayout() const = 0;

@@ -412,7 +412,7 @@ update_color_mgmt()
 }
 
 static void
-__attribute__((cold)) update_screenshot_color_mgmt()
+update_screenshot_color_mgmt()
 {
 	create_color_mgmt_luts(k_ScreenshotColorMgmt, g_ScreenshotColorMgmtLuts);
 	create_color_mgmt_luts(k_ScreenshotColorMgmtHDR, g_ScreenshotColorMgmtLutsHDR);
@@ -600,7 +600,7 @@ bool set_mura_scale(float new_scale)
 	return diff;
 }
 
-bool __attribute__((cold)) set_color_3dlut_override(const char *path)
+bool set_color_3dlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmt.pending.externalDirtyCtr++;
@@ -628,7 +628,7 @@ bool __attribute__((cold)) set_color_3dlut_override(const char *path)
 	return true;
 }
 
-bool __attribute__((cold)) set_color_shaperlut_override(const char *path)
+bool set_color_shaperlut_override(const char *path)
 {
 	int nLutIndex = EOTF_Gamma22;
 	g_ColorMgmt.pending.externalDirtyCtr++;
@@ -1723,7 +1723,7 @@ bool MouseCursor::getTexture()
 	return true;
 }
 
-void MouseCursor::GetDesiredSize( int& nWidth, int &nHeight )
+void MouseCursor::GetDesiredSize( int& __restrict__ nWidth, int& __restrict__ nHeight )
 {
 	int nSize = g_nBaseCursorScale;
 	if ( g_nCursorScaleHeight > 0 )
@@ -2225,7 +2225,7 @@ static void paint_pipewire()
 }
 #endif
 
-static void __attribute__((hot))
+static void
 paint_all(bool async)
 {
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
@@ -4940,7 +4940,7 @@ update_runtime_info()
 }
 
 static void
-__attribute__((cold, noinline)) init_runtime_info()
+init_runtime_info()
 {
 	const char *path = getenv( "GAMESCOPE_LIMITER_FILE" );
 	if ( !path )
@@ -5937,7 +5937,7 @@ register_systray(xwayland_ctx_t *ctx)
 	XSetSelectionOwner(ctx->dpy, net_system_tray, ctx->ourWindow, 0);
 }
 
-bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime )
+bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint16_t presentMargin, uint64_t earliestLatchTime )
 {
 	bool bFoundWindow = false;
 	uint32_t j;
@@ -6010,7 +6010,7 @@ bool __attribute__((no_stack_protector,nothrow)) handle_done_commit( steamcompmg
 }
 
 // TODO: Merge these two functions.
-void __attribute__((no_stack_protector,nothrow,hot)) handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
+void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
 	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
 
@@ -6335,7 +6335,7 @@ void check_new_xdg_res()
 std::mutex g_ChildPidMutex;
 std::vector<pid_t> g_ChildPids;
 
-static void __attribute__((cold))
+static void
 spawn_client( char **argv, bool bAsyncChild )
 {
 #if defined(__linux__)
@@ -6702,7 +6702,7 @@ xwayland_ctx_t g_ctx;
 
 static bool setup_error_handlers = false;
 
-void __attribute__((cold)) init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
+void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
 {
 	assert(!xwayland_server->ctx);
 	xwayland_server->ctx = std::make_unique<xwayland_ctx_t>();
@@ -7155,7 +7155,7 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 	check_new_xdg_res();
 }
 
-void __attribute__((cold)) update_edid_prop()
+void update_edid_prop()
 {
 	const char *filename = gamescope::GetPatchedEdidPath();
 	if (!filename)
