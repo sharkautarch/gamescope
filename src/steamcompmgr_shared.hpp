@@ -31,6 +31,8 @@ struct wlserver_x11_surface_info
 	gamescope_xwayland_server_t *xwayland_server;
 };
 
+// not always an xdg window anymore
+// wayland-y window (not xwayland)
 struct wlserver_xdg_surface_info
 {
 	std::atomic<struct wlr_surface *> main_surface;
@@ -42,7 +44,9 @@ struct wlserver_xdg_surface_info
 
 	// owned by wlserver
 	struct wlr_xdg_surface *xdg_surface = nullptr;
+	struct wlr_layer_surface_v1 *layer_surface = nullptr;
 	steamcompmgr_win_t *win = nullptr;
+	bool bDoneConfigure = false;
 
 	std::atomic<bool> mapped = { false };
 
@@ -57,7 +61,7 @@ struct wlserver_xdg_surface_info
 enum class steamcompmgr_win_type_t
 {
 	XWAYLAND,
-	XDG,
+	XDG, // could also be layer shell
 };
 
 struct steamcompmgr_xwayland_win_t
@@ -97,42 +101,42 @@ struct Rect
 extern focus_t g_steamcompmgr_xdg_focus;
 
 struct steamcompmgr_win_t {
-	unsigned int	opacity;
+	unsigned int	opacity = 0xffffffff;
 
-	uint64_t seq;
+	uint64_t seq = 0;
 
 	std::shared_ptr<std::string> title;
-	bool utf8_title;
-	pid_t pid;
+	bool utf8_title = false;
+	pid_t pid = -1;
 
-	bool isSteamLegacyBigPicture;
-	bool isSteamStreamingClient;
-	bool isSteamStreamingClientVideo;
-	uint32_t inputFocusMode;
-	uint32_t appID;
-	bool isOverlay;
-	bool isExternalOverlay;
-	bool isFullscreen;
-	bool isSysTrayIcon;
-	bool sizeHintsSpecified;
-	bool skipTaskbar;
-	bool skipPager;
-	unsigned int requestedWidth;
-	unsigned int requestedHeight;
-	bool is_dialog;
-	bool maybe_a_dropdown;
+	bool isSteamLegacyBigPicture = false;
+	bool isSteamStreamingClient = false;
+	bool isSteamStreamingClientVideo = false;
+	uint32_t inputFocusMode = 0;
+	uint32_t appID = 0;
+	bool isOverlay = false;
+	bool isExternalOverlay = false;
+	bool isFullscreen = false;
+	bool isSysTrayIcon = false;
+	bool sizeHintsSpecified = false;
+	bool skipTaskbar = false; 
+	bool skipPager = false;
+	unsigned int requestedWidth = 0;
+	unsigned int requestedHeight = 0;
+	bool is_dialog = false;
+	bool maybe_a_dropdown = false;
 	bool outdatedInteractiveFocus = false;
 
-	bool hasHwndStyle;
-	uint32_t hwndStyle;
-	bool hasHwndStyleEx;
-	uint32_t hwndStyleEx;
+	bool hasHwndStyle = false;
+	uint32_t hwndStyle = 0;
+	bool hasHwndStyleEx = false;
+	uint32_t hwndStyleEx = 0;
 
-	bool nudged;
-	bool ignoreOverrideRedirect;
+	bool nudged = false;
+	bool ignoreOverrideRedirect = false;
 
-	bool unlockedForFrameCallback;
-	bool receivedDoneCommit;
+	bool unlockedForFrameCallback = false;
+	bool receivedDoneCommit = false;
 
 	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;

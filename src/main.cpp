@@ -26,6 +26,7 @@
 #include "convar.h"
 #include "gpuvis_trace_utils.h"
 #include "Utils/TempFiles.h"
+#include "Utils/Version.h"
 #include "defer.hpp"
 
 #include "backends.h"
@@ -50,6 +51,7 @@ int g_nCursorScaleHeight = -1;
 
 const struct option *gamescope_options = (struct option[]){
 	{ "help", no_argument, nullptr, 0 },
+	{ "version", no_argument, nullptr, 0 },
 	{ "nested-width", required_argument, nullptr, 'w' },
 	{ "nested-height", required_argument, nullptr, 'h' },
 	{ "nested-refresh", required_argument, nullptr, 'r' },
@@ -699,6 +701,8 @@ int main(int argc, char **argv)
 
 	gamescope::GamescopeBackend eCurrentBackend = gamescope::GamescopeBackend::Auto;
 
+	gamescope::PrintVersion();
+
 	int o;
 	int opt_index = -1;
 	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
@@ -754,6 +758,9 @@ int main(int argc, char **argv)
 				opt_name = gamescope_options[opt_index].name;
 				if (strcmp(opt_name, "help") == 0) {
 					fprintf(stderr, "%s", usage);
+					return 0;
+				} else if (strcmp(opt_name, "version") == 0) {
+					// We always print the version to stderr anyway.
 					return 0;
 				} else if (strcmp(opt_name, "debug-layers") == 0) {
 					g_bDebugLayers = true;
@@ -905,6 +912,8 @@ int main(int argc, char **argv)
         }
 	}
 
+	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
+
 	switch ( eCurrentBackend )
 	{
 #if HAVE_DRM
@@ -944,8 +953,6 @@ int main(int argc, char **argv)
 	}
 
 	UpdateCompatEnvVars();
-
-	g_ForcedNV12ColorSpace = parse_colorspace_string( getenv( "GAMESCOPE_NV12_COLORSPACE" ) );
 
 	if ( !vulkan_init_formats() )
 	{

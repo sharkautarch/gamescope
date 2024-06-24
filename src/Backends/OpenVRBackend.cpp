@@ -54,7 +54,8 @@ static bool GetVulkanDeviceExtensionsRequired( VkPhysicalDevice pPhysicalDevice,
 
 gamescope::ConVar<bool> cv_vr_always_warp_cursor( "vr_always_warp_cursor", true, "Whether or not we should always warp the cursor, even if it is invisible so we get hover events." );
 gamescope::ConVar<bool> cv_vr_use_modifiers( "vr_use_modifiers", true, "Use DMA-BUF modifiers?" );
-gamescope::ConVar<bool> cv_vr_transparent_backing( "cv_vr_transparent_backing", true, "Should backing be transparent or not?" );
+gamescope::ConVar<bool> cv_vr_transparent_backing( "vr_transparent_backing", true, "Should backing be transparent or not?" );
+gamescope::ConVar<bool> cv_vr_use_window_icons( "vr_use_window_icons", true, "Should we use window icons if they are available?" );
 
 // Not in public headers yet.
 namespace vr
@@ -838,7 +839,7 @@ namespace gamescope
         }
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override
         {
-            if ( uIconPixels && uIconPixels->size() >= 3 )
+            if ( cv_vr_use_window_icons && uIconPixels && uIconPixels->size() >= 3 )
             {
                 const uint32_t uWidth = (*uIconPixels)[0];
                 const uint32_t uHeight = (*uIconPixels)[1];
