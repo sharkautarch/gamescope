@@ -4,6 +4,8 @@
 #include <vector>
 #include <span>
 #include <optional>
+#include "convar.h"
+#include "Utils/Version.h"
 
 #include <wayland-client.h>
 #include <gamescope-control-client-protocol.h>
@@ -231,6 +233,8 @@ namespace gamescope
 
     static int RunGamescopeCtl( int argc, char *argv[] )
     {
+        console_log.bPrefixEnabled = false;
+
         bool bInfoOnly = argc < 2;
 
         gamescope::GamescopeCtl gamescopeCtl;
@@ -239,7 +243,8 @@ namespace gamescope
 
         if ( bInfoOnly )
         {
-            fprintf( stdout, "gamescopectl info:\n" );
+            PrintVersion();
+            fprintf( stdout, "gamescope_control info:\n" );
             const auto &oActiveDisplayInfo = gamescopeCtl.GetActiveDisplayInfo();
             if ( oActiveDisplayInfo )
             {

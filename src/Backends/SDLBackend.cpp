@@ -587,6 +587,8 @@ namespace gamescope
 
 		static uint32_t fake_timestamp = 0;
 
+		wlserver.bWaylandServerRunning.wait( false );
+
 		SDL_Event event;
 		while( SDL_WaitEvent( &event ) )
 		{
