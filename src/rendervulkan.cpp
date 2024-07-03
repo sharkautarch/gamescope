@@ -1348,7 +1348,7 @@ void CVulkanCmdBuffer::begin()
 
 void CVulkanCmdBuffer::end()
 {
-  static constexpr barrier_info_t barrier_info{}
+  static constexpr barrier_info_t barrier_info{};
 	insertBarrier<pipeline_task::end>(barrier_info);
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
