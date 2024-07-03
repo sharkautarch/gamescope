@@ -1067,7 +1067,12 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
                 .layerCount = 1,
             };
             m_cmdBuffer->prepareDestImage(texture.get());
-            m_cmdBuffer->insertBarrier();
+            
+            static constexpr barrier_info_t barrier_info = {
+                .reshade_target = reshade_target::init
+            };
+            m_cmdBuffer->insertBarrier<pipeline_task::reshade>(barrier_info);
+            
             device->vk.CmdClearColorImage(m_cmdBuffer->rawBuffer(), texture->vkImage(), VK_IMAGE_LAYOUT_GENERAL, &clearColor, 1, &range);
             m_cmdBuffer->markDirty(texture.get());
             device->submitInternal(&*m_cmdBuffer);
@@ -1649,8 +1654,11 @@ uint64_t ReshadeEffectPipeline::execute(gamescope::Rc<CVulkanTexture> inImage, g
             else
                 m_cmdBuffer->prepareSrcImage(tex != nullptr ? tex.get() : inImage.get());
         }
-
-        m_cmdBuffer->insertBarrier();
+        
+        static constexpr barrier_info_t barrier_info = {
+                .reshade_target = reshade_target::runtime
+        };
+        m_cmdBuffer->insertBarrier<pipeline_task::reshade>(barrier_info);
 
         std::array<gamescope::Rc<CVulkanTexture>, 8> rts{};
 

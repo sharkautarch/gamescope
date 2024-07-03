@@ -1348,7 +1348,8 @@ void CVulkanCmdBuffer::begin()
 
 void CVulkanCmdBuffer::end()
 {
-	insertBarrier(true);
+  static constexpr barrier_info_t barrier_info{}
+	insertBarrier<pipeline_task::end>(barrier_info);
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
@@ -1419,7 +1420,7 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
 {
 	for (auto src : m_boundTextures)
 	{
@@ -1428,7 +1429,15 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	}
 	assert(m_target != nullptr);
 	prepareDestImage(m_target);
-	insertBarrier();
+	
+	const barrier_info_t barrier_info = {
+			.shader_sync_info = {
+			.curr_sync_point = curr_dispatch_no,
+			.total_sync_points = total_dispatches
+		}
+	};
+	
+	insertBarrier<pipeline_task::shader>(barrier_info);
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 	
@@ -1584,7 +1593,9 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 	assert(src->height() == dst->height());
 	prepareSrcImage(src.get());
 	prepareDestImage(dst.get());
-	insertBarrier();
+	
+	static constexpr barrier_info_t barrier_info{};
+	insertBarrier<pipeline_task::copy>(barrier_info);
 
 	VkImageCopy region = {
 		.srcSubresource = {
@@ -1612,7 +1623,9 @@ void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::R
 void CVulkanCmdBuffer::copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst)
 {
 	prepareDestImage(dst.get());
-	insertBarrier();
+	
+	static constexpr barrier_info_t barrier_info{};
+	insertBarrier<pipeline_task::copy>(barrier_info);
 	VkBufferImageCopy region = {
 		.bufferOffset = offset,
 		.bufferRowLength = stride,
@@ -1671,62 +1684,6 @@ void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
 	// image should have been prepared already
 	assert(result !=  m_textureState.end());
 	result->second.dirty = true;
-}
-
-void CVulkanCmdBuffer::insertBarrier(bool flush)
-{
-	std::vector<VkImageMemoryBarrier> barriers;
-
-	uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
-
-	VkImageSubresourceRange subResRange =
-	{
-		.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-		.levelCount = 1,
-		.layerCount = 1
-	};
-
-	for (auto& pair : m_textureState)
-	{
-		CVulkanTexture *image = pair.first;
-		TextureState& state = pair.second;
-		assert(!flush || !state.needsImport);
-
-		bool isExport = flush && state.needsExport;
-		bool isPresent = flush && state.needsPresentLayout;
-
-		if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
-			continue;
-
-		const VkAccessFlags write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-		const VkAccessFlags read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
-
-		if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
-			image->queueFamily = m_queueFamily;
-
-		VkImageMemoryBarrier memoryBarrier =
-		{
-			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-			.srcAccessMask = state.dirty ? write_bits : 0u,
-			.dstAccessMask = flush ? 0u : read_bits | write_bits,
-			.oldLayout = state.discarded ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-			.newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
-			.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
-			.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
-			.image = image->vkImage(),
-			.subresourceRange = subResRange
-		};
-
-		barriers.push_back(memoryBarrier);
-
-		state.discarded = false;
-		state.dirty = false;
-		state.needsImport = false;
-	}
-
-	// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
-	m_device->vk.CmdPipelineBarrier(m_cmdBuffer, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
-									0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
 }
 
 CVulkanDevice g_device;
@@ -3760,6 +3717,15 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);
 
+	unsigned int total_dispatches = 1;
+	if ( frameInfo->useFSRLayer0 || frameInfo->useNISLayer0 || frameInfo->blurLayer0 )
+		total_dispatches = 2;
+
+	if ( pPipewireTexture != nullptr )
+		total_dispatches++;
+
+	unsigned int curr_dispatch_no = 1;
+
 	if ( frameInfo->useFSRLayer0 )
 	{
 		uint32_t inputX = frameInfo->layers[0].tex->width();
@@ -3780,7 +3746,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 16;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
@@ -3791,7 +3757,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else if ( frameInfo->useNISLayer0 )
 	{
@@ -3822,7 +3788,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		int pixelsPerGroupX = 32;
 		int pixelsPerGroupY = 24;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY));
+		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY), 1, total_dispatches, curr_dispatch_no++);
 
 		struct FrameInfo_t nisFrameInfo = *frameInfo;
 		nisFrameInfo.layers[0].tex = g_output.tmpOutput;
@@ -3836,7 +3802,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
@@ -3862,7 +3828,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 
 		bool useSrgbView = frameInfo->layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 
@@ -3875,7 +3841,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
 		cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 	else
 	{
@@ -3886,7 +3852,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		const int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 	}
 
 	if ( pPipewireTexture != nullptr )
@@ -3932,7 +3898,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			// For ycbcr, we operate on 2 pixels at a time, so use the half-extent.
 			const int dispatchSize = ycbcr ? pixelsPerGroup * 2 : pixelsPerGroup;
 
-			cmdBuffer->dispatch(div_roundup(pPipewireTexture->width(), dispatchSize), div_roundup(pPipewireTexture->height(), dispatchSize));
+			cmdBuffer->dispatch(div_roundup(pPipewireTexture->width(), dispatchSize), div_roundup(pPipewireTexture->height(), dispatchSize), 1, total_dispatches, curr_dispatch_no++);
 		}
 	}
 
