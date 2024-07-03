@@ -40,6 +40,8 @@ public:
 
 	void errorf_errno(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 
+	bool bPrefixEnabled = true;
+
 	using LoggingListenerFunc = std::function<void(LogPriority ePriority, const char *pScope, const char *pText)>;
 	std::unordered_map<uintptr_t, LoggingListenerFunc> m_LoggingListeners;
 };

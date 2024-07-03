@@ -36,7 +36,10 @@ void LogScope::vlogf(enum LogPriority priority, const char *fmt, va_list args) {
 	for (auto& listener : m_LoggingListeners)
 		listener.second( priority, this->name, buf );
 
-	fprintf(stderr, "%s: %s\n", this->name, buf);
+	if ( bPrefixEnabled )
+		fprintf(stderr, "%s: %s\n", this->name, buf);
+	else
+	 	fprintf(stderr, "%s\n", buf);
 }
 
 void LogScope::logf(enum LogPriority priority, const char *fmt, ...) {

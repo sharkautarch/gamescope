@@ -1,7 +1,10 @@
 #include "convar.h"
+#include "Utils/Version.h"
 #include <algorithm>
 
 LogScope console_log("console");
+
+extern void PrintGamescopeVersion();
 
 namespace gamescope
 {
@@ -46,5 +49,11 @@ namespace gamescope
                 (int)help.pszName.size(), help.pszName.data(), 
                 (int)help.pszDesc.size(), help.pszDesc.data() );
         }
+    });
+
+    static ConCommand cc_version("version", "Print current Gamescope version",
+    []( std::span<std::string_view> args )
+    {
+        PrintVersion();
     });
 }

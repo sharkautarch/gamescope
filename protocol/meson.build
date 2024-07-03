@@ -34,6 +34,9 @@ protocols = [
 	'gamescope-control.xml',
 	'gamescope-swapchain.xml',
 	'gamescope-private.xml',
+
+	# wlroots protocols
+	'wlr-layer-shell-unstable-v1.xml',
 ]
 
 protocols_client_src = []
