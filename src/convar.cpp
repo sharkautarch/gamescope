@@ -11,12 +11,18 @@ namespace gamescope
     bool ConCommand::Exec( std::span<std::string_view> args )
     {
         if ( args.size() < 1 )
+        {
+            console_log.warnf( "No command specified." );
             return false;
+        }
 
         std::string_view commandName = args[0];
         auto iter = GetCommands().find( commandName );
         if ( iter == GetCommands().end() )
+        {
+            console_log.warnf( "Command not found." );
             return false;
+        }
 
         iter->second->Invoke( args );
         return true;

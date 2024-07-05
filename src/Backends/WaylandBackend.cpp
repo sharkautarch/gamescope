@@ -4,7 +4,7 @@
 #include "vblankmanager.hpp"
 #include "steamcompmgr.hpp"
 #include "edid.h"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "convar.h"
 #include "refresh_rate.h"
 #include "waitable.h"

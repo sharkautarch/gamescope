@@ -16,6 +16,7 @@
 enum LogPriority {
 	LOG_SILENT,
 	LOG_ERROR,
+	LOG_WARNING,
 	LOG_INFO,
 	LOG_DEBUG,
 };
@@ -34,6 +35,7 @@ public:
 
 	void vlogf(enum LogPriority priority, const char *fmt, va_list args) ATTRIB_PRINTF(3, 0);
 
+	void warnf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 	void errorf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 	void infof(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 	void debugf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);

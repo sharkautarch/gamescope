@@ -27,7 +27,8 @@
 #include "gpuvis_trace_utils.h"
 #include "Utils/TempFiles.h"
 #include "Utils/Version.h"
-#include "defer.hpp"
+#include "Utils/Process.h"
+#include "Utils/Defer.h"
 
 #include "backends.h"
 #include "refresh_rate.h"
@@ -299,14 +300,6 @@ bool g_bBorderlessOutputWindow = false;
 
 int g_nXWaylandCount = 1;
 
-bool g_bNiceCap = false;
-int g_nOldNice = 0;
-int g_nNewNice = 0;
-
-bool g_bRt = false;
-int g_nOldPolicy;
-struct sched_param g_schedOldParam;
-
 float g_flMaxWindowScale = FLT_MAX;
 
 uint32_t g_preferVendorID = 0;
@@ -431,8 +424,20 @@ static enum gamescope::GamescopeBackend parse_backend_name(const char *str)
 }
 
 struct sigaction handle_signal_action = {};
-extern std::mutex g_ChildPidMutex;
-extern std::vector<pid_t> g_ChildPids;
+
+void ShutdownGamescope()
+{
+	g_bRun = false;
+
+	nudge_steamcompmgr();
+}
+
+static gamescope::ConCommand cc_shutdown( "shutdown", "Cleanly shutdown gamescope",
+[]( std::span<std::string_view> svArgs )
+{
+	console_log.infof( "Shutting down..." );
+	ShutdownGamescope();
+});
 
 static void handle_signal( int sig )
 {
@@ -444,20 +449,7 @@ static void handle_signal( int sig )
 	case SIGQUIT:
 	case SIGTERM:
 	case SIGINT:
-		{
-			std::unique_lock lock( g_ChildPidMutex );
-			for ( auto& child_pid : g_ChildPids )
-			{
-				if (child_pid != 0)
-				{
-					fprintf( stderr, "gamescope: Received %s signal, forwarding to child!\n", strsignal(sig) );
-					kill(child_pid, sig);
-				}
-			}
-		}
-
-		fprintf( stderr, "gamescope: Received %s signal, attempting shutdown!\n", strsignal(sig) );
-		g_bRun = false;
+		ShutdownGamescope();
 		break;
 	case SIGUSR1:
 		fprintf( stderr, "gamescope: hi :3\n" );
@@ -465,51 +457,6 @@ static void handle_signal( int sig )
 	default:
 		assert( false ); // unreachable
 	}
-}
-
-static struct rlimit g_originalFdLimit;
-static bool g_fdLimitRaised = false;
-
-void restore_fd_limit( void )
-{
-	if (!g_fdLimitRaised) {
-		return;
-	}
-
-	if ( setrlimit( RLIMIT_NOFILE, &g_originalFdLimit ) )
-	{
-		fprintf( stderr, "Failed to reset the maximum number of open files in child process\n" );
-		fprintf( stderr, "Use of select() may fail.\n" );
-	}
-
-	g_fdLimitRaised = false;
-}
-
-static void raise_fd_limit( void )
-{
-	struct rlimit newFdLimit;
-
-	memset(&g_originalFdLimit, 0, sizeof(g_originalFdLimit));
-	if ( getrlimit( RLIMIT_NOFILE, &g_originalFdLimit ) != 0 )
-	{
-		fprintf( stderr, "Could not query maximum number of open files. Leaving at default value.\n" );
-		return;
-	}
-
-	if ( g_originalFdLimit.rlim_cur >= g_originalFdLimit.rlim_max )
-	{
-		return;
-	}
-
-	memcpy(&newFdLimit, &g_originalFdLimit, sizeof(newFdLimit));
-	newFdLimit.rlim_cur = newFdLimit.rlim_max;
-
-	if ( setrlimit( RLIMIT_NOFILE, &newFdLimit ) )
-	{
-		fprintf( stderr, "Failed to raise the maximum number of open files. Leaving at default value.\n" );
-	}
-
-	g_fdLimitRaised = true;
 }
 
 static EStreamColorspace parse_colorspace_string( const char *pszStr )
@@ -682,6 +629,7 @@ bool g_bExposeWayland = false;
 const char *g_sOutputName = nullptr;
 bool g_bDebugLayers = false;
 bool g_bForceDisableColorMgmt = false;
+bool g_bRt = false;
 
 // This will go away when we remove the getopt stuff from vr session.
 // For now...
@@ -814,54 +762,17 @@ int main(int argc, char **argv)
 		}
 	}
 
-#if defined(__linux__) && HAVE_LIBCAP
+	if ( gamescope::Process::HasCapSysNice() )
 	{
-		cap_t pCaps = cap_get_proc();
-		defer( cap_free( pCaps ) );
-		if ( pCaps )
-		{
-			cap_flag_value_t nicecapvalue = CAP_CLEAR;
-			cap_get_flag( pCaps, CAP_SYS_NICE, CAP_EFFECTIVE, &nicecapvalue );
+		gamescope::Process::SetNice( -20 );
 
-			if ( nicecapvalue == CAP_SET )
-			{
-				g_bNiceCap = true;
-
-				errno = 0;
-				int nOldNice = nice( 0 );
-				if ( nOldNice != -1 && errno == 0 )
-				{
-					g_nOldNice = nOldNice;
-				}
-
-				errno = 0;
-				int nNewNice = nice( -20 );
-				if ( nNewNice != -1 && errno == 0 )
-				{
-					g_nNewNice = nNewNice;
-				}
-				if ( g_bRt )
-				{
-					struct sched_param sched;
-					sched_getparam(0, &sched);
-					sched.sched_priority = sched_get_priority_min(SCHED_RR);
-
-					if (pthread_getschedparam(pthread_self(), &g_nOldPolicy, &g_schedOldParam)) {
-						fprintf(stderr, "Failed to get old scheduling parameters: %s", strerror(errno));
-						exit(1);
-					}
-					if (sched_setscheduler(0, SCHED_RR, &sched))
-						fprintf(stderr, "Failed to set realtime: %s", strerror(errno));
-				}
-			}
-		}
+		if ( g_bRt )
+			gamescope::Process::SetRealtime();
 	}
-
-	if ( g_bNiceCap == false )
+	else
 	{
 		fprintf( stderr, "No CAP_SYS_NICE, falling back to regular-priority compute and threads.\nPerformance will be affected.\n" );
 	}
-#endif
 
 #if 0
 	while( !IsInDebugSession() )
@@ -870,7 +781,7 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	raise_fd_limit();
+	gamescope::Process::RaiseFdLimit();
 
 	if ( gpuvis_trace_init() != -1 )
 	{
@@ -1052,6 +963,9 @@ int main(int argc, char **argv)
 	wlserver_run();
 
 	steamCompMgrThread.join();
+
+	gamescope::Process::KillAllChildren( getpid(), SIGTERM );
+	gamescope::Process::WaitForAllChildren();
 }
 
 static void steamCompMgrThreadRun(int argc, char **argv)

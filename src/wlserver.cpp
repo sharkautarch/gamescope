@@ -596,6 +596,8 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	if ( surf->wlr == wlserver.kb_focus_surface )
 		wlserver.kb_focus_surface = nullptr;
 
+	wlserver.current_dropdown_surfaces.erase( surf->wlr );
+
 	for (auto it = g_PendingCommits.begin(); it != g_PendingCommits.end();)
 	{
 		if (it->surf == surf->wlr)
@@ -1199,8 +1201,6 @@ static void gamescope_private_execute( struct wl_client *client, struct wl_resou
 	args.emplace_back( value );
 	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
 		gamescope_private_send_command_executed( resource );
-	else
-		wl_log.errorf( "gamescope_private_execute: Command not found" );
 }
 
 static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
@@ -2156,24 +2156,52 @@ void wlserver_oncursorevent()
 	}
 }
 
+static std::pair<int, int> wlserver_get_cursor_bounds()
+{
+	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
+	for ( auto iter : wlserver.current_dropdown_surfaces )
+	{
+		auto [nDropdownX, nDropdownY] = iter.second;
+		auto [nDropdownWidth, nDropdownHeight] = wlserver_get_surface_extent( iter.first );
+
+		nWidth = std::max( nWidth, nDropdownX + nDropdownWidth );
+		nHeight = std::max( nHeight, nDropdownY + nDropdownHeight );
+	}
+
+	return std::make_pair( nWidth, nHeight );
+}
+
+static void wlserver_clampcursor()
+{
+	auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
+	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( nWidth - 1 ) );
+	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( nHeight - 1 ) );
+}
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )
 {
 	assert( wlserver_is_lock_held() );
 
-	wlserver.mouse_focus_surface = wlrsurface;
-
-	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlrsurface );
-
-	if ( x < nWidth && y < nHeight )
+	if ( wlserver.mouse_focus_surface == wlrsurface )
 	{
-		wlserver.mouse_surface_cursorx = x;
-		wlserver.mouse_surface_cursory = y;
+		wlserver_clampcursor();
 	}
 	else
 	{
-		wlserver.mouse_surface_cursorx = nWidth / 2.0;
-		wlserver.mouse_surface_cursory = nHeight / 2.0;
+		wlserver.mouse_focus_surface = wlrsurface;
+
+		auto [nWidth, nHeight] = wlserver_get_surface_extent( wlrsurface );
+
+		if ( x < nWidth && y < nHeight )
+		{
+			wlserver.mouse_surface_cursorx = x;
+			wlserver.mouse_surface_cursory = y;
+		}
+		else
+		{
+			wlserver.mouse_surface_cursorx = nWidth / 2.0;
+			wlserver.mouse_surface_cursory = nHeight / 2.0;
+		}
 	}
 
 	wlserver_oncursorevent();
@@ -2181,11 +2209,14 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 }
 
-static void wlserver_clampcursor()
+void wlserver_clear_dropdowns()
 {
-	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
-	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( nWidth - 1 ) );
-	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( nHeight - 1 ) );
+	wlserver.current_dropdown_surfaces.clear();
+}
+
+void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY )
+{
+	wlserver.current_dropdown_surfaces[wlrsurface] = std::make_pair( nX, nY );
 }
 
 void wlserver_mousehide()
@@ -2524,7 +2555,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
 
-		auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
+		auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
 		tx = clamp( tx, 0.0, nWidth - 0.1 );
 		ty = clamp( ty, 0.0, nHeight - 0.1 );
 

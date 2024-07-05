@@ -17,7 +17,7 @@
 #include <SDL_vulkan.h>
 #include "rendervulkan.hpp"
 #include "steamcompmgr.hpp"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "refresh_rate.h"
 
 #include "sdlscancodetable.hpp"
