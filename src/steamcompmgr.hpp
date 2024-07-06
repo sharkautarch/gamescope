@@ -82,7 +82,9 @@ public:
 
 	void UpdatePosition();
 
-	bool isHidden() { return wlserver.bCursorHidden || m_imageEmpty; }
+	bool isHidden() {
+		return wlserver.bCursorHidden.load(std::memory_order_acquire) || m_imageEmpty; 
+	}
 	bool imageEmpty() const { return m_imageEmpty; }
 
 	void undirty() { getTexture(); }
@@ -126,7 +128,7 @@ extern float focusedWindowOffsetY;
 
 extern bool g_bFSRActive;
 
-extern uint32_t inputCounter;
+extern std::atomic<uint32_t> inputCounter;
 extern uint64_t g_lastWinSeq;
 
 void nudge_steamcompmgr( void );

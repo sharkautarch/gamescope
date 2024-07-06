@@ -2146,7 +2146,7 @@ void wlserver_oncursorevent()
 	if ( !ShouldDrawCursor() )
 		return;
 
-	if ( !wlserver.bCursorHidden && wlserver.bCursorHasImage )
+	if ( !wlserver.bCursorHidden.load(std::memory_order_acquire) && wlserver.bCursorHasImage )
 	{
 		hasRepaint = true;
 	}
@@ -2186,10 +2186,11 @@ static void wlserver_clampcursor()
 
 void wlserver_mousehide()
 {
-	wlserver.ulLastMovedCursorTime = 0;
-	if ( wlserver.bCursorHidden != true )
+	wlserver.ulLastMovedCursorTime.store(0, std::memory_order_release);
+	
+	const bool bCursorWasHidden = wlserver.bCursorHidden.fetch_or(true, std::memory_order_seq_cst); //fetch_or returns the *old* value of the atomic variable
+	if ( !bCursorWasHidden )
 	{
-		wlserver.bCursorHidden = true;
 		hasRepaint = true;
 	}
 }
@@ -2351,8 +2352,9 @@ void wlserver_mousemotion( double dx, double dy, uint32_t time )
 		return;
 	}
 
-	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
-	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
+	wlserver.ulLastMovedCursorTime.store(get_time_in_nanos(), std::memory_order_release);
+	
+	wlserver.bCursorHidden.store(wlserver.bCursorHasImage.load(std::memory_order_acquire), std::memory_order_release);
 
 	wlserver.mouse_surface_cursorx += dx;
 	wlserver.mouse_surface_cursory += dy;
@@ -2374,10 +2376,12 @@ void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic )
 
 	wlserver_clampcursor();
 
-	wlserver.ulLastMovedCursorTime = get_time_in_nanos();
-	if ( !bSynthetic )
-		wlserver.bCursorHidden = !wlserver.bCursorHasImage;
+	wlserver.ulLastMovedCursorTime.store(get_time_in_nanos(), std::memory_order_release);
 
+	if ( !bSynthetic ) {
+		wlserver.bCursorHidden.store(wlserver.bCursorHasImage.load(std::memory_order_acquire), std::memory_order_release);
+	}
+	
 	wlserver_oncursorevent();
 
 	wlr_seat_pointer_notify_motion( wlserver.wlr.seat, time, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
@@ -2394,8 +2398,8 @@ void wlserver_fake_mouse_pos( double x, double y )
 void wlserver_mousebutton( int button, bool press, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
-
-	wlserver.bCursorHidden = !wlserver.bCursorHasImage;
+	
+	wlserver.bCursorHidden.store(wlserver.bCursorHasImage.load(std::memory_order_acquire), std::memory_order_release);
 
 	wlserver_oncursorevent();
 
