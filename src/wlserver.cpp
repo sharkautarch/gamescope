@@ -2187,9 +2187,10 @@ static void wlserver_clampcursor()
 void wlserver_mousehide()
 {
 	wlserver.ulLastMovedCursorTime = 0;
-	if ( wlserver.bCursorHidden != true )
+	
+	const bool bCursorWasHidden = wlserver.bCursorHidden.exchange(true); //exchange returns the *old* value of the atomic variable
+	if ( !bCursorWasHidden )
 	{
-		wlserver.bCursorHidden = true;
 		hasRepaint = true;
 	}
 }
