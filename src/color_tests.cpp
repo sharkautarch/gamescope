@@ -1,12 +1,12 @@
 #include "color_helpers.h"
 #include <cstdio>
 
-#include <glm/ext.hpp>
+//#include <glm/ext.hpp>
 #include <glm/gtx/string_cast.hpp>
 
 /*
+using ns_color_tests::nLutEdgeSize3d;
 const uint32_t nLutSize1d = 4096;
-const uint32_t nLutEdgeSize3d = 17;
 
 uint16_t lut1d[nLutSize1d*4];
 uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
@@ -36,7 +36,7 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
     float flGain = 1.0f;
 
     for (auto _ : state) {
-        calcColorTransform( &lut1d_float, nLutSize1d, &lut3d_float, nLutEdgeSize3d, inputColorimetry, inputEOTF,
+        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
             outputEncodingColorimetry, EOTF_Gamma22,
             colorMapping, nightmode, tonemapping, nullptr, flGain );
         for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )

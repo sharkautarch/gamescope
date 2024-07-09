@@ -363,13 +363,22 @@ bool LoadCubeLut( lut3d_t * lut3d, const char * filename );
 // If the white points differ, this performs an absolute colorimetric match
 // Look luts are optional, but if specified applied in the sourceEOTF space
 
+template <uint32_t lutEdgeSize3d>
 void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
-	lut3d_t * pLut3d, int nLutEdgeSize3d,
+	lut3d_t * pLut3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
 	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
 	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
 	const lut3d_t * pLook, float flGain );
+
+#define REGISTER_LUT_EDGE_SIZE(size) template void calcColorTransform<(size)>( lut1d_t * pShaper, int nLutSize1d, \
+	lut3d_t * pLut3d,                                                                                                   \
+	const displaycolorimetry_t & source, EOTF sourceEOTF,                                                               \
+	const displaycolorimetry_t & dest,  EOTF destEOTF,                                                                  \
+	const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,                                             \
+	const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,                   \
+	const lut3d_t * pLook, float flGain )
 
 // Build colorimetry and a gamut mapping for the given SDR configuration
 // Note: the output colorimetry will use the native display's white point

@@ -1,4 +1,5 @@
-#include "color_helpers.h"
+#define COLOR_HELPERS_CPP
+#include "color_helpers_impl.h"
 
 #include <algorithm>
 #include <cstdint>
@@ -213,7 +214,11 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
+#ifndef __FAST_MATH__
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
+#else
+    return std::min(std::max(min, a), max);
+#endif
 }
 
 // Adapted from:
@@ -665,8 +670,9 @@ inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping
 
 bool g_bHuePreservationWhenClipping = false;
 
+template <uint32_t lutEdgeSize3d>
 void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
-	lut3d_t * pLut3d, int nLutEdgeSize3d,
+	lut3d_t * pLut3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,
     const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
@@ -679,6 +685,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
     // The 3d lut should be considered a 'matched' pair where the transform is only complete
     // when applying both.  I.e., you can put ANY transform in here, and it should work.
 
+    static constexpr int32_t nLutEdgeSize3d = static_cast<int32_t>(lutEdgeSize3d);
     if ( pShaper )
     {
         float flScale = 1.f / ( (float) nLutSize1d - 1.f );
