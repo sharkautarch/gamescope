@@ -308,7 +308,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 
-			calcColorTransform( &g_tmpLut1d, s_nLutSize1d, &g_tmpLut3d, s_nLutEdgeSize3d, inputColorimetry, inputEOTF,
+			calcColorTransform<s_nLutEdgeSize3d>( &g_tmpLut1d, s_nLutSize1d, &g_tmpLut3d, inputColorimetry, inputEOTF,
 				outputEncodingColorimetry, newColorMgmt.outputEncodingEOTF,
 				newColorMgmt.outputVirtualWhite, newColorMgmt.chromaticAdaptationMode,
 				colorMapping, newColorMgmt.nightmode, tonemapping, pLook, flGain );
