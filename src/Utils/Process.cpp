@@ -151,13 +151,18 @@ namespace gamescope::Process
         }
     }
 
-    void WaitForAllChildren()
+    bool WaitForAllChildren( std::optional<pid_t> onStopPid )
     {
         for ( ;; )
         {
             int nStatus = 0;
-            if ( waitpid( -1, &nStatus, 0 ) == -1 && errno == ECHILD )
-                return;
+            pid_t nDeadChild = waitpid( -1, &nStatus, 0 );
+
+            if ( onStopPid && nDeadChild == *onStopPid )
+                return true;
+
+            if ( nDeadChild == -1 && errno == ECHILD )
+                return false;
         }
     }
 
@@ -225,16 +230,52 @@ namespace gamescope::Process
         RestoreRealtime();
     }
 
+    bool CloseFd( int nFd )
+    {
+        for ( ;; )
+        {
+            if ( close( nFd ) == 0 )
+            {
+                return true;
+            }
+            else
+            {
+                if ( errno == EINTR )
+                    continue;
+
+                s_ProcessLog.errorf_errno( "CloseFd failed to close FD %d", nFd );
+                return false;
+            }
+        }
+    }
+
     void CloseAllFds( std::span<int> nExcludedFds )
     {
-        int nFDLimit = int( sysconf( _SC_OPEN_MAX ) );
-        for ( int i = 0; i < nFDLimit; i++ )
+        DIR *pProcDir = opendir( "/proc/self/fd" );
+        if ( !pProcDir )
         {
-            bool bExcluded = std::find( nExcludedFds.begin(), nExcludedFds.end(), i ) != nExcludedFds.end();
+            s_ProcessLog.errorf( "Failed to open /proc" );
+            return;
+        }
+        defer( closedir( pProcDir ) );
+
+        struct dirent *pEntry;
+        while ( ( pEntry = readdir( pProcDir ) ) )
+        {
+            std::optional<int> onFd = Parse<int32_t>( pEntry->d_name );
+            if ( !onFd )
+                continue;
+
+            int nFd = *onFd;
+
+            bool bExcluded = std::find( nExcludedFds.begin(), nExcludedFds.end(), nFd ) != nExcludedFds.end();
             if ( bExcluded )
                 continue;
 
-            close( i );
+            if ( !CloseFd( nFd ) )
+            {
+                s_ProcessLog.errorf_errno( "CloseAllFds failed to close FD %d", nFd );
+            }
         }
     }
 
@@ -257,8 +298,8 @@ namespace gamescope::Process
         {
             if ( bDoubleFork )
             {
-                close( nPidPipe[0] );
-                close( nPidPipe[1] );
+                CloseFd( nPidPipe[0] );
+                CloseFd( nPidPipe[1] );
             }
             s_ProcessLog.errorf_errno( "Failed to fork() child" );
             return -1;
@@ -280,7 +321,7 @@ namespace gamescope::Process
             if ( bDoubleFork )
             {
                 // Don't need the read pipe anymore.
-                close( nPidPipe[0] );
+                CloseFd( nPidPipe[0] );
             }
 
             if ( fnPreambleInChild )
@@ -291,7 +332,7 @@ namespace gamescope::Process
                 pid_t nGrandChild = fork();
                 if ( nGrandChild == 0 )
                 {
-                    close( nPidPipe[1] );
+                    CloseFd( nPidPipe[1] );
 
                     if ( execvp( argv[0], argv ) == -1 )
                     {
@@ -306,7 +347,7 @@ namespace gamescope::Process
 
                 ssize_t sszRet = write( nPidPipe[1], &nGrandChild, sizeof( nGrandChild ) );
                 (void) sszRet; // Cannot handle this error here, it is checked on the other side anyway.
-                close( nPidPipe[1] );
+                CloseFd( nPidPipe[1] );
 
                 _exit( 0 );
             }
@@ -333,8 +374,8 @@ namespace gamescope::Process
             // Read the PID back from the pipe and close it.
             pid_t nGrandChild = 0;
             ssize_t sszAmountRead = read( nPidPipe[0], &nGrandChild, sizeof( nGrandChild ) );
-            close( nPidPipe[0] );
-            close( nPidPipe[1] );
+            CloseFd( nPidPipe[0] );
+            CloseFd( nPidPipe[1] );
 
             // Sanity check what we got from the pipe.
             if ( sszAmountRead != sizeof( nGrandChild ) )
