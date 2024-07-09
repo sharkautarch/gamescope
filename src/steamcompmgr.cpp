@@ -4996,7 +4996,11 @@ steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
 
 static inline float santitize_float( float f )
 {
+#ifndef __FAST_MATH__
 	return ( std::isfinite( f ) ? f : 0.f );
+#else
+	return f;
+#endif
 }
 
 static void
