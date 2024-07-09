@@ -160,9 +160,9 @@ struct wlserver_t {
 	bool mouse_constraint_requires_warp = false;
 	pixman_region32_t confine;
 	struct wlr_pointer_constraint_v1 *mouse_constraint = nullptr;
-	uint64_t ulLastMovedCursorTime = 0;
-	bool bCursorHidden = true;
-	bool bCursorHasImage = true;
+	std::atomic<uint64_t> ulLastMovedCursorTime = 0;
+	std::atomic<char> bCursorHidden = true;
+	std::atomic<bool> bCursorHasImage = true;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];
 	std::set <uint32_t> touch_down_ids;
