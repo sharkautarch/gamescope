@@ -132,7 +132,6 @@ struct xwayland_ctx_t final : public gamescope::IWaitable
 		Atom utf8StringAtom;
 		Atom netWMNameAtom;
 		Atom netWMIcon;
-		Atom motifWMHints;
 		Atom netSystemTrayOpcodeAtom;
 		Atom steamStreamingClientAtom;
 		Atom steamStreamingClientVideoAtom;

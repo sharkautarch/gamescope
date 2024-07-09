@@ -38,12 +38,14 @@
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
 #include <wlr/types/wlr_linux_drm_syncobj_v1.h>
+#include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
 
 #include "gamescope-xwayland-protocol.h"
 #include "gamescope-pipewire-protocol.h"
 #include "gamescope-control-protocol.h"
+#include "gamescope-private-protocol.h"
 #include "gamescope-swapchain-protocol.h"
 #include "presentation-time-protocol.h"
 
@@ -268,6 +270,23 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	wlr_surface->current.committed = 0;
 
+	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
+	wlserver_xdg_surface_info *wlserver_xdg_surface_info = get_wl_surface_info(wlr_surface)->xdg_surface;
+
+	if ( wlserver_xdg_surface_info )
+	{
+		if ( !wlserver_xdg_surface_info->bDoneConfigure )
+		{
+			if ( wlserver_xdg_surface_info->xdg_surface )
+				wlr_xdg_surface_schedule_configure( wlserver_xdg_surface_info->xdg_surface );
+
+			if ( wlserver_xdg_surface_info->layer_surface )
+				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
+
+			wlserver_xdg_surface_info->bDoneConfigure = true;
+		}
+	}
+
 	// Committing without buffer state is valid and commits the same buffer again.
 	// Mutter and Weston have forward progress on the frame callback in this situation,
 	// so let the commit go through. It will be duplication-eliminated later.
@@ -282,8 +301,6 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
 
-	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
-	wlserver_xdg_surface_info *wlserver_xdg_surface_info = get_wl_surface_info(wlr_surface)->xdg_surface;
 	if (wlserver_x11_surface_info)
 	{
 		assert(wlserver_x11_surface_info->xwayland_server);
@@ -375,9 +392,6 @@ static void wlserver_handle_key(struct wl_listener *listener, void *data)
 static void wlserver_perform_rel_pointer_motion(double unaccel_dx, double unaccel_dy)
 {
 	assert( wlserver_is_lock_held() );
-
-	unaccel_dx *= g_mouseSensitivity;
-	unaccel_dy *= g_mouseSensitivity;
 
 	wlr_relative_pointer_manager_v1_send_relative_motion( wlserver.relative_pointer_manager, wlserver.wlr.seat, 0, unaccel_dx, unaccel_dy, unaccel_dx, unaccel_dy );
 }
@@ -578,6 +592,8 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	if ( surf->wlr == wlserver.kb_focus_surface )
 		wlserver.kb_focus_surface = nullptr;
 
+	wlserver.current_dropdown_surfaces.erase( surf->wlr );
+
 	for (auto it = g_PendingCommits.begin(); it != g_PendingCommits.end();)
 	{
 		if (it->surf == surf->wlr)
@@ -593,7 +609,10 @@ static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 	}
 
 	for (auto& feedback : surf->pending_presentation_feedbacks)
+	{
 		wp_presentation_feedback_send_discarded(feedback);
+		wl_resource_destroy(feedback);
+	}
 	surf->pending_presentation_feedbacks.clear();
 
 	surf->wlr->data = nullptr;
@@ -688,7 +707,7 @@ static void content_override_handle_surface_destroy( struct wl_listener *listene
 
 static void gamescope_swapchain_destroy_co( struct wl_resource *resource );
 
-void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wlr_surface *surface, uint32_t x11_window )
+void gamescope_xwayland_server_t::handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window )
 {
 	wlserver_x11_surface_info *x11_surface = lookup_x11_surface_info_from_xid( this, x11_window );
 	// If we found an x11_surface, go back up to our parent.
@@ -696,31 +715,34 @@ void gamescope_xwayland_server_t::handle_override_window_content( struct wl_clie
 		x11_window = x11_surface->x11_id;
 
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-	wl_log.infof( "handle_override_window_content: (1) x11_window: 0x%x swapchain_resource: %p surface: %p", x11_window, resource, surface );
+	wl_log.infof( "handle_override_window_content: (1) x11_window: 0x%x swapchain_resource: %p surface: %p", x11_window, gamescope_swapchain_resource, surface );
 #endif
 
 	if ( content_overrides.count( x11_window ) ) {
-		if ( content_overrides[x11_window]->gamescope_swapchain == resource )
+		if ( content_overrides[x11_window]->gamescope_swapchain == gamescope_swapchain_resource )
 			return;
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-		wl_log.infof( "handle_override_window_content: (2) DESTROYING x11_window: 0x%x old_swapchain: %p new_swapchain: %p", x11_window, content_overrides[x11_window]->gamescope_swapchain, resource );
+		wl_log.infof( "handle_override_window_content: (2) DESTROYING x11_window: 0x%x old_swapchain: %p new_swapchain: %p", x11_window, content_overrides[x11_window]->gamescope_swapchain, gamescope_swapchain_resource );
 #endif
 		destroy_content_override( content_overrides[ x11_window ] );
 	}
 
-	gamescope_swapchain_destroy_co( resource );
+	if ( gamescope_swapchain_resource )
+	{
+		gamescope_swapchain_destroy_co( gamescope_swapchain_resource );
+	}
 
 	struct wlserver_content_override *co = (struct wlserver_content_override *)calloc(1, sizeof(*co));
 	co->server = this;
 	co->surface = surface;
 	co->x11_window = x11_window;
-	co->gamescope_swapchain = resource;
+	co->gamescope_swapchain = gamescope_swapchain_resource;
 	co->surface_destroy_listener.notify = content_override_handle_surface_destroy;
 	wl_signal_add( &surface->events.destroy, &co->surface_destroy_listener );
 	content_overrides[ x11_window ] = co;
 
 #ifdef GAMESCOPE_SWAPCHAIN_DEBUG
-	wl_log.infof( "handle_override_window_content: (3) x11_window: 0x%x swapchain_resource: %p surface: %p co: %p", x11_window, resource, surface, co );
+	wl_log.infof( "handle_override_window_content: (3) x11_window: 0x%x swapchain_resource: %p surface: %p co: %p", x11_window, gamescope_swapchain_resource, surface, co );
 #endif
 
 	if ( x11_surface )
@@ -788,7 +810,7 @@ static void gamescope_xwayland_handle_override_window_content( struct wl_client 
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( 0 );
 	assert( server );
 	struct wlr_surface *surface = wlr_surface_from_resource( surface_resource );
-	server->handle_override_window_content(client, resource, surface, x11_window);
+	server->handle_override_window_content(client, nullptr, surface, x11_window);
 }
 
 static void gamescope_xwayland_handle_destroy( struct wl_client *client, struct wl_resource *resource )
@@ -1165,6 +1187,52 @@ static void create_gamescope_control( void )
 }
 
 ////////////////////////
+// gamescope_private
+////////////////////////
+
+static void gamescope_private_execute( struct wl_client *client, struct wl_resource *resource, const char *cvar_name, const char *value )
+{
+	std::vector<std::string_view> args;
+	args.emplace_back( cvar_name );
+	args.emplace_back( value );
+	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+		gamescope_private_send_command_executed( resource );
+}
+
+static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
+{
+	wl_resource_destroy( resource );
+}
+
+static const struct gamescope_private_interface gamescope_private_impl = {
+	.destroy = gamescope_private_handle_destroy,
+	.execute = gamescope_private_execute,
+};
+
+static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
+{
+	struct wl_resource *resource = wl_resource_create( client, &gamescope_private_interface, version, id );
+	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ](LogPriority ePriority, const char *pScope, const char *pText)
+	{
+		if ( !wlserver_is_lock_held() )
+			return;
+		gamescope_private_send_log( resource, pText );
+	};
+	wl_resource_set_implementation( resource, &gamescope_private_impl, NULL,
+		[](struct wl_resource *resource)
+	{
+		console_log.m_LoggingListeners.erase( (uintptr_t)resource );
+	});
+
+}
+
+static void create_gamescope_private( void )
+{
+	uint32_t version = 1;
+	wl_global_create( wlserver.display, &gamescope_private_interface, version, NULL, gamescope_private_bind );
+}
+
+////////////////////////
 // presentation-time
 ////////////////////////
 
@@ -1246,6 +1314,7 @@ void wlserver_presentation_feedback_presented( struct wlr_surface *surface, std:
 			wl_surface_info->sequence >> 32,
 			wl_surface_info->sequence & 0xffffffff,
 			flags);
+		wl_resource_destroy(feedback);
 	}
 
 	presentation_feedbacks.clear();
@@ -1553,11 +1622,11 @@ static void xdg_surface_unmap(struct wl_listener *listener, void *data) {
 	wlserver.xdg_dirty = true;
 }
 
-static void xdg_surface_destroy(struct wl_listener *listener, void *data) {
+static void waylandy_surface_destroy(struct wl_listener *listener, void *data) {
 	struct wlserver_xdg_surface_info* info =
 		wl_container_of(listener, info, destroy);
 
-	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(info->xdg_surface->surface);
+	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(info->main_surface);
 	if (!wlserver_surface)
 	{
 		wl_log.infof("No base surface info. (destroy)");
@@ -1571,6 +1640,7 @@ static void xdg_surface_destroy(struct wl_listener *listener, void *data) {
 	info->main_surface = nullptr;
 	info->win = nullptr;
 	info->xdg_surface = nullptr;
+	info->layer_surface = nullptr;
 	info->mapped = false;
 
 	wl_list_remove(&info->map.link);
@@ -1582,19 +1652,17 @@ static void xdg_surface_destroy(struct wl_listener *listener, void *data) {
 
 void xdg_toplevel_new(struct wl_listener *listener, void *data)
 {
-	struct wlr_xdg_toplevel *xdg_toplevel = (struct wlr_xdg_toplevel *)data;
-	wlr_xdg_surface_schedule_configure( xdg_toplevel->base );
 }
 
-void xdg_surface_new(struct wl_listener *listener, void *data)
-{
-	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
+uint32_t get_appid_from_pid( pid_t pid );
 
-	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(xdg_surface->surface);
+wlserver_xdg_surface_info* waylandy_type_surface_new(struct wl_client *client, struct wlr_surface *surface)
+{
+	wlserver_wl_surface_info *wlserver_surface = get_wl_surface_info(surface);
 	if (!wlserver_surface)
 	{
 		wl_log.infof("No base surface info. (new)");
-		return;
+		return nullptr;
 	}
 
 	auto window = std::make_shared<steamcompmgr_win_t>();
@@ -1605,28 +1673,31 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 
 	window->seq = ++g_lastWinSeq;
 	window->type = steamcompmgr_win_type_t::XDG;
+	if ( client )
+	{
+		pid_t nPid = 0;
+		wl_client_get_credentials( client, &nPid, nullptr, nullptr );
+		window->appID = get_appid_from_pid( nPid );
+	}
 	window->_window_types.emplace<steamcompmgr_xdg_win_t>();
 
 	static uint32_t s_window_serial = 0;
 	window->xdg().id = ++s_window_serial;
 
 	wlserver_xdg_surface_info* xdg_surface_info = &window->xdg().surface;
-	xdg_surface_info->main_surface = xdg_surface->surface;
+	xdg_surface_info->main_surface = surface;
 	xdg_surface_info->win = window.get();
-	xdg_surface_info->xdg_surface = xdg_surface;
 
 	wlserver_surface->xdg_surface = xdg_surface_info;
 
 	xdg_surface_info->map.notify = xdg_surface_map;
-	wl_signal_add(&xdg_surface->surface->events.map, &xdg_surface_info->map);
+	wl_signal_add(&surface->events.map, &xdg_surface_info->map);
 	xdg_surface_info->unmap.notify = xdg_surface_unmap;
-	wl_signal_add(&xdg_surface->surface->events.unmap, &xdg_surface_info->unmap);
-	xdg_surface_info->destroy.notify = xdg_surface_destroy;
-	wl_signal_add(&xdg_surface->events.destroy, &xdg_surface_info->destroy);
+	wl_signal_add(&surface->events.unmap, &xdg_surface_info->unmap);
 
 	for (auto it = g_PendingCommits.begin(); it != g_PendingCommits.end();)
 	{
-		if (it->surf == xdg_surface->surface)
+		if (it->surf == surface)
 		{
 			PendingCommit_t pending = *it;
 
@@ -1639,6 +1710,33 @@ void xdg_surface_new(struct wl_listener *listener, void *data)
 			it++;
 		}
 	}
+
+	return xdg_surface_info;
+}
+
+void xdg_surface_new(struct wl_listener *listener, void *data)
+{
+	struct wlr_xdg_surface *xdg_surface = (struct wlr_xdg_surface *)data;
+
+	wlserver_xdg_surface_info *surface_info = waylandy_type_surface_new(xdg_surface->client->client, xdg_surface->surface);
+	surface_info->destroy.notify = waylandy_surface_destroy;
+	wl_signal_add(&xdg_surface->events.destroy, &surface_info->destroy);
+
+	surface_info->xdg_surface = xdg_surface;
+}
+
+
+void layer_shell_surface_new(struct wl_listener *listener, void *data)
+{
+	struct wlr_layer_surface_v1 *layer_surface = (struct wlr_layer_surface_v1 *)data;
+
+	wlserver_xdg_surface_info *surface_info = waylandy_type_surface_new(nullptr, layer_surface->surface);
+	surface_info->destroy.notify = waylandy_surface_destroy;
+	wl_signal_add(&layer_surface->events.destroy, &surface_info->destroy);
+
+	surface_info->layer_surface = layer_surface;
+
+	surface_info->win->isExternalOverlay = true;
 }
 
 #if HAVE_LIBEIS
@@ -1698,6 +1796,8 @@ bool wlserver_init( void ) {
 
 	create_gamescope_control();
 
+	create_gamescope_private();
+
 	create_presentation_time();
 
 	// Have to make this old ancient thing for compat with older XWayland.
@@ -1736,6 +1836,15 @@ bool wlserver_init( void ) {
 	wlserver.new_xdg_toplevel.notify = xdg_toplevel_new;
 	wl_signal_add(&wlserver.xdg_shell->events.new_surface, &wlserver.new_xdg_surface);
 	wl_signal_add(&wlserver.xdg_shell->events.new_toplevel, &wlserver.new_xdg_toplevel);
+
+	wlserver.layer_shell_v1 = wlr_layer_shell_v1_create(wlserver.display, 4);
+	if (!wlserver.layer_shell_v1)
+	{
+		wl_log.infof("Unable to create layer shell interface");
+		return false;
+	}
+	wlserver.new_layer_shell_surface.notify = layer_shell_surface_new;
+	wl_signal_add(&wlserver.layer_shell_v1->events.new_surface, &wlserver.new_layer_shell_surface);
 
 	int result = -1;
 	int display_slot = 0;
@@ -1860,6 +1969,9 @@ void wlserver_run(void) TRACY_TRY
         },
     };
 
+	wlserver.bWaylandServerRunning = true;
+	wlserver.bWaylandServerRunning.notify_all();
+
 	while ( !g_bShutdownWLServer )
 	{
 		ZoneScoped;
@@ -1890,6 +2002,9 @@ void wlserver_run(void) TRACY_TRY
 			wlserver_unlock();
 		}
 	}
+
+	wlserver.bWaylandServerRunning = false;
+	wlserver.bWaylandServerRunning.notify_all();
 
 	{
 		std::unique_lock lock3(wlserver.xdg_commit_lock);
@@ -2026,11 +2141,11 @@ std::pair<int, int> wlserver_get_surface_extent( struct wlr_surface *pSurface )
 	return std::make_pair( pSurface->current.width, pSurface->current.height );
 }
 
+bool ShouldDrawCursor();
 void wlserver_oncursorevent()
 {
 	// Don't repaint if we would use a nested cursor.
-	// TODO: Move this check into GetBackend().
-	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
+	if ( !ShouldDrawCursor() )
 		return;
 
 	if ( !wlserver.bCursorHidden && wlserver.bCursorHasImage )
@@ -2039,24 +2154,52 @@ void wlserver_oncursorevent()
 	}
 }
 
+static std::pair<int, int> wlserver_get_cursor_bounds()
+{
+	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
+	for ( auto iter : wlserver.current_dropdown_surfaces )
+	{
+		auto [nDropdownX, nDropdownY] = iter.second;
+		auto [nDropdownWidth, nDropdownHeight] = wlserver_get_surface_extent( iter.first );
+
+		nWidth = std::max( nWidth, nDropdownX + nDropdownWidth );
+		nHeight = std::max( nHeight, nDropdownY + nDropdownHeight );
+	}
+
+	return std::make_pair( nWidth, nHeight );
+}
+
+static void wlserver_clampcursor()
+{
+	auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
+	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( nWidth - 1 ) );
+	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( nHeight - 1 ) );
+}
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )
 {
 	assert( wlserver_is_lock_held() );
 
-	wlserver.mouse_focus_surface = wlrsurface;
-
-	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlrsurface );
-
-	if ( x < nWidth && y < nHeight )
+	if ( wlserver.mouse_focus_surface == wlrsurface )
 	{
-		wlserver.mouse_surface_cursorx = x;
-		wlserver.mouse_surface_cursory = y;
+		wlserver_clampcursor();
 	}
 	else
 	{
-		wlserver.mouse_surface_cursorx = nWidth / 2.0;
-		wlserver.mouse_surface_cursory = nHeight / 2.0;
+		wlserver.mouse_focus_surface = wlrsurface;
+
+		auto [nWidth, nHeight] = wlserver_get_surface_extent( wlrsurface );
+
+		if ( x < nWidth && y < nHeight )
+		{
+			wlserver.mouse_surface_cursorx = x;
+			wlserver.mouse_surface_cursory = y;
+		}
+		else
+		{
+			wlserver.mouse_surface_cursorx = nWidth / 2.0;
+			wlserver.mouse_surface_cursory = nHeight / 2.0;
+		}
 	}
 
 	wlserver_oncursorevent();
@@ -2064,11 +2207,14 @@ void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y
 	wlr_seat_pointer_notify_enter( wlserver.wlr.seat, wlrsurface, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 }
 
-static void wlserver_clampcursor()
+void wlserver_clear_dropdowns()
 {
-	auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
-	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( nWidth - 1 ) );
-	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( nHeight - 1 ) );
+	wlserver.current_dropdown_surfaces.clear();
+}
+
+void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY )
+{
+	wlserver.current_dropdown_surfaces[wlrsurface] = std::make_pair( nX, nY );
 }
 
 void wlserver_mousehide()
@@ -2226,6 +2372,9 @@ static bool wlserver_apply_constraint( double *dx, double *dy )
 void wlserver_mousemotion( double dx, double dy, uint32_t time )
 {
 	assert( wlserver_is_lock_held() );
+
+	dx *= g_mouseSensitivity;
+	dy *= g_mouseSensitivity;
 
 	wlserver_perform_rel_pointer_motion( dx, dy );
 
@@ -2404,7 +2553,7 @@ void wlserver_touchmotion( double x, double y, int touch_id, uint32_t time, bool
 		tx *= focusedWindowScaleX;
 		ty *= focusedWindowScaleY;
 
-		auto [nWidth, nHeight] = wlserver_get_surface_extent( wlserver.mouse_focus_surface );
+		auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
 		tx = clamp( tx, 0.0, nWidth - 0.1 );
 		ty = clamp( ty, 0.0, nHeight - 0.1 );
 

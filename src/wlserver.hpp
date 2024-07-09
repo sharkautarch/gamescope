@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <list>
+#include <unordered_map>
 #include <optional>
 
 #include <pixman-1/pixman.h>
@@ -91,7 +92,7 @@ public:
 
 	std::vector<ResListEntry_t>& retrieve_commits();
 
-	void handle_override_window_content( struct wl_client *client, struct wl_resource *resource, struct wlr_surface *surface, uint32_t x11_window );
+	void handle_override_window_content( struct wl_client *client, struct wl_resource *gamescope_swapchain_resource, struct wlr_surface *surface, uint32_t x11_window );
 	void destroy_content_override( struct wlserver_x11_surface_info *x11_surface, struct wlr_surface *surf);
 	void destroy_content_override(struct wlserver_content_override *co);
 
@@ -143,6 +144,7 @@ struct wlserver_t {
 	
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
+	std::unordered_map<struct wlr_surface *, std::pair<int, int>> current_dropdown_surfaces;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
 	bool mouse_constraint_requires_warp = false;
@@ -165,10 +167,12 @@ struct wlserver_t {
 	struct wl_listener new_input_method;
 
 	struct wlr_xdg_shell *xdg_shell;
+	struct wlr_layer_shell_v1 *layer_shell_v1;
 	struct wlr_relative_pointer_manager_v1 *relative_pointer_manager;
 	struct wlr_pointer_constraints_v1 *constraints;
 	struct wl_listener new_xdg_surface;
 	struct wl_listener new_xdg_toplevel;
+	struct wl_listener new_layer_shell_surface;
 	struct wl_listener new_pointer_constraint;
 	std::vector<std::shared_ptr<steamcompmgr_win_t>> xdg_wins;
 	std::atomic<bool> xdg_dirty;
@@ -176,6 +180,8 @@ struct wlserver_t {
 	std::vector<ResListEntry_t> xdg_commit_queue;
 
 	std::vector<wl_resource*> gamescope_controls;
+
+	std::atomic<bool> bWaylandServerRunning = { false };
 };
 
 extern struct wlserver_t wlserver;
@@ -224,6 +230,8 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true
 void wlserver_key( uint32_t key, bool press, uint32_t time );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
+void wlserver_clear_dropdowns();
+void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY );
 void wlserver_mousemotion( double x, double y, uint32_t time );
 void wlserver_mousehide();
 void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );
