@@ -34,7 +34,23 @@
 #include <vector>
 
 #include "pipewire_gamescope.hpp"
+#include "log.hpp"
+
+static LogScope s_StreamLog( "stream" );
  
+void spa_gamescopestream_log( struct spa_debug_context *ctx, const char *fmt, ... )
+{
+    va_list args;
+    va_start( args, fmt );
+    s_StreamLog.vlogf( LOG_DEBUG, fmt, args );
+    va_end( args );
+}
+
+struct spa_debug_context s_SpaDebugContext =
+{
+    .log = spa_gamescopestream_log,
+};
+
 struct pw_version {
   int major;
   int minor;
@@ -283,9 +299,9 @@ static void on_stream_state_changed(void *_data, enum pw_stream_state old,
                     enum pw_stream_state state, const char *error)
 {
     struct data *data = (struct data *)_data;
-    fprintf(stderr, "stream state: \"%s\"\n", pw_stream_state_as_string(state));
+    s_StreamLog.debugf( "stream state: \"%s\"", pw_stream_state_as_string(state) );
     if ( error )
-        fprintf(stderr, "error: \"%s\"\n", error);
+        s_StreamLog.errorf( "error: \"%s\"", error );
     switch (state) {
     case PW_STREAM_STATE_UNCONNECTED:
         pw_main_loop_quit(data->loop);
@@ -322,8 +338,8 @@ on_stream_param_changed(void *_data, uint32_t id, const struct spa_pod *param)
     if (param == nullptr || id != SPA_PARAM_Format)
         return;
  
-    fprintf(stderr, "got format:\n");
-    spa_debug_format(2, nullptr, param);
+    s_StreamLog.debugf( "got format:" );
+    spa_debugc_format(&s_SpaDebugContext, 2, nullptr, param);
  
     if (spa_format_parse(param, &data->format.media_type, &data->format.media_subtype) < 0)
         return;
@@ -379,7 +395,7 @@ static int build_formats(struct data *data, struct spa_pod_builder *b, const str
     params[n_params++] = build_format( data, b, SPA_VIDEO_FORMAT_BGRx, nullptr, 0 );
  
     for (int i=0; i < n_params; i++)
-        spa_debug_format(2, NULL, params[i]);
+        spa_debugc_format(&s_SpaDebugContext, 2, NULL, params[i]);
 
     return n_params;
 }
@@ -395,7 +411,7 @@ static void reneg_format(void *_data, uint64_t expiration)
     if (data->format.info.raw.format == 0)
         return;
  
-    fprintf(stderr, "renegotiate formats:\n");
+    s_StreamLog.debugf( "renegotiate formats:" );
     n_params = build_formats(data, &b, params);
  
     pw_stream_update_params(data->stream, params, n_params);
@@ -507,7 +523,7 @@ int main(int argc, char *argv[])
     {
         .error = []( libdecor *pContext, libdecor_error eError, const char *pMessage )
         {
-            fprintf( stderr, "libdecor: %s", pMessage );
+            s_StreamLog.errorf( "libdecor: %s", pMessage );
         },
     };
     data.pDecor = libdecor_new( data.pDisplay, &s_LibDecorInterface );
@@ -547,7 +563,7 @@ int main(int argc, char *argv[])
     /* build the extra parameters to connect with. To connect, we can provide
      * a list of supported formats.  We use a builder that writes the param
      * object to the stack. */
-    printf("supported formats:\n");
+    s_StreamLog.debugf( "supported formats:" );
     n_params = build_formats(&data, &b, params);
  
     /* now connect the stream, we need a direction (input/output),
@@ -560,7 +576,7 @@ int main(int argc, char *argv[])
               PW_STREAM_FLAG_AUTOCONNECT |  /* try to automatically connect this stream */
               PW_STREAM_FLAG_MAP_BUFFERS),   /* mmap the buffer data for us */
               params, n_params))        /* extra parameters, see above */ < 0) {
-        fprintf(stderr, "can't connect: %s\n", spa_strerror(res));
+        s_StreamLog.errorf( "can't connect: %s\n", spa_strerror(res) );
         return -1;
     }
  
