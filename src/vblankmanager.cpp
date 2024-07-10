@@ -24,7 +24,7 @@ LogScope g_VBlankLog("vblank");
 namespace gamescope
 {
 #ifdef TRACY_ENABLE
-	static inline constinit std::atomic<char> frameToggleFlag{false};
+	alignas(std::atomic_ref<bool>::required_alignment) static inline bool frameToggleFlag{false};
 #endif
 
 	ConVar<bool> vblank_debug( "vblank_debug", false, "Enable vblank debug spew to stderr." );
@@ -227,40 +227,18 @@ namespace gamescope
 
 	void CVBlankTimer::ArmNextVBlank( bool bPreemptive )
 	{
-#ifdef TRACY_ENABLE
-		std::atomic_thread_fence(std::memory_order_acquire);
-		const bool bFrameWasStarted = frameToggleFlag.load(std::memory_order_relaxed);
-		const bool bArmed = m_bArmed;
-		if ( bPreemptive & bArmed )
-			goto SKIP_TRACE;
-
-		std::atomic_signal_fence(std::memory_order_seq_cst);
-		if ( bFrameWasStarted 
-				& (!bPreemptive | !bArmed)  ) {
-			//the 'vblank' we're marking could be leaning on the earlier or later side (compared to desired wakeup time), & this function can be called by two different threads
-			//so double check whether we're in the middle of a 'frame' here:
-			bool bFrameWasStarted_double_checked = frameToggleFlag.fetch_xor(true); //atomic toggle
-			if (bFrameWasStarted_double_checked) {
-				FrameMarkEnd(sl_vblankFrameName);
-				//g_VBlankLog.infof("Frame end");
-			} else {
-				//g_VBlankLog.infof("Frame start 1");
-				FrameMarkStart(sl_vblankFrameName);
-			}
-		} else if (!bFrameWasStarted && !frameToggleFlag.exchange(true)) {
-			//g_VBlankLog.infof("Frame start 2");
-			FrameMarkStart(sl_vblankFrameName);
-		} 
-
-	SKIP_TRACE:
-#endif
-
 		std::unique_lock lock( m_ScheduleMutex );
 
 		// If we're pre-emptively re-arming, don't
 		// do anything if we are already armed.
 		if ( bPreemptive && m_bArmed )
 			return;
+
+#ifdef TRACY_ENABLE
+		if ( UsingTimerFD() && !std::exchange(frameToggleFlag,true)) {
+			FrameMarkStart(sl_vblankFrameName);
+		}
+#endif
 
 		m_bArmed = true;
 		m_bArmed.notify_all();
@@ -293,7 +271,6 @@ namespace gamescope
 			if ( !m_bArmed.exchange( false ) )
 				return;
 
-
 			m_PendingVBlank = VBlankTime
 			{
 				.schedule = m_TimerFDSchedule,
@@ -310,6 +287,10 @@ namespace gamescope
 			gpuvis_trace_printf( "vblank timerfd wakeup" );
 
 			ITimerWaitable::DisarmTimer();
+#ifdef TRACY_ENABLE
+			if (std::exchange(frameToggleFlag, false))
+				FrameMarkEnd(sl_vblankFrameName);
+#endif
 		}
 		else
 		{
@@ -349,6 +330,12 @@ namespace gamescope
 
 			gpuvis_trace_printf( "got vblank" );
 			m_PendingVBlank = time;
+
+#ifdef TRACY_ENABLE
+			std::atomic_ref refFrameToggleFlag{frameToggleFlag};
+			if (refFrameToggleFlag.exchange(false))
+				FrameMarkEnd(sl_vblankFrameName);
+#endif
 		}
 	}
 
@@ -412,6 +399,13 @@ namespace gamescope
 				{
 					gpuvis_trace_printf( "sent vblank (nudge thread)" );
 				}
+				
+#ifdef TRACY_ENABLE
+				std::atomic_ref refFrameToggleFlag{frameToggleFlag};
+				if (!refFrameToggleFlag.exchange(true)) {
+					FrameMarkStart(sl_vblankFrameName);
+				}
+#endif
 			}
 		}
 	}
