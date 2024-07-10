@@ -152,6 +152,7 @@ src = [
   'backend.cpp',
   'wayland_backend.cpp',
   'InputEmulation.cpp',
+  'tracy_string_literals.cpp',
 ]
 
 gamescope_cpp_args = []

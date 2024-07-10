@@ -7362,8 +7362,6 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 
 		g_SteamCompMgrWaiter.PollEvents();
 
-		FrameMarkStart(sl_steamcompmgr_name);
-
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{
 			g_SteamCompMgrVBlankTime = *pendingVBlank;
@@ -7374,6 +7372,9 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 		{
 			break;
 		}
+		
+		if (vblank)
+			FrameMarkStart(sl_steamcompmgr_name);
 
 		bool flush_root = false;
 
@@ -7696,7 +7697,9 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
 		}
-		FrameMarkEnd(sl_steamcompmgr_name);
+
+		if (vblank)
+			FrameMarkEnd(sl_steamcompmgr_name);
 
 #if HAVE_PIPEWIRE
 		if ( vblank && pipewire_is_streaming() )

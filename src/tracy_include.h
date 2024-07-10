@@ -7,7 +7,8 @@
 // workaround is to throw a custom exception,
 // then catch exception at the end of the function
 
-inline constexpr const char* const sl_steamcompmgr_name = "gamescope-xwm";
+extern const char* const sl_steamcompmgr_name;
+extern const char* const sl_vblankFrameName;
 
 #ifdef TRACY_ENABLE
 #	define EXIT(status) throw ETracyExit(status)
