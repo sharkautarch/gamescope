@@ -43,7 +43,7 @@ libdecor_dep = dependency('libdecor-0')
 tracy_public_deps = []
 tracy_public_args = []
 if get_option('tracy_enable')
-	tracy_public_args += ['-DTRACY_ENABLE']
+	tracy_public_args += ['-DTRACY_ENABLE', '-DTRACY_VK_USE_SYMBOL_TABLE']
 	
 	if get_option('tracy_on_demand')
 		tracy_public_args += ['-DTRACY_ON_DEMAND']
@@ -73,7 +73,7 @@ if get_option('tracy_enable')
 endif
 
 tracy_source = ['../thirdparty/tracy/public/TracyClient.cpp']
-tracy_include = include_directories(['../thirdparty/tracy/public'])
+tracy_include = include_directories(['../thirdparty/tracy/public', '../thirdparty/tracy/public/tracy'])
 
 tracy_dep = declare_dependency(
 	compile_args: ['-Wno-sign-compare'] + tracy_public_args,

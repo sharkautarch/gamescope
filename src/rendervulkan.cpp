@@ -1196,9 +1196,26 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
+inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal"))) CVulkanDevice::commandBuffer([[maybe_unused]] const std::source_location& loc)
 {
-	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
+	auto finalize_buf = [this, &loc]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
+		//using this lambda allows for Return Value Optimization w/o duplicating code
+		if constexpr (bIsRecycled)
+			m_unusedCmdBufs.pop_back();
+
+		cmdBuf->begin();
+
+#ifdef TRACY_ENABLE
+		assert( !cmdBuf->gpuZoneHolder() );	
+		auto source_data = tracy::SourceLocationData(loc.function_name(), loc.function_name(), loc.file_name(), loc.line());
+		
+		//we don't need to worry about dangling pointer to source_data,
+		//the gpu zone object held in gpuZoneHolder will only touch the pointer during its construction w/ emplace() 
+		cmdBuf->gpuZoneHolder().emplace(cmdBuf->tracyCtx(), &source_data, cmdBuf->rawBuffer(), true);
+#endif
+		return cmdBuf;
+	};
+
 	if (m_unusedCmdBufs.empty())
 	{
 		VkCommandBuffer rawCmdBuffer;
@@ -1216,16 +1233,12 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 			return nullptr;
 		}
 
-		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily());
+		return finalize_buf.operator()<false>(std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily()));
 	}
 	else
 	{
-		cmdBuffer = std::move(m_unusedCmdBufs.back());
-		m_unusedCmdBufs.pop_back();
+		return finalize_buf.operator()<true>(std::move(m_unusedCmdBufs.back()));
 	}
-
-	cmdBuffer->begin();
-	return cmdBuffer;
 }
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
@@ -1318,13 +1331,22 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 	m_pendingCmdBufs.erase(m_pendingCmdBufs.begin(), ++last);
 }
 
+
+
 CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
+#ifdef TRACY_ENABLE 
+	, m_tracyCtx{tracy::CreateVkContext(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr)}
+#endif
 {
 }
 
 CVulkanCmdBuffer::~CVulkanCmdBuffer()
 {
+#ifdef TRACY_ENABLE
+	TracyVkDestroy(m_tracyCtx);
+#endif
+
 	m_device->vk.FreeCommandBuffers(m_device->device(), m_device->commandPool(), 1, &m_cmdBuffer);
 }
 
@@ -1333,6 +1355,9 @@ void CVulkanCmdBuffer::reset()
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
 	m_textureState.clear();
+#ifdef TRACY_ENABLE
+	m_gpuZoneHolder.reset();
+#endif
 }
 
 void CVulkanCmdBuffer::begin()
@@ -3349,7 +3374,6 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t wi
 	memcpy( g_device.uploadBufferData(size), bits, size );
 
 	auto cmdBuffer = g_device.commandBuffer();
-
 	cmdBuffer->copyBufferToImage(g_device.uploadBuffer(), 0, 0, pTex.get());
 	// TODO: Sync this copyBufferToImage.
 
