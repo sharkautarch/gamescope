@@ -7308,8 +7308,9 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 			break;
 		}
 		
-		if (vblank)
+		if (vblank) {
 			FrameMarkStart(sl_steamcompmgr_name);
+		}
 
 		bool flush_root = false;
 
@@ -7633,8 +7634,9 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 			nIgnoredOverlayRepaints = 0;
 		}
 
-		if (vblank)
+		if (vblank) {
 			FrameMarkEnd(sl_steamcompmgr_name);
+		}
 
 #if HAVE_PIPEWIRE
 		if ( vblank && pipewire_is_streaming() )
