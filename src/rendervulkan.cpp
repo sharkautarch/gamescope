@@ -1243,6 +1243,9 @@ inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 {
+#ifdef TRACY_ENABLE
+	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+#endif
 	cmdBuffer->end();
 
 	// The seq no of the last submission.
@@ -1336,7 +1339,7 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
 #ifdef TRACY_ENABLE 
-	, m_tracyCtx{tracy::CreateVkContext(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr)}
+	, m_tracyCtx{TracyVkContextCalibrated(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr)}
 #endif
 {
 }
@@ -1375,6 +1378,9 @@ void CVulkanCmdBuffer::begin()
 void CVulkanCmdBuffer::end()
 {
 	insertBarrier(true);
+#ifdef TRACY_ENABLE
+	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+#endif
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
@@ -1597,6 +1603,9 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
 
 	markDirty(m_target);
+#ifdef TRACY_ENABLE
+	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+#endif
 }
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
