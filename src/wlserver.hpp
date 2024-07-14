@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 #include <list>
+#include <unordered_map>
 #include <optional>
 
 #include <pixman-1/pixman.h>
@@ -143,6 +144,7 @@ struct wlserver_t {
 	
 	struct wlr_surface *mouse_focus_surface;
 	struct wlr_surface *kb_focus_surface;
+	std::unordered_map<struct wlr_surface *, std::pair<int, int>> current_dropdown_surfaces;
 	double mouse_surface_cursorx = 0.0f;
 	double mouse_surface_cursory = 0.0f;
 	bool mouse_constraint_requires_warp = false;
@@ -228,6 +230,8 @@ void wlserver_keyboardfocus( struct wlr_surface *surface, bool bConstrain = true
 void wlserver_key( uint32_t key, bool press, uint32_t time );
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x = 0, int y = 0 );
+void wlserver_clear_dropdowns();
+void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY );
 void wlserver_mousemotion( double x, double y, uint32_t time );
 void wlserver_mousehide();
 void wlserver_mousewarp( double x, double y, uint32_t time, bool bSynthetic );

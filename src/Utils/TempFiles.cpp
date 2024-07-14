@@ -2,6 +2,9 @@
 #include <cstdio>
 #include <climits>
 
+#include <string>
+#include <list>
+
 #include <fcntl.h>
 #include <unistd.h>
 
@@ -9,7 +12,35 @@
 
 namespace gamescope
 {
-    int MakeTempFile( char ( &pszOutPath )[ PATH_MAX ], const char *pszTemplate )
+    class CDeferUnlinks
+    {
+    public:
+        void Add( std::string sPath )
+        {
+            m_DeferredUnlinks.emplace_front( sPath );
+        }
+    private:
+        class CDeferUnlink
+        {
+        public:
+            CDeferUnlink( std::string sPath )
+                : m_sPath{ std::move( sPath ) }
+            {
+            }
+
+            ~CDeferUnlink()
+            {
+                unlink( m_sPath.c_str() );
+            }
+        private:
+            const std::string m_sPath;
+        };
+
+        std::list<CDeferUnlink> m_DeferredUnlinks;
+    };
+    static CDeferUnlinks s_DeferredUnlinks;
+
+    int MakeTempFile( char ( &pszOutPath )[ PATH_MAX ], const char *pszTemplate, bool bDeferUnlink )
     {
         const char *pXDGPath = getenv( "XDG_RUNTIME_DIR" );
         if ( !pXDGPath || !*pXDGPath )
@@ -23,13 +54,21 @@ namespace gamescope
             return -1;
 
         // Unlink so it gets destroyed when Gamescope dies.
-        unlink( pszOutPath );
+        if ( bDeferUnlink )
+        {
+            s_DeferredUnlinks.Add( pszOutPath );
+        }
+        else
+        {
+            unlink( pszOutPath );
+        }
+
         return nFd;
     }
 
-    FILE *MakeTempFile( char ( &pszOutPath )[ PATH_MAX ], const char *pszTemplate, const char *pszMode )
+    FILE *MakeTempFile( char ( &pszOutPath )[ PATH_MAX ], const char *pszTemplate, const char *pszMode, bool bDeferUnlink )
     {
-        int nFd = MakeTempFile( pszOutPath, pszTemplate );
+        int nFd = MakeTempFile( pszOutPath, pszTemplate, bDeferUnlink );
         if ( nFd < 0 )
             return nullptr;
 

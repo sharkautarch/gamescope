@@ -97,6 +97,7 @@ src = [
   'Backends/WaylandBackend.cpp',
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
+  'Utils/Process.cpp',
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
@@ -181,12 +182,14 @@ gamescope_version = vcs_tag(
   )
 
 if pipewire_dep.found()
-  executable( 'gamescopestream', 'gamescopestream.cpp', gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+  executable( 'gamescopestream', ['Apps/gamescopestream.cpp', 'log.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
 endif
+
+executable('gamescopereaper', ['Utils/Process.cpp', 'Apps/gamescopereaper.cpp', 'log.cpp'], gamescope_version, install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
 executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], dependencies:[benchmark_dep, glm_dep])
 
 executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], dependencies:[glm_dep])
 
-executable('gamescopectl', ['gamescopectl.cpp', 'convar.cpp', 'log.cpp', 'Utils/Version.cpp'], gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp', 'convar.cpp', 'log.cpp', 'Utils/Version.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )

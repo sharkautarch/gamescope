@@ -1,7 +1,7 @@
 #include <memory>
 #include <X11/extensions/Xfixes.h>
 #include "backend.h"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "xwayland_ctx.hpp"
 
 extern const char *g_pOriginalDisplay;

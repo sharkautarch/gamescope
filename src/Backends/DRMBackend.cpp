@@ -27,7 +27,7 @@
 
 #include "backend.h"
 #include "color_helpers.h"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "drm_include.h"
 #include "edid.h"
 #include "gamescope_shared.h"

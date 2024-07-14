@@ -83,7 +83,7 @@
 #include "steamcompmgr.hpp"
 #include "vblankmanager.hpp"
 #include "log.hpp"
-#include "defer.hpp"
+#include "Utils/Defer.h"
 #include "win32_styles.h"
 #include "edid.h"
 #include "hdmi.h"
@@ -91,6 +91,7 @@
 #include "refresh_rate.h"
 #include "commit.h"
 #include "BufferMemo.h"
+#include "Utils/Process.h"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -116,6 +117,8 @@ LogScope xwm_log("xwm");
 LogScope g_WaitableLog("waitable");
 
 bool g_bWasPartialComposite = false;
+
+bool ShouldDrawCursor();
 
 ///
 // Color Mgmt
@@ -185,8 +188,8 @@ update_runtime_info();
 
 bool g_bAllowVRR = false;
 
-static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
-static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
+uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
+uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
 
 static const gamescope_color_mgmt_t k_ScreenshotColorMgmt =
 {
@@ -749,6 +752,12 @@ uint32_t		lastPublishedInputCounter;
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
 
+static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "Force a repaint",
+[]( std::span<std::string_view> args )
+{
+	hasRepaint = true;
+});
+
 unsigned long	damageSequence = 0;
 
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
@@ -949,15 +958,6 @@ extern bool		steamMode;
 
 gamescope::ConVar<bool> cv_composite_force{ "composite_force", false, "Force composition always, never use scanout" };
 static bool		useXRes = true;
-
-struct wlr_buffer_map_entry {
-	struct wl_listener listener;
-	struct wlr_buffer *buf;
-	gamescope::OwningRc<CVulkanTexture> vulkanTex;
-};
-
-static std::mutex wlr_buffer_map_lock;
-static std::unordered_map<struct wlr_buffer*, wlr_buffer_map_entry> wlr_buffer_map;
 
 namespace gamescope
 {
@@ -1386,53 +1386,54 @@ void MouseCursor::checkSuspension()
 {
 	getTexture();
 
-	const bool suspended = 
-		int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) 
-		> int64_t( cursorHideTime );
+	if ( ShouldDrawCursor() )
+	{
+		const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
+		// let A = bCursorHidden,
+		// let B = suspended,
+		// let C = branch condition ( !bCursorHidden & suspended ) (1=enter branch, 0=skip branch)
+		//	A|B|C
+		//	0|0|0
+		//	0|1|1
+		//	1|0|0
+		//	1|1|0
 
-
-	// branch condition = ( !bCursorHidden & suspended )
-	// let A = bCursorHidden,
-	// let B = suspended,
-	// let C = branch condition (1=enter branch, 0=skip branch)
-	//	A|B|C
-	//	0|0|0
-	//	0|1|1
-	//	1|0|0
-	//	1|1|0
-
-	// if bCursorHidden = 1, bCursorHidden remains 1:
-	//  let A = bCursorHidden(input),
-	//  let B = suspended,
-	//  let C = bCursorHidden (output)
-	//	A|B|C
-	//	0|0|0
-	//	0|1|1
-	//	1|0|1
-	//	1|1|1
-	// truth table corresponds to a bitwise OR
-	const bool bCursorWasHidden = wlserver.bCursorHidden.fetch_or(suspended); //fetch_or returns the *old* value of bCursorHidden
-	if (!bCursorWasHidden & suspended) {
-		steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
-		// Rearm warp count
-		if (window)
-		{
-			// Move the cursor to the bottom right corner, just off screen if we can
-			// if the window (ie. Steam) doesn't want hover/focus events.
-			if ( window_wants_no_focus_when_mouse_hidden(window) )
+		// if bCursorHidden = 1, bCursorHidden remains 1:
+		//  let A = bCursorHidden(input),
+		//  let B = suspended,
+		//  let C = bCursorHidden (output)
+		//	A|B|C
+		//	0|0|0
+		//	0|1|1
+		//	1|0|1
+		//	1|1|1
+		const bool bCursorWasHidden = wlserver.bCursorHidden.fetch_or(suspended); // truth table corresponds to a bitwise OR
+		if (!bCursorWasHidden && suspended) {
+			steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
+			// Rearm warp count
+			if (window)
 			{
-				wlserver_lock();
-				wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
-				wlserver_mousehide();
-				wlserver_unlock();
+				// Move the cursor to the bottom right corner, just off screen if we can
+				// if the window (ie. Steam) doesn't want hover/focus events.
+				if ( window_wants_no_focus_when_mouse_hidden(window) )
+				{
+					wlserver_lock();
+					wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
+					wlserver_mousehide();
+					wlserver_unlock();
+				}
+			}
+
+			// We're hiding the cursor, force redraw if we were showing it
+			if (window && !m_imageEmpty ) {
+				hasRepaintNonBasePlane = true;
+				nudge_steamcompmgr();
 			}
 		}
-
-		// We're hiding the cursor, force redraw if we were showing it
-		if (window && !m_imageEmpty ) {
-			hasRepaintNonBasePlane = true;
-			nudge_steamcompmgr();
-		}
+	}
+	else
+	{
+		wlserver.bCursorHidden = false;
 	}
 
 	wlserver.bCursorHasImage = !m_imageEmpty;
@@ -1643,13 +1644,6 @@ bool MouseCursor::getTexture()
 		cursorBuffer.clear();
 
 	m_imageEmpty = bNoCursor;
-
-	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
-	{
-		if ( GetBackend()->GetNestedHints() )
-			GetBackend()->GetNestedHints()->SetRelativeMouseMode( m_imageEmpty );
-		bSteamCompMgrGrab = GetBackend()->GetNestedHints() && m_imageEmpty;
-	}
 
 	m_dirty = false;
 	updateCursorFeedback();
@@ -3722,12 +3716,18 @@ determine_and_apply_focus()
 
 	// Tell wlserver about our keyboard/mouse focus.
 	if ( global_focus.inputFocusWindow    != previous_focus.inputFocusWindow ||
-		 global_focus.keyboardFocusWindow != previous_focus.keyboardFocusWindow )
+		 global_focus.keyboardFocusWindow != previous_focus.keyboardFocusWindow ||
+		 global_focus.overrideWindow      != previous_focus.overrideWindow )
 	{
 		if ( win_surface(global_focus.inputFocusWindow)    != nullptr ||
 			 win_surface(global_focus.keyboardFocusWindow) != nullptr )
 		{
 			wlserver_lock();
+
+			wlserver_clear_dropdowns();
+			if ( win_surface( global_focus.overrideWindow ) != nullptr )
+				wlserver_notify_dropdown( global_focus.overrideWindow->main_surface(), global_focus.overrideWindow->xwayland().a.x, global_focus.overrideWindow->xwayland().a.y );
+
 			if ( win_surface(global_focus.inputFocusWindow) != nullptr && global_focus.cursor )
 				wlserver_mousefocus( global_focus.inputFocusWindow->main_surface(), global_focus.cursor->x(), global_focus.cursor->y() );
 
@@ -6240,7 +6240,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		wlserver_lock();
 		wlr_buffer_unlock( buf );
 		wlserver_unlock();
-		xwm_log.errorf( "got the same buffer committed twice, ignoring." );
+		xwm_log.warnf( "got the same buffer committed twice, ignoring." );
 
 		// If we have a duplicated commit + frame callback, ensure that is signalled.
 		// This matches Mutter and Weston behavior, so it's plausible that some application relies on forward progress.
@@ -6328,164 +6328,6 @@ void check_new_xdg_res()
 	}
 }
 
-std::mutex g_ChildPidMutex;
-std::vector<pid_t> g_ChildPids;
-
-static void
-spawn_client( char **argv, bool bAsyncChild )
-{
-#if defined(__linux__)
-	// (Don't Lose) The Children
-	prctl( PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0 );
-#elif defined(__DragonFly__) || defined(__FreeBSD__)
-	procctl(P_PID, getpid(), PROC_REAP_ACQUIRE, NULL);
-#else
-#warning "Changing reaper process for children is not supported on this platform"
-#endif
-
-	std::string strNewPreload;
-	char *pchPreloadCopy = nullptr;
-	const char *pchCurrentPreload = getenv( "LD_PRELOAD" );
-	bool bFirst = true;
-
-	if ( pchCurrentPreload != nullptr )
-	{
-		pchPreloadCopy = strdup( pchCurrentPreload );
-
-		// First replace all the separators in our copy with terminators
-		for ( uint32_t i = 0; i < strlen( pchCurrentPreload ); i++ )
-		{
-			if ( pchPreloadCopy[ i ] == ' ' || pchPreloadCopy[ i ] == ':' )
-			{
-				pchPreloadCopy[ i ] = '\0';
-			}
-		}
-
-		// Then walk it again and find all the substrings
-		uint32_t i = 0;
-		while ( i < strlen( pchCurrentPreload ) )
-		{
-			// If there's a string and it's not gameoverlayrenderer, append it to our new LD_PRELOAD
-			if ( pchPreloadCopy[ i ] != '\0' )
-			{
-				if ( strstr( pchPreloadCopy + i, "gameoverlayrenderer.so" ) == nullptr )
-				{
-					if ( bFirst == false )
-					{
-						strNewPreload.append( ":" );
-					}
-					else
-					{
-						bFirst = false;
-					}
-
-					strNewPreload.append( pchPreloadCopy + i );
-				}
-
-				i += strlen( pchPreloadCopy + i );
-			}
-			else
-			{
-				i++;
-			}
-		}
-
-		free( pchPreloadCopy );
-	}
-
-	pid_t child_pid = fork();
-
-	if ( child_pid < 0 )
-	{
-		xwm_log.errorf_errno( "fork failed" );
-		_exit( 1 );
-	}
-
-	// Are we in the child?
-	if ( child_pid == 0 )
-	{
-		// Try to snap back to old priority
-		if ( g_bNiceCap == true )
-		{
-			if ( g_bRt ==  true ){
-				sched_setscheduler(0, g_nOldPolicy, &g_schedOldParam);
-			}
-			nice( g_nOldNice - g_nNewNice );
-		}
-
-		// Restore prior rlimit in case child uses select()
-		restore_fd_limit();
-
-		// Kill myself when my parent dies.
-#ifdef __linux__
-		prctl( PR_SET_PDEATHSIG, SIGKILL, 0, 0, 0 );
-#endif
-
-		// Reset signal stuff
-		setsid();
-		sigset_t set;
-		sigemptyset(&set);
-		sigprocmask(SIG_SETMASK, &set, NULL);
-
-		// Set modified LD_PRELOAD if needed
-		if ( pchCurrentPreload != nullptr )
-		{
-			if ( strNewPreload.empty() == false )
-			{
-				setenv( "LD_PRELOAD", strNewPreload.c_str(), 1 );
-			}
-			else
-			{
-				unsetenv( "LD_PRELOAD" );
-			}
-		}
-
-		unsetenv( "ENABLE_VKBASALT" );
-
-		// Enable Gamescope WSI by default for nested.
-		setenv( "ENABLE_GAMESCOPE_WSI", "1", 0 );
-		// Unset this to avoid it leaking to Proton apps, etc.
-		unsetenv("SDL_VIDEODRIVER");
-
-		execvp( argv[ 0 ], argv );
-		xwm_log.errorf_errno( "execvp failed" );
-		_exit( 1 );
-	}
-
-	if ( !bAsyncChild && child_pid > 0 )
-	{
-		{
-			std::unique_lock lock( g_ChildPidMutex );
-			g_ChildPids.emplace_back( child_pid );
-		}
-
-		std::thread waitThread([ cChildPid = child_pid ]() {
-			pthread_setname_np( pthread_self(), "gamescope-wait" );
-
-			// Because we've set PR_SET_CHILD_SUBREAPER above, we'll get process
-			// status notifications for all of our child processes, even if our
-			// direct child exits. Wait until all have exited.
-			while ( true )
-			{
-				int status = 0;
-				if ( waitpid( cChildPid, &status, 0 ) < 0 )
-				{
-					if ( errno == EINTR )
-						continue;
-					if ( errno != ECHILD )
-						xwm_log.errorf_errno( "steamcompmgr: wait failed" );
-					break;
-				}
-			}
-
-			fprintf(stderr, "gamescope: children shut down!\n");
-			g_bRun = false;
-			nudge_steamcompmgr();
-		});
-
-		waitThread.detach();
-	}
-}
 
 static void
 handle_xfixes_selection_notify( xwayland_ctx_t *ctx, XFixesSelectionNotifyEvent *event )
@@ -7176,6 +7018,113 @@ void update_edid_prop()
 
 extern bool g_bLaunchMangoapp;
 
+extern void ShutdownGamescope();
+
+static gamescope::ConCommand cc_launch( "launch", "Launch an application with the given args.",
+[]( std::span<std::string_view> svArgs )
+{
+	if ( svArgs.size() < 2 )
+		return;
+
+	// Need them to be null terminated.
+	std::vector<std::string> sArgs;
+	for ( auto iter = svArgs.begin() + 1; iter != svArgs.end(); iter++ )
+		sArgs.push_back( std::string( *iter ) );
+
+	std::vector<char *> argv;
+	for ( std::string &sArg : sArgs )
+		argv.push_back( sArg.data() );
+	gamescope::Process::SpawnProcessInWatchdog( argv.data() );
+});
+
+gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
+static LogScope s_LaunchLogScope( "launch" );
+
+void LaunchNestedChildren( char **ppPrimaryChildArgv )
+{
+	std::string sNewPreload;
+	{
+		const char *pszCurrentPreload = getenv( "LD_PRELOAD" );
+		if ( pszCurrentPreload && *pszCurrentPreload )
+		{
+			// Remove gameoverlayrenderer.so from the child if Gamescope
+			// is running with a window + Vulkan swapchain (eg. SDL2 backend)
+			if ( GetBackend()->UsesVulkanSwapchain() )
+			{
+				std::vector<std::string_view> svLibraries = gamescope::Split( pszCurrentPreload, " :" );
+				std::erase_if( svLibraries, []( std::string_view svPreload )
+				{
+					return svPreload.find( "gameoverlayrenderer.so" ) != std::string_view::npos;
+				});
+
+				bool bFirst = true;
+				for ( std::string_view svLibrary : svLibraries )
+				{
+					if ( !bFirst )
+					{
+						sNewPreload.append( ":" );
+					}
+					bFirst = false;
+					sNewPreload.append( svLibrary );
+				}
+			}
+			else
+			{
+				sNewPreload = pszCurrentPreload;
+			}
+		}
+	}
+
+	// We could just run this inside the child process,
+	// but we might as well just run it here at this point.
+	// and affect all future child processes, without needing
+	// a pre-amble inside of them.
+	{
+		if ( !sNewPreload.empty() )
+			setenv( "LD_PRELOAD", sNewPreload.c_str(), 1 );
+		else
+			unsetenv( "LD_PRELOAD" );
+
+		unsetenv( "ENABLE_VKBASALT" );
+		// Enable Gamescope WSI by default for nested.
+		setenv( "ENABLE_GAMESCOPE_WSI", "1", 0 );
+
+		// Unset this to avoid it leaking to Proton apps, etc.
+		unsetenv( "SDL_VIDEODRIVER" );
+		// SDL3...
+		unsetenv( "SDL_VIDEO_DRIVER" );
+	}
+
+	// Gamescope itself does not set itself as a subreaper anymore.
+	// It launches direct children that do, and manage that they kill themselves
+	// when Gamescope dies.
+	// This allows us to launch stuff alongside Gamescope if we ever wanted -- rather
+	// than being under it. (eg. if we wanted a drm janitor or something.)
+
+	if ( ppPrimaryChildArgv && *ppPrimaryChildArgv )
+	{
+		pid_t nPrimaryChildPid = gamescope::Process::SpawnProcessInWatchdog( ppPrimaryChildArgv, false );
+
+		std::thread waitThread([ nPrimaryChildPid ]()
+		{
+			pthread_setname_np( pthread_self(), "gamescope-wait" );
+
+			gamescope::Process::WaitForChild( nPrimaryChildPid );
+			s_LaunchLogScope.infof( "Primary child shut down!" );
+
+			if ( cv_shutdown_on_primary_child_death )
+				ShutdownGamescope();
+		});
+		waitThread.detach();
+	}
+
+	if ( g_bLaunchMangoapp )
+	{
+		char *ppMangoappArgv[] = { (char *)"mangoapp", NULL };
+		gamescope::Process::SpawnProcessInWatchdog( ppMangoappArgv, true );
+	}
+}
+
 void
 steamcompmgr_main(int argc, char **argv)
 {
@@ -7336,16 +7285,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	update_screenshot_color_mgmt();
 
-	if ( subCommandArg >= 0 )
-	{
-		spawn_client( &argv[ subCommandArg ], false );
-	}
-
-	if ( g_bLaunchMangoapp )
-	{
-		char *pMangoappArgv[] = { strdup( "mangoapp" ), nullptr };
-		spawn_client( pMangoappArgv, true );
-	}
+	LaunchNestedChildren( subCommandArg >= 0 ? &argv[ subCommandArg ] : nullptr );
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
 	// on DRM + the Vulkan side.
@@ -7647,6 +7587,17 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			if ( global_focus.cursor )
 				global_focus.cursor->UpdatePosition();
+		}
+
+		if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
+		{
+			bool bImageEmpty =
+				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
+				( !window_is_steam( global_focus.inputFocusWindow ) );
+
+			if ( GetBackend()->GetNestedHints() )
+				GetBackend()->GetNestedHints()->SetRelativeMouseMode( bImageEmpty );
+			bSteamCompMgrGrab = GetBackend()->GetNestedHints() && bImageEmpty;
 		}
 
 		static int nIgnoredOverlayRepaints = 0;

@@ -35,6 +35,7 @@
 #include "main.hpp"
 #include "steamcompmgr.hpp"
 #include "log.hpp"
+#include "Utils/Process.h"
 
 #include "cs_composite_blit.h"
 #include "cs_composite_blur.h"
@@ -515,14 +516,14 @@ bool CVulkanDevice::createDevice()
 	{
 		{
 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
+			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
 			.queueFamilyIndex = m_queueFamily,
 			.queueCount = 1,
 			.pQueuePriorities = &queuePriorities
 		},
 		{
 			.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-			.pNext = g_bNiceCap ? &queueCreateInfoEXT : nullptr,
+			.pNext = gamescope::Process::HasCapSysNice() ? &queueCreateInfoEXT : nullptr,
 			.queueFamilyIndex = m_generalQueueFamily,
 			.queueCount = 1,
 			.pQueuePriorities = &queuePriorities
@@ -625,14 +626,14 @@ bool CVulkanDevice::createDevice()
 	};
 
 	VkResult res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
-	if ( res == VK_ERROR_NOT_PERMITTED_KHR && g_bNiceCap )
+	if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
 	{
 		fprintf(stderr, "vkCreateDevice failed with a high-priority queue (general + compute). Falling back to regular priority (general).\n");
 		queueCreateInfos[1].pNext = nullptr;
 		res = vk.CreateDevice(physDev(), &deviceCreateInfo, nullptr, &m_device);
 
 
-		if ( res == VK_ERROR_NOT_PERMITTED_KHR && g_bNiceCap )
+		if ( res == VK_ERROR_NOT_PERMITTED_KHR && gamescope::Process::HasCapSysNice() )
 		{
 			fprintf(stderr, "vkCreateDevice failed with a high-priority queue (compute). Falling back to regular priority (all).\n");
 			queueCreateInfos[0].pNext = nullptr;
