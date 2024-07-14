@@ -145,7 +145,7 @@ namespace gamescope
 
         template <typename J> bool operator == ( const J &other ) const { return m_Value ==  other; }
         template <typename J> bool operator != ( const J &other ) const { return m_Value !=  other; }
-        template <typename J> bool operator <=>( const J &other ) const { return m_Value <=> other; }
+        template <typename J> auto operator <=>( const J &other ) const { return m_Value <=> other; }
 
         T  operator | (T other) { return m_Value | other; }
         T &operator |=(T other) { return m_Value |= other; }
@@ -154,6 +154,19 @@ namespace gamescope
 
         void InvokeFunc( std::span<std::string_view> pArgs )
         {
+            if ( pArgs.size() == 1 )
+            {
+                // We should move to std format for logging and stuff.
+                // This is kinda gross and grody!
+                std::string sValue = std::to_string( m_Value );
+                console_log.infof( "%.*s: %.*s\n%.*s",
+                    (int)m_pszName.length(), m_pszName.data(),
+                    (int)sValue.length(), sValue.data(),
+                    (int)m_pszDescription.length(), m_pszDescription.data() );
+
+                return;
+            }
+
             if ( pArgs.size() != 2 )
                 return;
 
@@ -163,7 +176,7 @@ namespace gamescope
                 std::optional<Underlying> oResult = Parse<Underlying>( pArgs[1] );
                 SetValue( oResult ? static_cast<T>( *oResult ) : T{} );
             }
-            else if constexpr ( std::is_integral<T>::value )
+            else if constexpr ( std::is_integral<T>::value || std::is_floating_point<T>::value )
             {
                 std::optional<T> oResult = Parse<T>( pArgs[1] );
                 SetValue( oResult ? *oResult : T{} );

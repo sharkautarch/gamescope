@@ -118,6 +118,8 @@ LogScope g_WaitableLog("waitable");
 
 bool g_bWasPartialComposite = false;
 
+bool ShouldDrawCursor();
+
 ///
 // Color Mgmt
 //
@@ -186,8 +188,8 @@ update_runtime_info();
 
 bool g_bAllowVRR = false;
 
-static uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
-static uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
+uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
+uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
 
 static const gamescope_color_mgmt_t k_ScreenshotColorMgmt =
 {
@@ -749,6 +751,12 @@ uint32_t		lastPublishedInputCounter;
 
 std::atomic<bool> hasRepaint = false;
 bool			hasRepaintNonBasePlane = false;
+
+static gamescope::ConCommand cc_debug_force_repaint( "debug_force_repaint", "Force a repaint",
+[]( std::span<std::string_view> args )
+{
+	hasRepaint = true;
+});
 
 unsigned long	damageSequence = 0;
 
@@ -1378,30 +1386,37 @@ void MouseCursor::checkSuspension()
 {
 	getTexture();
 
-	const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
-	if (!wlserver.bCursorHidden && suspended) {
-		wlserver.bCursorHidden = true;
+	if ( ShouldDrawCursor() )
+	{
+		const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
+		if (!wlserver.bCursorHidden && suspended) {
+			wlserver.bCursorHidden = true;
 
-		steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
-		// Rearm warp count
-		if (window)
-		{
-			// Move the cursor to the bottom right corner, just off screen if we can
-			// if the window (ie. Steam) doesn't want hover/focus events.
-			if ( window_wants_no_focus_when_mouse_hidden(window) )
+			steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
+			// Rearm warp count
+			if (window)
 			{
-				wlserver_lock();
-				wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
-				wlserver_mousehide();
-				wlserver_unlock();
+				// Move the cursor to the bottom right corner, just off screen if we can
+				// if the window (ie. Steam) doesn't want hover/focus events.
+				if ( window_wants_no_focus_when_mouse_hidden(window) )
+				{
+					wlserver_lock();
+					wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
+					wlserver_mousehide();
+					wlserver_unlock();
+				}
+			}
+
+			// We're hiding the cursor, force redraw if we were showing it
+			if (window && !m_imageEmpty ) {
+				hasRepaintNonBasePlane = true;
+				nudge_steamcompmgr();
 			}
 		}
-
-		// We're hiding the cursor, force redraw if we were showing it
-		if (window && !m_imageEmpty ) {
-			hasRepaintNonBasePlane = true;
-			nudge_steamcompmgr();
-		}
+	}
+	else
+	{
+		wlserver.bCursorHidden = false;
 	}
 
 	wlserver.bCursorHasImage = !m_imageEmpty;
@@ -1612,13 +1627,6 @@ bool MouseCursor::getTexture()
 		cursorBuffer.clear();
 
 	m_imageEmpty = bNoCursor;
-
-	if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
-	{
-		if ( GetBackend()->GetNestedHints() )
-			GetBackend()->GetNestedHints()->SetRelativeMouseMode( m_imageEmpty );
-		bSteamCompMgrGrab = GetBackend()->GetNestedHints() && m_imageEmpty;
-	}
 
 	m_dirty = false;
 	updateCursorFeedback();
@@ -7580,6 +7588,17 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 		{
 			if ( global_focus.cursor )
 				global_focus.cursor->UpdatePosition();
+		}
+
+		if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
+		{
+			bool bImageEmpty =
+				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
+				( !window_is_steam( global_focus.inputFocusWindow ) );
+
+			if ( GetBackend()->GetNestedHints() )
+				GetBackend()->GetNestedHints()->SetRelativeMouseMode( bImageEmpty );
+			bSteamCompMgrGrab = GetBackend()->GetNestedHints() && bImageEmpty;
 		}
 
 		static int nIgnoredOverlayRepaints = 0;

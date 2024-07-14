@@ -612,13 +612,33 @@ static void UpdateCompatEnvVars()
 	// A sane default here.
 	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
 
-	if ( g_bLaunchMangoapp && !getenv("MANGOHUD_CONFIGFILE") )
+	const char *pszMangoConfigPath = getenv( "MANGOHUD_CONFIGFILE" );
+	if ( g_bLaunchMangoapp && ( !pszMangoConfigPath || !*pszMangoConfigPath ) )
 	{
 		char szMangoConfigPath[ PATH_MAX ];
-		int nMangoConfigFd = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate );
-		if ( nMangoConfigFd >= 0 )
+		FILE *pMangoConfigFile = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate, "w", true );
+		if ( pMangoConfigFile )
 		{
 			setenv( "MANGOHUD_CONFIGFILE", szMangoConfigPath, 1 );
+
+			if ( steamMode )
+			{
+				const char szDefaultConfig[] = "no_display";
+				fwrite( szDefaultConfig, 1, sizeof( szDefaultConfig ), pMangoConfigFile );
+			}
+			fclose( pMangoConfigFile );
+		}
+	}
+
+	const char *pszLimiterFile = getenv( "GAMESCOPE_LIMITER_FILE" );
+	if ( !pszLimiterFile || !*pszLimiterFile )
+	{
+		char szLimiterPath[ PATH_MAX ];
+		int nLimiterFd = gamescope::MakeTempFile( szLimiterPath, gamescope::k_szGamescopeTempLimiterTemplate, true );
+		if ( nLimiterFd >= 0 )
+		{
+			setenv( "GAMESCOPE_LIMITER_FILE", szLimiterPath, 1 );
+			gamescope::Process::CloseFd( nLimiterFd );
 		}
 	}
 }
