@@ -1200,17 +1200,17 @@ inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal
 {
 	auto finalize_buf = [this, &loc]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
 		//using this lambda allows for Return Value Optimization w/o duplicating code
-		if constexpr (bIsRecycled)
+		if constexpr (bIsRecycled) {
 			m_unusedCmdBufs.pop_back();
-
+		}
 		cmdBuf->begin();
 
 #ifdef TRACY_ENABLE
+
+		static constinit tracy::SourceLocationData source_data{};
 		assert( !cmdBuf->gpuZoneHolder() );	
-		auto source_data = tracy::SourceLocationData(loc.function_name(), loc.function_name(), loc.file_name(), loc.line());
+		source_data = tracy::SourceLocationData(loc.function_name(), loc.function_name(), loc.file_name(), loc.line());
 		
-		//we don't need to worry about dangling pointer to source_data,
-		//the gpu zone object held in gpuZoneHolder will only touch the pointer during its construction w/ emplace() 
 		cmdBuf->gpuZoneHolder().emplace(cmdBuf->tracyCtx(), &source_data, cmdBuf->rawBuffer(), true);
 #endif
 		return cmdBuf;
@@ -1347,7 +1347,11 @@ CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuf
 CVulkanCmdBuffer::~CVulkanCmdBuffer()
 {
 #ifdef TRACY_ENABLE
-	TracyVkDestroy(m_tracyCtx);
+	vk_log.infof("~CVulkanCmdBuffer()");
+	if (m_tracyCtx) {
+		TracyVkDestroy(m_tracyCtx);
+		m_tracyCtx=nullptr;
+	}
 #endif
 
 	m_device->vk.FreeCommandBuffers(m_device->device(), m_device->commandPool(), 1, &m_cmdBuffer);
@@ -1358,9 +1362,6 @@ void CVulkanCmdBuffer::reset()
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
 	m_textureState.clear();
-#ifdef TRACY_ENABLE
-	m_gpuZoneHolder.reset();
-#endif
 }
 
 void CVulkanCmdBuffer::begin()
@@ -1380,6 +1381,7 @@ void CVulkanCmdBuffer::end()
 	insertBarrier(true);
 #ifdef TRACY_ENABLE
 	TracyVkCollect(m_tracyCtx, m_cmdBuffer);
+	m_gpuZoneHolder.reset();
 #endif
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }

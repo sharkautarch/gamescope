@@ -906,7 +906,10 @@ protected:
 	friend class CVulkanDevice;
 #ifdef TRACY_ENABLE
 	inline std::optional<tracy::VkCtxScope>& gpuZoneHolder() {return m_gpuZoneHolder;}
-	inline tracy::VkCtx* tracyCtx() {return m_tracyCtx;}
+	inline tracy::VkCtx*& tracyCtx() {return m_tracyCtx;}
+	inline tracy::VkCtx* popCtx() {
+		return std::exchange(m_tracyCtx, nullptr);
+	}
 #endif
 	
 private:
