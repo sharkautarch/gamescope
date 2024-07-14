@@ -1339,7 +1339,7 @@ void CVulkanDevice::resetCmdBuffers(uint64_t sequence)
 CVulkanCmdBuffer::CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily)
 	: m_cmdBuffer(cmdBuffer), m_device(parent), m_queue(queue), m_queueFamily(queueFamily)
 #ifdef TRACY_ENABLE 
-	, m_tracyCtx{TracyVkContextCalibrated(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr)}
+	, m_tracyCtx{tracy::CreateVkContext(parent->instance(), parent->physDev(), parent->device(), queue, cmdBuffer, g_pfn_vkGetInstanceProcAddr, parent->vk.GetDeviceProcAddr, true)}
 #endif
 {
 }
