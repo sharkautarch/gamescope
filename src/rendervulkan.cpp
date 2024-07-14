@@ -1244,7 +1244,7 @@ inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 {
 #ifdef TRACY_ENABLE
-	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+	TracyVkCollect(cmdBuffer->tracyCtx(), cmdBuffer->rawBuffer());
 #endif
 	cmdBuffer->end();
 
@@ -1379,7 +1379,7 @@ void CVulkanCmdBuffer::end()
 {
 	insertBarrier(true);
 #ifdef TRACY_ENABLE
-	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+	TracyVkCollect(m_tracyCtx, m_cmdBuffer);
 #endif
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
@@ -1604,7 +1604,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 	markDirty(m_target);
 #ifdef TRACY_ENABLE
-	TracyVkCollect(cmdBuf->tracyCtx(), cmdBuf->rawBuffer());
+	TracyVkCollect(m_tracyCtx, m_cmdBuffer);
 #endif
 }
 
