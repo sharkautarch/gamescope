@@ -1144,7 +1144,7 @@ void CVulkanDevice::compileAllPipelines()
 
 					VkPipeline newPipeline = compilePipeline(layerCount, ycbcrMask, info.shaderType, blur_layers, info.compositeDebug, info.colorspaceMask, info.outputEOTF, info.itmEnable);
 					{
-						std::lock_guard<std::mutex> lock(m_pipelineMutex);
+						std::lock_guard lock(m_pipelineMutex);
 						PipelineInfo_t key = {info.shaderType, layerCount, ycbcrMask, blur_layers, info.compositeDebug};
 						auto result = m_pipelineMap.emplace(std::make_pair(key, newPipeline));
 						if (!result.second)
@@ -1164,7 +1164,7 @@ VkPipeline CVulkanDevice::pipeline(ShaderType type, uint32_t layerCount, uint32_
 	if ( g_bSteamIsActiveWindow )
 		effective_debug &= ~(CompositeDebugFlag::Heatmap | CompositeDebugFlag::Heatmap_MSWCG | CompositeDebugFlag::Heatmap_Hard);
 
-	std::lock_guard<std::mutex> lock(m_pipelineMutex);
+	std::lock_guard lock(m_pipelineMutex);
 	PipelineInfo_t key = {type, layerCount, ycbcrMask, blur_layers, effective_debug, colorspace_mask, output_eotf, itm_enable};
 	auto search = m_pipelineMap.find(key);
 	if (search == m_pipelineMap.end())
@@ -2732,7 +2732,7 @@ bool acquire_next_image( void )
 
 
 static std::atomic<uint64_t> g_currentPresentWaitId = {0u};
-static std::mutex present_wait_lock;
+static TracyLockable(std::mutex, present_wait_lock);
 
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void present_wait_thread_func( void )

@@ -36,3 +36,70 @@ struct ETracyExit : public std::exception {
 		}
 };
 #endif
+namespace tracy
+{
+	template<class T>
+	class DoubleLockable
+	{
+	public:
+		  tracy_force_inline DoubleLockable( const SourceLocationData* srcloc )
+		      : m_ctx( srcloc )
+		  {
+		  }
+
+		  DoubleLockable( const DoubleLockable& ) = delete;
+		  DoubleLockable& operator=( const DoubleLockable& ) = delete;
+
+			tracy_force_inline void lock()
+		  {
+		      const auto runAfter = m_ctx.BeforeLock();
+		      m_lockable.lock();
+		      if( runAfter ) m_ctx.AfterLock();
+		  }
+
+		  tracy_force_inline void unlock()
+		  {
+		      m_lockable.unlock();
+		      m_ctx.AfterUnlock();
+		  }
+
+		  static tracy_force_inline void doubleLock(DoubleLockable& l1, DoubleLockable& l2)
+		  {
+		      const auto runAfter1 = l1.m_ctx.BeforeLock();
+		      const auto runAfter2 = l2.m_ctx.BeforeLock();
+		      std::lock(l1.m_lockable, l2.m_lockable);
+		      if( runAfter1 ) l1.m_ctx.AfterLock();
+		      if( runAfter2 ) l2.m_ctx.AfterLock();
+		  }
+
+		  static tracy_force_inline void doubleUnlock(DoubleLockable& l1, DoubleLockable& l2)
+		  {
+		      l1.m_lockable.unlock();
+		      l2.m_lockable.unlock();
+		      l1.m_ctx.AfterUnlock();
+		      l2.m_ctx.AfterUnlock();
+		  }
+
+		  tracy_force_inline bool try_lock()
+		  {
+		      const auto acquired = m_lockable.try_lock();
+		      m_ctx.AfterTryLock( acquired );
+		      return acquired;
+		  }
+
+		  tracy_force_inline void Mark( const SourceLocationData* srcloc )
+		  {
+		      m_ctx.Mark( srcloc );
+		  }
+
+		  tracy_force_inline void CustomName( const char* name, size_t size )
+		  {
+		      m_ctx.CustomName( name, size );
+		  }
+
+	private:
+		  T m_lockable;
+		  LockableCtx m_ctx;
+	};
+}
+#define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }

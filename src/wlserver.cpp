@@ -86,7 +86,7 @@ struct wlserver_content_override {
 	struct wl_resource *gamescope_swapchain;
 };
 
-std::mutex g_wlserver_xdg_shell_windows_lock;
+TracyLockable(std::mutex, g_wlserver_xdg_shell_windows_lock);
 
 static struct wl_list pending_surfaces = {0};
 
@@ -107,7 +107,7 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 	commits.reserve(16);
 
 	{
-		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+		std::lock_guard lock( wayland_commit_lock );
 		commits.swap(wayland_commit_queue);
 	}
 	return commits;
@@ -238,7 +238,7 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 		return;
 
 	{
-		std::lock_guard<std::mutex> lock( wayland_commit_lock );
+		std::lock_guard lock( wayland_commit_lock );
 		wayland_commit_queue.emplace_back( std::move( *oEntry ) );
 	}
 
@@ -260,7 +260,7 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 		return;
 
 	{
-		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+		std::lock_guard lock( wlserver.xdg_commit_lock );
 		wlserver.xdg_commit_queue.push_back( std::move( *oEntry ) );
 	}
 
@@ -1944,7 +1944,7 @@ void wlserver_unlock(bool flush)
 	pthread_mutex_unlock(&waylock);
 }
 
-extern std::mutex g_SteamCompMgrXWaylandServerMutex;
+extern tracy::Lockable<std::mutex> g_SteamCompMgrXWaylandServerMutex;
 
 static int g_wlserverNudgePipe[2] = {-1, -1};
 
@@ -2021,7 +2021,7 @@ void wlserver_run(void) TRACY_TRY
 #endif
 
 	// Released when steamcompmgr closes.
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	std::unique_lock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 	// We need to shutdown Xwayland before disconnecting all clients, otherwise
 	// wlroots will restart it automatically.
 	wlserver_lock();
@@ -2902,7 +2902,7 @@ std::vector<ResListEntry_t> wlserver_xdg_commit_queue()
 {
 	std::vector<ResListEntry_t> commits;
 	{
-		std::lock_guard<std::mutex> lock( wlserver.xdg_commit_lock );
+		std::lock_guard lock( wlserver.xdg_commit_lock );
 		commits = std::move(wlserver.xdg_commit_queue);
 	}
 	return commits;

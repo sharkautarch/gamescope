@@ -826,7 +826,7 @@ protected:
 	std::unordered_map< SamplerState, VkSampler > m_samplerCache;
 	std::array<VkShaderModule, SHADER_TYPE_COUNT> m_shaderModules;
 	std::unordered_map<PipelineInfo_t, VkPipeline> m_pipelineMap;
-	std::mutex m_pipelineMutex;
+	TracyLockable(std::mutex, m_pipelineMutex);
 
 	// currently just one set, no need to double buffer because we
 	// vkQueueWaitIdle after each submit.

@@ -81,7 +81,7 @@ void commit_t::Signal()
     // Instead of looping over all the windows like before.
     // When we get the new IWaitable stuff in there.
     {
-        std::unique_lock< std::mutex > lock( m_pDoneCommits->listCommitsDoneLock );
+        std::unique_lock lock( m_pDoneCommits->listCommitsDoneLock );
         m_pDoneCommits->listCommitsDone.push_back( CommitDoneEntry_t{
             .winSeq = win_seq,
             .commitID = commitID,

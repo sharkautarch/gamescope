@@ -772,7 +772,7 @@ extern float g_flMaxWindowScale;
 
 bool			synchronize;
 
-std::mutex g_SteamCompMgrXWaylandServerMutex;
+TracyLockable(std::mutex, g_SteamCompMgrXWaylandServerMutex);
 
 gamescope::VBlankTime g_SteamCompMgrVBlankTime = {};
 
@@ -1003,7 +1003,7 @@ class sem
 public:
 	void wait( void )
 	{
-		std::unique_lock<std::mutex> lock(mtx);
+		std::unique_lock lock(mtx);
 
 		while(count == 0){
 			cv.wait(lock);
@@ -1013,19 +1013,23 @@ public:
 
 	void signal( void )
 	{
-		std::unique_lock<std::mutex> lock(mtx);
+		std::unique_lock lock(mtx);
 		count++;
 		cv.notify_one();
 	}
 
 private:
-	std::mutex mtx;
+	TracyLockable(std::mutex, mtx);
+#ifdef TRACY_ENABLE
+	std::condition_variable_any cv;
+#else
 	std::condition_variable cv;
+#endif
 	int count = 0;
 };
 
 sem statsThreadSem;
-std::mutex statsEventQueueLock;
+TracyLockable(std::mutex, statsEventQueueLock);
 std::vector< std::string > statsEventQueue;
 
 std::string statsThreadPath;
@@ -1060,7 +1064,7 @@ wait:
 
 retry:
 	{
-		std::unique_lock< std::mutex > lock( statsEventQueueLock );
+		std::unique_lock lock( statsEventQueueLock );
 
 		if( statsEventQueue.empty() )
 		{
@@ -1090,7 +1094,7 @@ static inline void stats_printf( const char* format, ...)
 
 	{
 		{
-			std::unique_lock< std::mutex > lock( statsEventQueueLock );
+			std::unique_lock lock( statsEventQueueLock );
 
 			if( statsEventQueue.size() > 50 )
 			{
@@ -5998,7 +6002,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 // TODO: Merge these two functions.
 void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( ctx->doneCommits.listCommitsDoneLock );
+	std::lock_guard lock( ctx->doneCommits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -6055,7 +6059,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 
 void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 {
-	std::lock_guard<std::mutex> lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
+	std::lock_guard lock( g_steamcompmgr_xdg_done_commits.listCommitsDoneLock );
 
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
@@ -7227,7 +7231,7 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 
 	init_runtime_info();
 
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	std::unique_lock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
 	// Initialize any xwayland ctxs we have
 	{
