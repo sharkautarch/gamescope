@@ -38,7 +38,6 @@ struct ETracyExit : public std::exception {
 		    return "Custom exception for safely exiting from within a Tracy profiler zone";
 		}
 };
-#endif
 
 namespace tracy
 {
@@ -106,3 +105,4 @@ namespace tracy
 		  LockableCtx m_ctx;
 	};
 }
+#endif
