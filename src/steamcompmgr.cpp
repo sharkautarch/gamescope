@@ -1843,6 +1843,7 @@ static void
 paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
 {
+	ZoneScopedN("paint_window");
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio_x = 1.0;
@@ -1859,6 +1860,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			// pick up that buffer we've been holding onto if we have one.
 			if ( g_HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
 			{
+				ZoneScopedN("paint_window -> paint_cached_base_layer");
 				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
 				return;
 			}
@@ -1867,6 +1869,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		{
 			if ( g_bPendingFade )
 			{
+				ZoneScopedN("paint_window -> pending fade");
 				fadeOutStartTime = get_time_in_milliseconds();
 				g_bPendingFade = false;
 			}
@@ -2069,6 +2072,7 @@ static void update_touch_scaling( const struct FrameInfo_t *frameInfo )
 #if HAVE_PIPEWIRE
 static void paint_pipewire()
 {
+	ZoneScopedN("paint_pipewire");
 	static struct pipewire_buffer *s_pPipewireBuffer = nullptr;
 
 	// If the stream stopped/changed, and the underlying pw_buffer was thus
@@ -2186,11 +2190,7 @@ bool ShouldDrawCursor()
 static void
 paint_all(bool async)
 {
-#ifdef TRACY_COLLECT_CALLSTACKS
-	ZoneScopedNC("paint_all", TRACY_CALLSTACK_DEPTH);
-#else
 	ZoneScopedN("paint_all");
-#endif
 
 	gamescope_xwayland_server_t *root_server = wlserver_get_xwayland_server(0);
 	xwayland_ctx_t *root_ctx = root_server->ctx.get();
@@ -2503,17 +2503,19 @@ paint_all(bool async)
 			frameInfo.lut3D[i] = g_ColorMgmtLuts[i].vk_lut3d;
 		}
 	}
-
-	if ( GetBackend()->Present( &frameInfo, async ) != 0 )
 	{
-		return;
+		ZoneScopedN("paint_all() -> Present( &frameInfo, async )");
+		if ( GetBackend()->Present( &frameInfo, async ) != 0 )
+		{
+			return;
+		}
 	}
-
 	std::optional<gamescope::GamescopeScreenshotInfo> oScreenshotInfo =
 		gamescope::CScreenshotManager::Get().ProcessPendingScreenshot();
 
 	if ( oScreenshotInfo )
 	{
+		ZoneScopedN("paint_all() -> screenshot");
 		std::filesystem::path path = std::filesystem::path{ oScreenshotInfo->szScreenshotPath };
 
 		uint32_t drmCaptureFormat = DRM_FORMAT_INVALID;

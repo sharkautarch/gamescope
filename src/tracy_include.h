@@ -16,12 +16,15 @@ extern const char* const sl_vblankFrameName;
 #	define MAYBE_NORETURN
 #	define TRACY_TRY try
 #	define TRACY_CATCH catch(const ETracyExit& e) { e.m_bPthreadExit ? pthread_exit(const_cast<void*>(e.m_pStatus)) : exit(e.m_status); }
+# define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
 #else
 #	define EXIT(status) exit(status)
 #	define PTHREAD_EXIT(status) pthread_exit(status)
 #	define MAYBE_NORETURN [[noreturn]]
 #	define TRACY_TRY
 #	define TRACY_CATCH 
+#	define tracy_force_inline
+# define TracyDoubleLockable( type, varname ) type varname
 #endif
 
 #ifdef TRACY_ENABLE
@@ -36,6 +39,7 @@ struct ETracyExit : public std::exception {
 		}
 };
 #endif
+
 namespace tracy
 {
 	template<class T>
@@ -102,4 +106,3 @@ namespace tracy
 		  LockableCtx m_ctx;
 	};
 }
-#define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
