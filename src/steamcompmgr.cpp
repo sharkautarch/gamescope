@@ -682,7 +682,6 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
 }
 
 extern bool g_bForceRelativeMouse;
-bool bSteamCompMgrGrab = false;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
 
@@ -7133,8 +7132,6 @@ steamcompmgr_main(int argc, char **argv)
 	// Reset getopt() state
 	optind = 1;
 
-	bSteamCompMgrGrab = GetBackend()->GetNestedHints() && g_bForceRelativeMouse;
-
 	int o;
 	int opt_index = -1;
 	bool bForceWindowsFullscreen = false;
@@ -7591,13 +7588,15 @@ steamcompmgr_main(int argc, char **argv)
 
 		if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
 		{
-			bool bImageEmpty =
+			const bool bImageEmpty =
 				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
 				( !window_is_steam( global_focus.inputFocusWindow ) );
 
-			if ( GetBackend()->GetNestedHints() )
-				GetBackend()->GetNestedHints()->SetRelativeMouseMode( bImageEmpty );
-			bSteamCompMgrGrab = GetBackend()->GetNestedHints() && bImageEmpty;
+			const bool bHasPointerConstraint = wlserver.HasMouseConstraint(); // atomic, no lock needed
+
+			const bool bRelativeMouseMode = bImageEmpty && bHasPointerConstraint;
+
+			GetBackend()->GetNestedHints()->SetRelativeMouseMode( bRelativeMouseMode );
 		}
 
 		static int nIgnoredOverlayRepaints = 0;
