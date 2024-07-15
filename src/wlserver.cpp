@@ -1944,7 +1944,7 @@ void wlserver_unlock(bool flush)
 	pthread_mutex_unlock(&waylock);
 }
 
-extern tracy::Lockable<std::mutex> g_SteamCompMgrXWaylandServerMutex;
+extern LockableBase(std::mutex) g_SteamCompMgrXWaylandServerMutex;
 
 static int g_wlserverNudgePipe[2] = {-1, -1};
 
