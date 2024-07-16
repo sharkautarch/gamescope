@@ -92,6 +92,7 @@
 #include "commit.h"
 #include "BufferMemo.h"
 #include "Utils/Process.h"
+#include "Utils/Algorithm.h"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -682,7 +683,6 @@ constexpr const T& clamp( const T& x, const T& min, const T& max )
 }
 
 extern bool g_bForceRelativeMouse;
-bool bSteamCompMgrGrab = false;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
 
@@ -7041,6 +7041,24 @@ static gamescope::ConCommand cc_launch( "launch", "Launch an application with th
 gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
 static LogScope s_LaunchLogScope( "launch" );
 
+static std::vector<uint32_t> s_uRelativeMouseFilteredAppids;
+static gamescope::ConVar<std::string> cv_mouse_relative_filter_appids( "mouse_relative_filter_appids",
+"8400" /* Geometry Wars: Retro Evolved */,
+"Comma separated appids to filter out using relative mouse mode for.",
+[]()
+{
+	std::vector<std::string_view> sFilterAppids = gamescope::Split( cv_mouse_relative_filter_appids, "," );
+	std::vector<uint32_t> uFilterAppids;
+	uFilterAppids.reserve( sFilterAppids.size() );
+	for ( auto &sFilterAppid : sFilterAppids )
+	{
+		std::optional<uint32_t> ouFilterAppid = gamescope::Parse<uint32_t>( sFilterAppid );
+		uFilterAppids.push_back( *ouFilterAppid );
+	}
+
+	s_uRelativeMouseFilteredAppids = std::move( uFilterAppids );
+}, true);
+
 void LaunchNestedChildren( char **ppPrimaryChildArgv )
 {
 	std::string sNewPreload;
@@ -7133,8 +7151,6 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 
 	// Reset getopt() state
 	optind = 1;
-
-	bSteamCompMgrGrab = GetBackend()->GetNestedHints() && g_bForceRelativeMouse;
 
 	int o;
 	int opt_index = -1;
@@ -7598,13 +7614,21 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 
 		if ( GetBackend()->GetNestedHints() && !g_bForceRelativeMouse )
 		{
-			bool bImageEmpty =
+			const bool bImageEmpty =
 				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
 				( !window_is_steam( global_focus.inputFocusWindow ) );
 
-			if ( GetBackend()->GetNestedHints() )
-				GetBackend()->GetNestedHints()->SetRelativeMouseMode( bImageEmpty );
-			bSteamCompMgrGrab = GetBackend()->GetNestedHints() && bImageEmpty;
+			const bool bHasPointerConstraint = wlserver.HasMouseConstraint(); // atomic, no lock needed
+
+			uint32_t uAppId = global_focus.inputFocusWindow
+				? global_focus.inputFocusWindow->appID
+				: 0;
+
+			const bool bExcludedAppId = uAppId && gamescope::Algorithm::Contains( s_uRelativeMouseFilteredAppids, uAppId );
+
+			const bool bRelativeMouseMode = bImageEmpty && bHasPointerConstraint && !bExcludedAppId;
+
+			GetBackend()->GetNestedHints()->SetRelativeMouseMode( bRelativeMouseMode );
 		}
 
 		static int nIgnoredOverlayRepaints = 0;

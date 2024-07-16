@@ -1,4 +1,8 @@
+#include <array>
 #include <benchmark/benchmark.h>
+
+#include <algorithm>
+#include "Utils/Algorithm.h"
 
 #include "color_helpers.h"
 
@@ -73,5 +77,138 @@ static void BenchmarkCalcColorTransforms(benchmark::State &state)
         BenchmarkCalcColorTransform((EOTF)nInputEOTF, state);
 }
 BENCHMARK(BenchmarkCalcColorTransforms);
+
+static constexpr uint32_t k_uFindTestValueCountLarge = 524288;
+static constexpr uint32_t k_uFindTestValueCountMedium = 16;
+static constexpr uint32_t k_uFindTestValueCountSmall = 5;
+
+template <uint32_t uSize>
+static __attribute__((noinline)) std::array<int, uSize> GetFindTestValues()
+{
+    static std::array<int, uSize> s_Values = []()
+    {
+        std::array<int, uSize> values;
+        for ( uint32_t i = 0; i < uSize; i++ )
+            values[i] = rand() % 255;
+
+        return values;
+    }();
+
+    return s_Values;
+}
+
+// Large
+
+static void Benchmark_Find_Large_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountLarge> values = GetFindTestValues<k_uFindTestValueCountLarge>();
+
+    for (auto _ : state)
+    {
+        auto iter = gamescope::Algorithm::Find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Large_Gamescope);
+
+static void Benchmark_Find_Large_Std(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountLarge> values = GetFindTestValues<k_uFindTestValueCountLarge>();
+
+    for (auto _ : state)
+    {
+        auto iter = std::find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Large_Std);
+
+static void Benchmark_Contains_Large_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountLarge> values = GetFindTestValues<k_uFindTestValueCountLarge>();
+
+    for (auto _ : state)
+    {
+        bool bContains = gamescope::Algorithm::ContainsNoShortcut( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( bContains );
+    }
+}
+BENCHMARK(Benchmark_Contains_Large_Gamescope);
+
+//
+
+static void Benchmark_Find_Medium_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountMedium> values = GetFindTestValues<k_uFindTestValueCountMedium>();
+
+    for (auto _ : state)
+    {
+        auto iter = gamescope::Algorithm::Find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Medium_Gamescope);
+
+static void Benchmark_Find_Medium_Std(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountMedium> values = GetFindTestValues<k_uFindTestValueCountMedium>();
+
+    for (auto _ : state)
+    {
+        auto iter = std::find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Medium_Std);
+
+static void Benchmark_Contains_Medium_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountMedium> values = GetFindTestValues<k_uFindTestValueCountMedium>();
+
+    for (auto _ : state)
+    {
+        bool bContains = gamescope::Algorithm::ContainsNoShortcut( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( bContains );
+    }
+}
+BENCHMARK(Benchmark_Contains_Medium_Gamescope);
+
+//
+
+static void Benchmark_Find_Small_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountSmall> values = GetFindTestValues<k_uFindTestValueCountSmall>();
+
+    for (auto _ : state)
+    {
+        auto iter = gamescope::Algorithm::Find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Small_Gamescope);
+
+static void Benchmark_Find_Small_Std(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountSmall> values = GetFindTestValues<k_uFindTestValueCountSmall>();
+
+    for (auto _ : state)
+    {
+        auto iter = std::find( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( iter );
+    }
+}
+BENCHMARK(Benchmark_Find_Small_Std);
+
+static void Benchmark_Contains_Small_Gamescope(benchmark::State &state)
+{
+    std::array<int, k_uFindTestValueCountSmall> values = GetFindTestValues<k_uFindTestValueCountSmall>();
+
+    for (auto _ : state)
+    {
+        bool bContains = gamescope::Algorithm::ContainsNoShortcut( values.begin(), values.end(), 765678478 );
+        benchmark::DoNotOptimize( bContains );
+    }
+}
+BENCHMARK(Benchmark_Contains_Small_Gamescope);
 
 BENCHMARK_MAIN();

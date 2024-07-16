@@ -21,6 +21,24 @@ namespace gamescope
     class ConCommand;
 
     template <typename T>
+    inline std::string ToString( const T &thing )
+    {
+        return std::to_string( thing );
+    }
+
+    template <>
+    inline std::string ToString( const std::string &sThing )
+    {
+        return sThing;
+    }
+
+    template <>
+    inline std::string ToString( const std::string_view &svThing )
+    {
+        return std::string( svThing );
+    }
+
+    template <typename T>
     inline std::optional<T> Parse( std::string_view chars )
     {
         T obj;
@@ -113,11 +131,15 @@ namespace gamescope
     {
         using ConVarCallbackFunc = std::function<void()>;
     public:
-        ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr )
+        ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr, bool bRunCallbackAtStartup = false )
             : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); } )
             , m_Value{ defaultValue }
             , m_Callback{ func }
         {
+            if ( bRunCallbackAtStartup )
+            {
+                RunCallback();
+            }
         }
 
         const T& Get() const
@@ -130,6 +152,11 @@ namespace gamescope
         {
             m_Value = T{ newValue };
 
+            RunCallback();
+        }
+
+        void RunCallback()
+        {
             if ( !m_bInCallback && m_Callback )
             {
                 m_bInCallback = true;
@@ -142,6 +169,9 @@ namespace gamescope
         ConVar<T>& operator =( const J &newValue ) { SetValue<J>( newValue ); return *this; }
 
         operator T() const { return m_Value; }
+
+        // SFINAE for std::string...
+        operator std::string_view() const { return m_Value; }
 
         template <typename J> bool operator == ( const J &other ) const { return m_Value ==  other; }
         template <typename J> bool operator != ( const J &other ) const { return m_Value !=  other; }
@@ -158,7 +188,7 @@ namespace gamescope
             {
                 // We should move to std format for logging and stuff.
                 // This is kinda gross and grody!
-                std::string sValue = std::to_string( m_Value );
+                std::string sValue = ToString( m_Value );
                 console_log.infof( "%.*s: %.*s\n%.*s",
                     (int)m_pszName.length(), m_pszName.data(),
                     (int)sValue.length(), sValue.data(),

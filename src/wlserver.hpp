@@ -70,6 +70,8 @@ struct ResListEntry_t {
 
 struct wlserver_content_override;
 
+bool wlserver_is_lock_held(void);
+
 class gamescope_xwayland_server_t
 {
 public:
@@ -149,7 +151,29 @@ struct wlserver_t {
 	double mouse_surface_cursory = 0.0f;
 	bool mouse_constraint_requires_warp = false;
 	pixman_region32_t confine;
-	struct wlr_pointer_constraint_v1 *mouse_constraint = nullptr;
+	std::atomic<struct wlr_pointer_constraint_v1 *> mouse_constraint = { nullptr };
+
+	void SetMouseConstraint( struct wlr_pointer_constraint_v1 *pConstraint )
+	{
+		assert( wlserver_is_lock_held() );
+		// Set by wlserver only. Read by both wlserver + steamcompmgr with no
+		// need to actually be sequentially consistent.
+		mouse_constraint.store( pConstraint, std::memory_order_relaxed );
+	}
+
+	struct wlr_pointer_constraint_v1 *GetCursorConstraint() const
+	{
+		assert( wlserver_is_lock_held() );
+		return mouse_constraint.load( std::memory_order_relaxed );
+	}
+
+	bool HasMouseConstraint() const
+	{
+		// Does not need to be sequentially consistent.
+		// Used by the steamcompmgr thread to check if there is currently a mouse constraint.
+		return mouse_constraint.load( std::memory_order_relaxed ) != nullptr;
+	}
+
 	uint64_t ulLastMovedCursorTime = 0;
 	bool bCursorHidden = true;
 	bool bCursorHasImage = true;
