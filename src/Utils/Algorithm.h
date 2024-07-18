@@ -2,6 +2,7 @@
 
 #include <iterator>
 #include <span>
+#include <vector>
 
 namespace gamescope::Algorithm
 {
@@ -15,6 +16,18 @@ namespace gamescope::Algorithm
     constexpr TObj *End( std::span<TObj> span )
     {
         return Begin( span ) + span.size();
+    }
+
+    template <typename TObj>
+    constexpr const TObj *Begin( const std::vector<TObj> &vec )
+    {
+        return vec.data();
+    }
+
+    template <typename TObj>
+    constexpr const TObj *End( const std::vector<TObj> &vec )
+    {
+        return Begin( vec ) + vec.size();
     }
 
     template <typename TIter, typename TObj>
@@ -104,6 +117,12 @@ namespace gamescope::Algorithm
     }
 
     template <typename TIter, typename TObj>
+    constexpr TIter Find( const std::vector<TObj> &vec, const TObj &obj )
+    {
+        return Find( Begin( vec ), End( vec ), obj );
+    }
+
+    template <typename TIter, typename TObj>
     constexpr bool ContainsShortcut( TIter pFirst, TIter pEnd, const TObj &obj )
     {
         return Find( pFirst, pEnd, obj ) != pEnd;
@@ -169,5 +188,11 @@ namespace gamescope::Algorithm
     constexpr bool Contains( std::span<TSpanObj> span, const TObj &obj )
     {
         return Contains( Begin( span ), End( span ), obj );
+    }
+
+    template <typename TVectorObj, typename TObj>
+    constexpr bool Contains( const std::vector<TVectorObj> &vec, const TObj &obj )
+    {
+        return Contains( Begin( vec ), End( vec ), obj );
     }
 }

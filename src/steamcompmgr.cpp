@@ -92,6 +92,7 @@
 #include "commit.h"
 #include "BufferMemo.h"
 #include "Utils/Process.h"
+#include "Utils/Algorithm.h"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -186,7 +187,7 @@ timespec nanos_to_timespec( uint64_t ulNanos )
 static void
 update_runtime_info();
 
-bool g_bAllowVRR = false;
+gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 
 uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -2245,7 +2246,7 @@ paint_all(bool async)
 	struct FrameInfo_t frameInfo = {};
 	frameInfo.applyOutputColorMgmt = g_ColorMgmt.pending.enabled;
 	frameInfo.outputEncodingEOTF = g_ColorMgmt.pending.outputEncodingEOTF;
-	frameInfo.allowVRR = g_bAllowVRR;
+	frameInfo.allowVRR = cv_adaptive_sync;
 	frameInfo.bFadingOut = fadingOut;
 
 	// If the window we'd paint as the base layer is the streaming client,
@@ -5430,7 +5431,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	if ( ev->atom == ctx->atoms.gamescopeVRREnabled )
 	{
 		bool enabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeVRREnabled, 0 );
-		g_bAllowVRR = enabled;
+		cv_adaptive_sync = enabled;
 	}
 	if ( ev->atom == ctx->atoms.gamescopeDisplayForceInternal )
 	{
@@ -6914,7 +6915,7 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 	// Keep this as a preference, starting with off.
 	if ( force )
 	{
-        bool wants_vrr = g_bAllowVRR;
+        bool wants_vrr = cv_adaptive_sync;
 		uint32_t enabled_value = wants_vrr ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
@@ -7050,6 +7051,24 @@ static gamescope::ConCommand cc_launch( "launch", "Launch an application with th
 
 gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
 static LogScope s_LaunchLogScope( "launch" );
+
+static std::vector<uint32_t> s_uRelativeMouseFilteredAppids;
+static gamescope::ConVar<std::string> cv_mouse_relative_filter_appids( "mouse_relative_filter_appids",
+"8400" /* Geometry Wars: Retro Evolved */,
+"Comma separated appids to filter out using relative mouse mode for.",
+[]()
+{
+	std::vector<std::string_view> sFilterAppids = gamescope::Split( cv_mouse_relative_filter_appids, "," );
+	std::vector<uint32_t> uFilterAppids;
+	uFilterAppids.reserve( sFilterAppids.size() );
+	for ( auto &sFilterAppid : sFilterAppids )
+	{
+		std::optional<uint32_t> ouFilterAppid = gamescope::Parse<uint32_t>( sFilterAppid );
+		uFilterAppids.push_back( *ouFilterAppid );
+	}
+
+	s_uRelativeMouseFilteredAppids = std::move( uFilterAppids );
+}, true);
 
 void LaunchNestedChildren( char **ppPrimaryChildArgv )
 {
@@ -7606,7 +7625,13 @@ steamcompmgr_main(int argc, char **argv)
 
 			const bool bHasPointerConstraint = wlserver.HasMouseConstraint(); // atomic, no lock needed
 
-			const bool bRelativeMouseMode = bImageEmpty && bHasPointerConstraint;
+			uint32_t uAppId = global_focus.inputFocusWindow
+				? global_focus.inputFocusWindow->appID
+				: 0;
+
+			const bool bExcludedAppId = uAppId && gamescope::Algorithm::Contains( s_uRelativeMouseFilteredAppids, uAppId );
+
+			const bool bRelativeMouseMode = bImageEmpty && bHasPointerConstraint && !bExcludedAppId;
 
 			GetBackend()->GetNestedHints()->SetRelativeMouseMode( bRelativeMouseMode );
 		}

@@ -38,7 +38,6 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
-extern bool g_bAllowVRR;
 
 extern gamescope::ConVar<bool> cv_composite_force;
 extern bool g_bColorSliderInUse;
