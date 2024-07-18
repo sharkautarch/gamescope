@@ -1,4 +1,5 @@
 #include "Process.h"
+#include "../Utils/Algorithm.h"
 #include "../convar.h"
 #include "../log.hpp"
 #include "../Utils/Defer.h"
@@ -268,7 +269,7 @@ namespace gamescope::Process
 
             int nFd = *onFd;
 
-            bool bExcluded = std::find( nExcludedFds.begin(), nExcludedFds.end(), nFd ) != nExcludedFds.end();
+            bool bExcluded = Algorithm::Contains( nExcludedFds, nFd );
             if ( bExcluded )
                 continue;
 
