@@ -42,7 +42,7 @@
 using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
-extern bool g_bAllowVRR;
+extern gamescope::ConVar<bool> cv_adaptive_sync;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
@@ -765,7 +765,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = atoi( optarg );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
-					g_bAllowVRR = true;
+					cv_adaptive_sync = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "backend") == 0) {
