@@ -5,6 +5,7 @@
 #include "steamcompmgr.hpp"
 #include "edid.h"
 #include "Utils/Defer.h"
+#include "Utils/Algorithm.h"
 #include "convar.h"
 #include "refresh_rate.h"
 #include "waitable.h"
@@ -40,7 +41,7 @@ extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 extern bool g_bForceHDR10OutputDebug;
 extern bool g_bBorderlessOutputWindow;
-extern bool g_bAllowVRR;
+extern gamescope::ConVar<bool> cv_adaptive_sync;
 
 extern gamescope::ConVar<bool> cv_composite_force;
 extern bool g_bColorSliderInUse;
@@ -186,7 +187,13 @@ namespace gamescope
 
         std::optional<WaylandPlaneState> GetCurrentState() { std::unique_lock lock( m_PlaneStateLock ); return m_oCurrentPlaneState; }
 
+        void UpdateVRRRefreshRate();
+
     private:
+
+        void Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput );
+        void Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput );
+        static const wl_surface_listener s_SurfaceListener;
 
         void LibDecor_Frame_Configure( libdecor_frame *pFrame, libdecor_configuration *pConfiguration );
         void LibDecor_Frame_Close( libdecor_frame *pFrame );
@@ -228,11 +235,19 @@ namespace gamescope
         frog_color_managed_surface *m_pFrogColorManagedSurface = nullptr;
         wp_fractional_scale_v1 *m_pFractionalScale = nullptr;
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
+        std::vector<wl_output *> m_pOutputs;
         bool m_bNeedsDecorCommit = false;
         uint32_t m_uFractionalScale = 120;
 
         std::mutex m_PlaneStateLock;
         std::optional<WaylandPlaneState> m_oCurrentPlaneState;
+    };
+    const wl_surface_listener CWaylandPlane::s_SurfaceListener =
+    {
+        .enter = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Enter ),
+        .leave = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_Surface_Leave ),
+        .preferred_buffer_scale = WAYLAND_NULL(),
+        .preferred_buffer_transform = WAYLAND_NULL(),
     };
     // Can't be const, libdecor api bad...
     libdecor_frame_interface CWaylandPlane::s_LibDecorFrameInterface =
@@ -540,9 +555,19 @@ namespace gamescope
 
         bool SupportsFormat( uint32_t uDRMFormat ) const;
 
+        bool HostCompositorIsCurrentlyVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
         void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
 
-        bool CurrentDisplaySupportsVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
+        WaylandOutputInfo *GetOutputInfo( wl_output *pOutput )
+        {
+            auto iter = m_pOutputs.find( pOutput );
+            if ( iter == m_pOutputs.end() )
+                return nullptr;
+
+            return &iter->second;
+        }
+
+        bool CurrentDisplaySupportsVRR() const { return HostCompositorIsCurrentlyVRR(); }
         wl_region *GetFullRegion() const { return m_pFullRegion; }
 
     private:
@@ -819,6 +844,7 @@ namespace gamescope
         m_pParent = pParent;
         m_pSurface = wl_compositor_create_surface( m_pBackend->GetCompositor() );
         wl_surface_set_user_data( m_pSurface, this );
+        wl_surface_add_listener( m_pSurface, &s_SurfaceListener, this );
 
         m_pViewport = wp_viewporter_get_viewport( m_pBackend->GetViewporter(), m_pSurface );
 
@@ -1005,6 +1031,47 @@ namespace gamescope
         }
     }
 
+    void CWaylandPlane::UpdateVRRRefreshRate()
+    {
+        if ( m_pParent )
+            return;
+
+        if ( !m_pBackend->HostCompositorIsCurrentlyVRR() )
+            return;
+
+        if ( m_pOutputs.empty() )
+            return;
+
+        int32_t nLargestRefreshRateMhz = 0;
+        for ( wl_output *pOutput : m_pOutputs )
+        {
+            WaylandOutputInfo *pOutputInfo = m_pBackend->GetOutputInfo( pOutput );
+            if ( !pOutputInfo )
+                continue;
+
+            nLargestRefreshRateMhz = std::max( nLargestRefreshRateMhz, pOutputInfo->nRefresh );
+        }
+
+        if ( nLargestRefreshRateMhz && nLargestRefreshRateMhz != g_nOutputRefresh )
+        {
+            xdg_log.infof( "Changed refresh to: %.3fhz", ConvertmHzToHz( (float) nLargestRefreshRateMhz ) );
+            g_nOutputRefresh = nLargestRefreshRateMhz;
+        }
+    }
+
+    void CWaylandPlane::Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput )
+    {
+        m_pOutputs.emplace_back( pOutput );
+
+        UpdateVRRRefreshRate();
+    }
+    void CWaylandPlane::Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput )
+    {
+        std::erase( m_pOutputs, pOutput );
+
+        UpdateVRRRefreshRate();
+    }
+
     void CWaylandPlane::LibDecor_Frame_Configure( libdecor_frame *pFrame, libdecor_configuration *pConfiguration )
     {
 	    if ( !libdecor_configuration_get_window_state( pConfiguration, &m_eWindowState ) )
@@ -1060,6 +1127,8 @@ namespace gamescope
         else
         {
             m_pBackend->SetHostCompositorIsCurrentlyVRR( true );
+
+            UpdateVRRRefreshRate();
         }
 
         GetVBlankTimer().MarkVBlank( ulTime, true );
@@ -1531,7 +1600,7 @@ namespace gamescope
     }
     bool CWaylandBackend::IsVRRActive() const
     {
-        return g_bAllowVRR && m_bHostCompositorIsCurrentlyVRR;
+        return cv_adaptive_sync && m_bHostCompositorIsCurrentlyVRR;
     }
 
     bool CWaylandBackend::SupportsPlaneHardwareCursor() const

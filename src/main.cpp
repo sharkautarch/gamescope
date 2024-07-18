@@ -42,7 +42,7 @@
 using namespace std::literals;
 
 EStreamColorspace g_ForcedNV12ColorSpace = k_EStreamColorspace_Unknown;
-extern bool g_bAllowVRR;
+extern gamescope::ConVar<bool> cv_adaptive_sync;
 
 const char *gamescope_optstring = nullptr;
 const char *g_pOriginalDisplay = nullptr;
@@ -612,13 +612,33 @@ static void UpdateCompatEnvVars()
 	// A sane default here.
 	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
 
-	if ( g_bLaunchMangoapp && !getenv("MANGOHUD_CONFIGFILE") )
+	const char *pszMangoConfigPath = getenv( "MANGOHUD_CONFIGFILE" );
+	if ( g_bLaunchMangoapp && ( !pszMangoConfigPath || !*pszMangoConfigPath ) )
 	{
 		char szMangoConfigPath[ PATH_MAX ];
-		int nMangoConfigFd = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate );
-		if ( nMangoConfigFd >= 0 )
+		FILE *pMangoConfigFile = gamescope::MakeTempFile( szMangoConfigPath, gamescope::k_szGamescopeTempMangoappTemplate, "w", true );
+		if ( pMangoConfigFile )
 		{
 			setenv( "MANGOHUD_CONFIGFILE", szMangoConfigPath, 1 );
+
+			if ( steamMode )
+			{
+				const char szDefaultConfig[] = "no_display";
+				fwrite( szDefaultConfig, 1, sizeof( szDefaultConfig ), pMangoConfigFile );
+			}
+			fclose( pMangoConfigFile );
+		}
+	}
+
+	const char *pszLimiterFile = getenv( "GAMESCOPE_LIMITER_FILE" );
+	if ( !pszLimiterFile || !*pszLimiterFile )
+	{
+		char szLimiterPath[ PATH_MAX ];
+		int nLimiterFd = gamescope::MakeTempFile( szLimiterPath, gamescope::k_szGamescopeTempLimiterTemplate, true );
+		if ( nLimiterFd >= 0 )
+		{
+			setenv( "GAMESCOPE_LIMITER_FILE", szLimiterPath, 1 );
+			gamescope::Process::CloseFd( nLimiterFd );
 		}
 	}
 }
@@ -745,7 +765,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "display-index") == 0) {
 					g_nNestedDisplayIndex = atoi( optarg );
 				} else if (strcmp(opt_name, "adaptive-sync") == 0) {
-					g_bAllowVRR = true;
+					cv_adaptive_sync = true;
 				} else if (strcmp(opt_name, "expose-wayland") == 0) {
 					g_bExposeWayland = true;
 				} else if (strcmp(opt_name, "backend") == 0) {

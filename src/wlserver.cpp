@@ -225,7 +225,8 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 
 	struct wlr_surface *pConstraintSurface = wlserver_surface_to_main_surface( surf );
 
-	if ( wlserver.mouse_constraint && wlserver.mouse_constraint->surface == pConstraintSurface )
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
+	if ( pConstraint && pConstraint->surface == pConstraintSurface )
 		wlserver_update_cursor_constraint();
 
 	return oNewEntry;
@@ -2235,7 +2236,7 @@ struct GamescopePointerConstraint
 
 static void wlserver_warp_to_constraint_hint()
 {
-	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.mouse_constraint;
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
 	
 	if (pConstraint->current.cursor_hint.enabled)
 	{
@@ -2248,7 +2249,7 @@ static void wlserver_warp_to_constraint_hint()
 
 static void wlserver_update_cursor_constraint()
 {
-	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.mouse_constraint;
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
 	pixman_region32_t *pRegion = &pConstraint->region;
 
 	if ( wlserver.mouse_constraint_requires_warp && pConstraint->surface )
@@ -2278,27 +2279,29 @@ static void wlserver_update_cursor_constraint()
 
 static void wlserver_constrain_cursor( struct wlr_pointer_constraint_v1 *pNewConstraint )
 {
-	if ( wlserver.mouse_constraint == pNewConstraint )
+	struct wlr_pointer_constraint_v1 *pOldConstraint = wlserver.GetCursorConstraint();
+
+	if ( pOldConstraint == pNewConstraint )
 		return;
 
-	if ( wlserver.mouse_constraint )
+	if ( pOldConstraint )
 	{
 		if ( !pNewConstraint )
 			wlserver_warp_to_constraint_hint();
 
-		wlr_pointer_constraint_v1_send_deactivated(wlserver.mouse_constraint);
+		wlr_pointer_constraint_v1_send_deactivated( pOldConstraint );
 	}
 
-	wlserver.mouse_constraint = pNewConstraint;
+	wlserver.SetMouseConstraint( pNewConstraint );
 
-	if ( !wlserver.mouse_constraint )
+	if ( !pNewConstraint )
 		return;
 
 	wlserver.mouse_constraint_requires_warp = true;
 
 	wlserver_update_cursor_constraint();
 
-	wlr_pointer_constraint_v1_send_activated( wlserver.mouse_constraint );
+	wlr_pointer_constraint_v1_send_activated( pNewConstraint );
 }
 
 static void handle_pointer_constraint_set_region(struct wl_listener *listener, void *data)
@@ -2316,11 +2319,12 @@ void handle_constraint_destroy(struct wl_listener *listener, void *data)
 	wl_list_remove(&pGamescopeConstraint->set_region.link);
 	wl_list_remove(&pGamescopeConstraint->destroy.link);
 
-	if (wlserver.mouse_constraint == pGamescopeConstraint->pConstraint)
+	struct wlr_pointer_constraint_v1 *pCurrentConstraint = wlserver.GetCursorConstraint();
+	if ( pCurrentConstraint == pGamescopeConstraint->pConstraint )
 	{
 		wlserver_warp_to_constraint_hint();
 
-		wlserver.mouse_constraint = nullptr;
+		wlserver.SetMouseConstraint( nullptr );
 	}
 
 	delete pGamescopeConstraint;
@@ -2345,9 +2349,11 @@ static void handle_pointer_constraint(struct wl_listener *listener, void *data)
 
 static bool wlserver_apply_constraint( double *dx, double *dy )
 {
-	if ( wlserver.mouse_constraint )
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
+
+	if ( pConstraint )
 	{
-		if ( wlserver.mouse_constraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED )
+		if ( pConstraint->type == WLR_POINTER_CONSTRAINT_V1_LOCKED )
 			return false;
 
 		double sx = wlserver.mouse_surface_cursorx;

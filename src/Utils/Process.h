@@ -15,7 +15,15 @@ namespace gamescope::Process
     void KillProcess( pid_t nPid, int nSignal );
 
     std::optional<int> WaitForChild( pid_t nPid );
-    void WaitForAllChildren();
+
+    // Wait for all children to die,
+    // but stop waiting if we hit a specific PID specified by onStopPid.
+    // Returns true if we stopped because we hit the pid specified by onStopPid.
+    //
+    // Similar to what an `init` process would do.
+    bool WaitForAllChildren( std::optional<pid_t> onStopPid = std::nullopt );
+
+    bool CloseFd( int nFd );
 
     void RaiseFdLimit();
     void RestoreFdLimit();
