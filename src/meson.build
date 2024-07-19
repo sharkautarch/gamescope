@@ -43,7 +43,7 @@ libdecor_dep = dependency('libdecor-0')
 tracy_public_deps = []
 tracy_public_args = []
 if get_option('tracy_enable')
-	tracy_public_args += ['-DTRACY_ENABLE', '-DTRACY_VK_USE_SYMBOL_TABLE', '-DTRACY_FIBERS']
+	tracy_public_args += ['-DTRACY_ENABLE', '-DTRACY_VK_USE_SYMBOL_TABLE', '-DTRACY_FIBERS', '-DTRACY_LIBBACKTRACE_ELF_DYNLOAD_SUPPORT']
 	
 	if get_option('tracy_on_demand')
 		tracy_public_args += ['-DTRACY_ON_DEMAND']

@@ -2737,6 +2737,7 @@ static TracyLockable(std::mutex, present_wait_lock);
 extern void mangoapp_output_update( uint64_t vblanktime );
 static void present_wait_thread_func( void )
 {
+	TracyCSetThreadName("present_wait");
 	uint64_t present_wait_id = 0;
 
 	while (true)

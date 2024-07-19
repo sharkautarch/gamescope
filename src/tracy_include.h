@@ -1,5 +1,6 @@
 #pragma once
 #include <exception>
+#include <optional>
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyC.h"
 
@@ -11,7 +12,7 @@
 extern const char* const sl_steamcompmgr_name;
 extern const char* const sl_vblankFrameName;
 extern const char* const sl_img_waiter_fiber;
-inline TracyCZoneCtx g_cZone_img_waiter;
+inline std::optional<TracyCZoneCtx> g_cZone_img_waiter;
 
 #ifdef TRACY_ENABLE
 #include <pthread.h>
@@ -20,6 +21,8 @@ inline TracyCZoneCtx g_cZone_img_waiter;
 #	define MAYBE_NORETURN
 #	define TRACY_TRY try
 #	define TRACY_CATCH catch(const ETracyExit& e) { e.m_bPthreadExit ? pthread_exit(const_cast<void*>(e.m_pStatus)) : exit(e.m_status); }
+# define TRACY_FIBER_ZONE_START(oVariable, ctx, name) TracyCZoneN(ctx, name, 1); oVariable.emplace(ctx)
+# define TRACY_FIBER_ZONE_END(oVariable) if (oVariable) TracyCZoneEnd(*oVariable); oVariable.reset()
 # define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
 //pthread lock instrumentation seems to trigger an assert on tracy server, so leaving it commented out for now:
 #	if 0
@@ -38,6 +41,8 @@ inline TracyCZoneCtx g_cZone_img_waiter;
 #	define TRACY_TRY
 #	define TRACY_CATCH 
 #	define tracy_force_inline
+# define TRACY_FIBER_ZONE_START(variable, ctx, name)
+# define TRACY_FIBER_ZONE_END(oVariable)
 # define TracyDoubleLockable( type, varname ) type varname
 #	define TracyPthreadLockable( type, varname, initializer ) type varname = initializer
 #endif

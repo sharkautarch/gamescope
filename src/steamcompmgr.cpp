@@ -6286,9 +6286,9 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			if ( bKnownReady )
 				newCommit->Signal();
 			else {
+				ZoneScopedN("g_ImageWaiter.AddWaitable()");
 				TracyFiberEnter(sl_img_waiter_fiber);
-				TracyCZone (ctx , 1);
-				g_cZone_img_waiter = ctx;
+				TRACY_FIBER_ZONE_START(g_cZone_img_waiter, ctx, "wait for commit");
 				g_ImageWaiter.AddWaitable( newCommit.get() );
 				TracyFiberLeave;
 			}
