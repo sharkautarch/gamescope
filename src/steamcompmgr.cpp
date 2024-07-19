@@ -6285,8 +6285,13 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 			newCommit->SetReleasePoint( reslistentry.oReleasePoint );
 			if ( bKnownReady )
 				newCommit->Signal();
-			else
+			else {
+				TracyFiberEnter(sl_img_waiter_fiber);
+				TracyCZone (ctx , 1);
+				g_cZone_img_waiter = ctx;
 				g_ImageWaiter.AddWaitable( newCommit.get() );
+				TracyFiberLeave;
+			}
 		}
 
 		w->commit_queue.push_back( std::move(newCommit) );
@@ -7324,8 +7329,10 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 					server->ctx->Dispatch();
 			}
 		}
-
-		g_SteamCompMgrWaiter.PollEvents();
+		{
+			ZoneScopedN("g_SteamCompMgrWaiter.PollEvents()");
+			g_SteamCompMgrWaiter.PollEvents();
+		}
 
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{

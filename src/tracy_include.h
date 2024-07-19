@@ -1,6 +1,7 @@
 #pragma once
 #include <exception>
 #include "tracy/Tracy.hpp"
+#include "tracy/TracyC.h"
 
 
 // (from 3.4.6 of Tracy manual) Tracy doesn't support exiting within a zone.
@@ -9,14 +10,27 @@
 
 extern const char* const sl_steamcompmgr_name;
 extern const char* const sl_vblankFrameName;
+extern const char* const sl_img_waiter_fiber;
+inline TracyCZoneCtx g_cZone_img_waiter;
 
 #ifdef TRACY_ENABLE
+#include <pthread.h>
 #	define EXIT(status) throw ETracyExit(status)
 #	define PTHREAD_EXIT(status) throw ETracyExit(status, true)
 #	define MAYBE_NORETURN
 #	define TRACY_TRY try
 #	define TRACY_CATCH catch(const ETracyExit& e) { e.m_bPthreadExit ? pthread_exit(const_cast<void*>(e.m_pStatus)) : exit(e.m_status); }
 # define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
+//pthread lock instrumentation seems to trigger an assert on tracy server, so leaving it commented out for now:
+#	if 0
+#		define TracyPthreadLockable( type, varname, initializer ) tracy::PthreadLockable varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }; \
+		using tracy::pthread_mutex_lock; \
+		using tracy::pthread_mutex_unlock; \
+		using tracy::pthread_mutex_trylock
+#	else
+#		define TracyPthreadLockable( type, varname, initializer ) type varname = initializer
+#	endif
+
 #else
 #	define EXIT(status) exit(status)
 #	define PTHREAD_EXIT(status) pthread_exit(status)
@@ -25,6 +39,7 @@ extern const char* const sl_vblankFrameName;
 #	define TRACY_CATCH 
 #	define tracy_force_inline
 # define TracyDoubleLockable( type, varname ) type varname
+#	define TracyPthreadLockable( type, varname, initializer ) type varname = initializer
 #endif
 
 #ifdef TRACY_ENABLE
@@ -104,5 +119,53 @@ namespace tracy
 		  T m_lockable;
 		  LockableCtx m_ctx;
 	};
+	
+	class PthreadLockable
+	{
+	public:
+		  tracy_force_inline PthreadLockable( const SourceLocationData* srcloc )
+		      : m_ctx( srcloc )
+		  {
+		  }
+
+		  PthreadLockable( const PthreadLockable& ) = delete;
+		  PthreadLockable& operator=( const PthreadLockable& ) = delete;
+
+		  tracy_force_inline void Mark( const SourceLocationData* srcloc )
+		  {
+		      m_ctx.Mark( srcloc );
+		  }
+
+		  tracy_force_inline void CustomName( const char* name, size_t size )
+		  {
+		      m_ctx.CustomName( name, size );
+		  }
+
+	private:
+			friend tracy_force_inline void pthread_mutex_lock(PthreadLockable* mut);
+			friend tracy_force_inline void pthread_mutex_unlock(PthreadLockable* mut);
+			friend tracy_force_inline int pthread_mutex_trylock(PthreadLockable* mut);
+			pthread_mutex_t m_lockable = PTHREAD_MUTEX_INITIALIZER;
+		  LockableCtx m_ctx;
+	};
+	
+	tracy_force_inline void pthread_mutex_lock(PthreadLockable* mut)
+  {
+      const auto runAfter = mut->m_ctx.BeforeLock();
+      ::pthread_mutex_lock( &(mut->m_lockable) );
+      if( runAfter ) mut->m_ctx.AfterLock();
+  }
+
+  tracy_force_inline void pthread_mutex_unlock(PthreadLockable* mut)
+  {
+      ::pthread_mutex_unlock( &(mut->m_lockable) );
+      mut->m_ctx.AfterUnlock();
+  }
+	tracy_force_inline int pthread_mutex_trylock(PthreadLockable* mut)
+  {
+      const auto acquired = ::pthread_mutex_trylock( &(mut->m_lockable) );
+      mut->m_ctx.AfterTryLock( acquired );
+      return acquired;
+  }
 }
 #endif

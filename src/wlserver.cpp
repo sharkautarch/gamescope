@@ -1920,7 +1920,7 @@ bool wlserver_init( void ) {
 	return true;
 }
 
-pthread_mutex_t waylock = PTHREAD_MUTEX_INITIALIZER;
+TracyPthreadLockable(pthread_mutex_t, waylock, PTHREAD_MUTEX_INITIALIZER);
 
 bool wlserver_is_lock_held(void)
 {
