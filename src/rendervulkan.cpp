@@ -2722,12 +2722,19 @@ bool vulkan_init_formats()
 
 bool acquire_next_image( void )
 {
-	VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
-	if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
-		return false;
-	if ( g_device.vk.WaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
-		return false;
-	return g_device.vk.ResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
+	ZoneScopedN("acquire_next_image");
+	{
+		VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
+		if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
+			return false;
+		ZoneScopedN("WaitForFences");
+		{
+			if ( g_device.vk.WaitForFences( g_device.device(), 1, &g_output.acquireFence, false, UINT64_MAX ) != VK_SUCCESS )
+				return false;
+			ZoneScopedN("ResetFences");
+			return g_device.vk.ResetFences( g_device.device(), 1, &g_output.acquireFence ) == VK_SUCCESS;
+		}
+	}
 }
 
 
@@ -2796,6 +2803,7 @@ void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
 
 void vulkan_present_to_window( void )
 {
+	ZoneScopedN("vulkan_present_to_window");
 	static uint64_t s_lastPresentId = 0;
 
 	uint64_t presentId = ++s_lastPresentId;
@@ -3056,6 +3064,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 
 bool vulkan_remake_swapchain( void )
 {
+	ZoneScopedN("vulkan_remake_swapchain");
 	std::unique_lock lock(present_wait_lock);
 	g_currentPresentWaitId = 0;
 	g_currentPresentWaitId.notify_all();
@@ -3741,6 +3750,7 @@ extern uint32_t g_reshade_technique_idx;
 
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment )
 {
+	ZoneScopedN("vulkan_composite");
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
@@ -3971,6 +3981,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 {
+	ZoneScopedN("vulkan_wait");
 	return g_device.wait( ulSeqNo, bReset );
 }
 
