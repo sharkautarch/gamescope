@@ -1193,12 +1193,38 @@ static void create_gamescope_control( void )
 
 static void gamescope_private_execute( struct wl_client *client, struct wl_resource *resource, const char *cvar_name, const char *value )
 {
+#ifdef TRACY_ENABLE
+
+	const size_t cvar_len = strlen(cvar_name);
+	//printf("cvar_len = %lu\n", cvar_len);
+	const size_t value_len = strlen(value);
+	//printf("value_len = %lu\n", value_len);
+
+	const size_t combined_len = cvar_len+value_len+1;
+	char*__restrict__ combined_str = static_cast<char*__restrict__>(alloca(combined_len));
+	memcpy(reinterpret_cast<void*__restrict__>(combined_str), reinterpret_cast<const void*>(cvar_name), cvar_len);
+	combined_str[cvar_len]=' ';
+	memcpy(reinterpret_cast<void*__restrict__>(combined_str+cvar_len+1), reinterpret_cast<const void*>(value), value_len);
+#if 0
+	for (size_t i = 0; i < combined_len; i++) {
+		printf("i = %lu, combined_str[i] = %c\n", i, combined_str[i]);
+	}
+#endif
+	
+	TracyMessage(combined_str, combined_len);
+#endif
+	
 	std::vector<std::string_view> args;
 	args.emplace_back( cvar_name );
 	args.emplace_back( value );
-	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) )
+	
+	TracyMessage(combined_str, combined_len);
+	
+	if ( gamescope::ConCommand::Exec( std::span<std::string_view>{ args } ) ) {
 		gamescope_private_send_command_executed( resource );
+	}
 }
+
 
 static void gamescope_private_handle_destroy( struct wl_client *client, struct wl_resource *resource )
 {
