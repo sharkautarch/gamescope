@@ -4,7 +4,6 @@
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyC.h"
 
-
 // (from 3.4.6 of Tracy manual) Tracy doesn't support exiting within a zone.
 // workaround is to throw a custom exception,
 // then catch exception at the end of the function
@@ -12,7 +11,7 @@
 extern const char* const sl_steamcompmgr_name;
 extern const char* const sl_vblankFrameName;
 extern const char* const sl_img_waiter_fiber;
-inline std::optional<TracyCZoneCtx> g_cZone_img_waiter;
+inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 
 #ifdef TRACY_ENABLE
 #include <pthread.h>
@@ -21,8 +20,9 @@ inline std::optional<TracyCZoneCtx> g_cZone_img_waiter;
 #	define MAYBE_NORETURN
 #	define TRACY_TRY try
 #	define TRACY_CATCH catch(const ETracyExit& e) { e.m_bPthreadExit ? pthread_exit(const_cast<void*>(e.m_pStatus)) : exit(e.m_status); }
-# define TRACY_FIBER_ZONE_START(oVariable, ctx, name) TracyCZoneN(ctx, name, 1); oVariable.emplace(ctx)
-# define TRACY_FIBER_ZONE_END(oVariable) if (oVariable) TracyCZoneEnd(*oVariable); oVariable.reset()
+# define TRACY_GET_SRC_LOC(name) [](const std::source_location loc = std::source_location::current()) { return tracy::SourceLocationData(name, loc.function_name(), loc.file_name(), loc.line()); }()
+# define TRACY_FIBER_ZONE_START(oVariable, name) static constexpr auto __attribute__((no_icf,used)) tracy_loc = TRACY_GET_SRC_LOC(name); oVariable.emplace(&tracy_loc, true)
+# define TRACY_FIBER_ZONE_END(oVariable) oVariable.reset()
 # define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
 //pthread lock instrumentation seems to trigger an assert on tracy server, so leaving it commented out for now:
 #	if 0

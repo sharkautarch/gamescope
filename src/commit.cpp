@@ -59,7 +59,7 @@ void commit_t::OnPollIn()
     {
         std::unique_lock lock( m_WaitableCommitStateMutex );
         if ( !CloseFenceInternal() ) {
-        		TRACY_FIBER_ZONE_END(g_cZone_img_waiter);
+        		TRACY_FIBER_ZONE_END(g_zone_img_waiter);
 	      		TracyFiberLeave;
             return;
         }
@@ -68,7 +68,7 @@ void commit_t::OnPollIn()
     Signal();
 
     nudge_steamcompmgr();
-    TRACY_FIBER_ZONE_END(g_cZone_img_waiter);
+    TRACY_FIBER_ZONE_END(g_zone_img_waiter);
     TracyFiberLeave;
 }
 
