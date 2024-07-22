@@ -1198,7 +1198,16 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 
 std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 {
-	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
+	auto finalize_buf = [this]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
+		//using this lambda allows for Return Value Optimization w/o duplicating code
+		if constexpr (bIsRecycled) {
+			m_unusedCmdBufs.pop_back();
+		}
+		cmdBuf->begin();
+		
+		return cmdBuf;
+	};
+
 	if (m_unusedCmdBufs.empty())
 	{
 		VkCommandBuffer rawCmdBuffer;
@@ -1216,16 +1225,10 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 			return nullptr;
 		}
 
-		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily());
+		return finalize_buf.operator()<false>(std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily()));
+	} else {
+		return finalize_buf.operator()<true>(std::move(m_unusedCmdBufs.back()));
 	}
-	else
-	{
-		cmdBuffer = std::move(m_unusedCmdBufs.back());
-		m_unusedCmdBufs.pop_back();
-	}
-
-	cmdBuffer->begin();
-	return cmdBuffer;
 }
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
