@@ -128,7 +128,7 @@ class CVulkanTexture : public gamescope::RcObject
 public:
 	struct createFlags {
 
-		createFlags( void )
+		constexpr createFlags( void )
 		{
 			bFlippable = false;
 			bMappable = false;
@@ -198,7 +198,7 @@ public:
 
 	int memoryFence();
 
-	CVulkanTexture( void );
+	inline CVulkanTexture( void ) {}
 	~CVulkanTexture( void );
 
 	uint32_t queueFamily = VK_QUEUE_FAMILY_IGNORED;
@@ -539,7 +539,7 @@ struct SamplerState
 	bool bNearest : 1;
 	bool bUnnormalized : 1;
 
-	SamplerState( void )
+	constexpr SamplerState( void )
 	{
 		bNearest = false;
 		bUnnormalized = false;
@@ -733,7 +733,7 @@ public:
 		return ret;
 	}
 
-	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
+	static constexpr uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
 	inline VkDevice device() { return m_device; }
 	inline VkPhysicalDevice physDev() {return m_physDev; }
@@ -862,15 +862,31 @@ class CVulkanCmdBuffer
 public:
 	CVulkanCmdBuffer(CVulkanDevice *parent, VkCommandBuffer cmdBuffer, VkQueue queue, uint32_t queueFamily);
 	~CVulkanCmdBuffer();
+	CVulkanCmdBuffer() = delete;
+	CVulkanCmdBuffer(CVulkanCmdBuffer& other) = delete;
 	CVulkanCmdBuffer(const CVulkanCmdBuffer& other) = delete;
 	CVulkanCmdBuffer(CVulkanCmdBuffer&& other) = delete;
 	CVulkanCmdBuffer& operator=(const CVulkanCmdBuffer& other) = delete;
+	CVulkanCmdBuffer& operator=(CVulkanCmdBuffer& other) = delete;
 	CVulkanCmdBuffer& operator=(CVulkanCmdBuffer&& other) = delete;
 
 	inline VkCommandBuffer rawBuffer() {return m_cmdBuffer;}
 	void reset();
-	void begin();
+
+// std::countl_zero is used when clearing m_textureBlock + in dispatch(), and on some architectures, lzcnt instruction is slightly faster than bsr (where bsr would be used if not compiling w/ lzcnt support).
+// lzcnt is only *one* cpu cycle on zen1-zen4 amd cpus, while bsr takes *four* cycles on zen1-3 cpus: https://www.agner.org/optimize/instruction_tables.pdf
+// (lzcnt is also faster than bsr on intel knights landing)
+
+// the lzcnt instruction is decoded into bsr on cpus that don't support lzcnt anyways: https://en.wikipedia.org/wiki/X86_Bit_manipulation_instruction_set#ABM_(Advanced_Bit_Manipulation)
+// also, the input to the lzcnt instruction is never zero (it's explicitly skipped if the input is zero), so there'll never be undefined behavior if lzcnt gets decoded to bsr 
+#ifdef __x86_64__
+#	define CVULKANCMDBUFFER_TARGET_ATTR __attribute__((target("lzcnt")))
+#else
+#	define CVULKANCMDBUFFER_TARGET_ATTR
+#endif
+	void begin() CVULKANCMDBUFFER_TARGET_ATTR;
 	void end();
+	void clearState() CVULKANCMDBUFFER_TARGET_ATTR;
 	void bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture);
 	void bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d);
 	void setTextureStorage(bool storage);
@@ -878,11 +894,11 @@ public:
 	void setSamplerNearest(uint32_t slot, bool nearest);
 	void setSamplerUnnormalized(uint32_t slot, bool unnormalized);
 	void bindTarget(gamescope::Rc<CVulkanTexture> target);
-	void clearState();
+	
 	template<class PushData, class... Args>
 	void uploadConstants(Args&&... args);
 	void bindPipeline(VkPipeline pipeline);
-	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1);
+	void dispatch(uint32_t x, uint32_t y = 1, uint32_t z = 1) CVULKANCMDBUFFER_TARGET_ATTR;
 	void copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst);
 	void copyBufferToImage(VkBuffer buffer, VkDeviceSize offset, uint32_t stride, gamescope::Rc<CVulkanTexture> dst);
 
@@ -895,28 +911,57 @@ public:
 
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
+	
+	inline auto& m_getRefBoundTextures() { return m_textureBlock.boundTextures; };
+	inline auto __attribute__((pure)) m_getBoundTextures() const { return m_textureBlock.boundTextures; };
+	
+	inline auto& m_getTarget() { return m_textureBlock.target; };
+	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
+	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
+	
+	inline void setBoundTextureBit(uint32_t pos) {
+		static constexpr uint16_t bit = 1u;
+		m_boundTextureBits |= (bit << pos);
+	}
+	
+	inline void unsetBoundTextureBit(uint32_t pos) {
+		static constexpr uint16_t bit = 0u;
+		uint16_t bitmask = 0b1111'1111'1111'1111 ^ (bit<<pos);
+		m_boundTextureBits &= bitmask;
+	}
+
+	inline uint16_t __attribute__((pure)) getNumberOfBoundTextures() const {
+		return VKR_SAMPLER_SLOTS - std::countl_zero(m_boundTextureBits);
+	}
 
 private:
+
 	VkCommandBuffer m_cmdBuffer;
 	CVulkanDevice *m_device;
 
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
-
-	// Per Use State
-	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;
-	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
-
+	
 	// Draw State
-	std::array<CVulkanTexture *, VKR_SAMPLER_SLOTS> m_boundTextures;
-	std::bitset<VKR_SAMPLER_SLOTS> m_useSrgb;
-	std::array<SamplerState, VKR_SAMPLER_SLOTS> m_samplerState;
-	CVulkanTexture *m_target;
-
-	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
-	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
-
 	uint32_t m_renderBufferOffset = 0;
+	
+	// Per Use State
+	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24
+	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 bytes
+	
+	// Draw State
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D; 
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
+	
+	uint16_t m_boundTextureBits = 0;
+	
+	struct alignas(32) m_textureBlock {			
+			std::bitset<VKR_SAMPLER_SLOTS> useSrgb;
+			CVulkanTexture* target;
+			std::array<SamplerState, VKR_SAMPLER_SLOTS> samplerState;
+			CVulkanTexture* boundTextures[VKR_SAMPLER_SLOTS];
+	} m_textureBlock alignas(32);
+	//static_assert(alignof(m_textureBlock) == 0);
 };
 
 uint32_t VulkanFormatToDRM( VkFormat vkFormat );

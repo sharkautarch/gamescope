@@ -101,8 +101,8 @@ namespace gamescope
 
         using RcRef = RcRef_<T, Public>;
     public:
-        Rc() { }
-        Rc( std::nullptr_t ) { }
+        constexpr Rc() { }
+        constexpr Rc( std::nullptr_t ) { }
 
         Rc( T* pObject )
             : m_pObject{ pObject }

@@ -1208,7 +1208,7 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 		return cmdBuf;
 	};
 
-	if (m_unusedCmdBufs.empty())
+	if (m_unusedCmdBufs.empty()) [[unlikely]]
 	{
 		VkCommandBuffer rawCmdBuffer;
 		VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
@@ -1338,7 +1338,7 @@ void CVulkanCmdBuffer::reset()
 	m_textureState.clear();
 }
 
-void CVulkanCmdBuffer::begin()
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::begin()
 {
 	VkCommandBufferBeginInfo commandBufferBeginInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1356,9 +1356,50 @@ void CVulkanCmdBuffer::end()
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
+#define is_aligned(POINTER, BYTE_COUNT) \
+    (reinterpret_cast<uintptr_t>( reinterpret_cast<const void *>(POINTER)) % (BYTE_COUNT) == 0) //https://stackoverflow.com/a/1898487
+
+
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
+{
+		typedef struct alignas(32) aligned_chars_t {
+			char c;
+		} aligned_chars_t;
+		typedef aligned_chars_t* aligned_ptr alignas(32);
+		auto* blockStart = std::bit_cast<aligned_ptr*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
+		static constexpr uint16_t u16Four = 4; 
+		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
+		
+		if (m_boundTextureBits <= u16Four) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
+			static constexpr auto size = offsetof(struct m_textureBlock, boundTextures) + (4)*ulSizeOfPointer;
+			
+#ifdef __clang__
+			__builtin_memset_inline(blockStart, 0, size);
+#else
+			static_assert(size % 32 == 0);
+			static_assert(alignof(m_textureBlock) == 32);
+			//clang knows that it can use aligned vector moves, but not gcc for some reason, even though gcc properly aligns m_textureBlock...
+			memset(std::assume_aligned<32>(blockStart), 0, size);
+#endif
+		} else {
+			uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
+			auto size = offsetof(struct m_textureBlock, boundTextures) + (VKR_SAMPLER_SLOTS-u16LeadingZeros)*ulSizeOfPointer;
+			
+			memset(blockStart, 0, size);
+		}
+		static constexpr uint16_t u16Zero = 0;
+		m_boundTextureBits = u16Zero;
+}
+
 void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture)
 {
-	m_boundTextures[slot] = texture.get();
+	m_getRefBoundTextures()[slot] = texture.get();
+	if ( m_getBoundTextures()[slot] ) {
+		setBoundTextureBit(slot);
+	} else {
+		unsetBoundTextureBit(slot);
+	}
+
 	if (texture)
 		m_textureRefs.emplace_back(std::move(texture));
 }
@@ -1376,36 +1417,24 @@ void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTex
 
 void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
 {
-	m_useSrgb[slot] = srgb;
+	m_getUseSrgb()[slot] = srgb;
 }
 
 void CVulkanCmdBuffer::setSamplerNearest(uint32_t slot, bool nearest)
 {
-	m_samplerState[slot].bNearest = nearest;
+	m_getSamplerState()[slot].bNearest = nearest;
 }
 
 void CVulkanCmdBuffer::setSamplerUnnormalized(uint32_t slot, bool unnormalized)
 {
-	m_samplerState[slot].bUnnormalized = unnormalized;
+	m_getSamplerState()[slot].bUnnormalized = unnormalized;
 }
 
 void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
 {
-	m_target = target.get();
+	m_getTarget() = target.get();
 	if (target)
 		m_textureRefs.emplace_back(std::move(target));
-}
-
-void CVulkanCmdBuffer::clearState()
-{
-	for (auto& texture : m_boundTextures)
-		texture = nullptr;
-
-	for (auto& sampler : m_samplerState)
-		sampler = {};
-
-	m_target = nullptr;
-	m_useSrgb.reset();
 }
 
 template<class PushData, class... Args>
@@ -1423,15 +1452,17 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 {
-	for (auto src : m_boundTextures)
+	const uint32_t numBoundTextures = getNumberOfBoundTextures();
+	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
-		if (src)
+		auto src = m_getBoundTextures()[slot];
+		if (src) [[likely]]
 			prepareSrcImage(src);
 	}
-	assert(m_target != nullptr);
-	prepareDestImage(m_target);
+	assert(m_getTarget() != nullptr);
+	prepareDestImage(m_getTarget());
 	insertBarrier();
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
@@ -1520,18 +1551,22 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
 	{
-		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
+		imageDescriptors[i].sampler = m_device->sampler(m_getSamplerState()[i]);
 		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
-		if (m_boundTextures[i] == nullptr)
+	}
+	
+	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
+	{
+		if (m_getBoundTextures()[slot] == nullptr) [[unlikely]]
 			continue;
 
-		VkImageView view = m_useSrgb[i] ? m_boundTextures[i]->srgbView() : m_boundTextures[i]->linearView();
+		VkImageView view = m_getUseSrgb()[slot] ? m_getBoundTextures()[slot]->srgbView() : m_getBoundTextures()[slot]->linearView();
 
-		if (m_boundTextures[i]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
-			ycbcrImageDescriptors[i].imageView = view;
+		if (m_getBoundTextures()[slot]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+			ycbcrImageDescriptors[slot].imageView = view;
 		else
-			imageDescriptors[i].imageView = view;
+			imageDescriptors[slot].imageView = view;
 	}
 
 	for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
@@ -1554,17 +1589,17 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
 	}
 
-	if (!m_target->isYcbcr())
+	if (!m_getTarget()->isYcbcr())
 	{
-		targetDescriptors[0].imageView = m_target->srgbView();
+		targetDescriptors[0].imageView = m_getTarget()->srgbView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 	else
 	{
-		targetDescriptors[0].imageView = m_target->lumaView();
+		targetDescriptors[0].imageView = m_getTarget()->lumaView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-		targetDescriptors[1].imageView = m_target->chromaView();
+		targetDescriptors[1].imageView = m_getTarget()->chromaView();
 		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
@@ -1574,7 +1609,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z)
 
 	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
 
-	markDirty(m_target);
+	markDirty(m_getTarget());
 }
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
@@ -2441,10 +2476,6 @@ uint32_t CVulkanTexture::DecRef()
 		pBackendFb->DecRef();
 	}
 	return uRefCount;
-}
-
-CVulkanTexture::CVulkanTexture( void )
-{
 }
 
 CVulkanTexture::~CVulkanTexture( void )
