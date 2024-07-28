@@ -2248,7 +2248,9 @@ static void wlserver_warp_to_constraint_hint()
 		double sx = pConstraint->current.cursor_hint.x;
 		double sy = pConstraint->current.cursor_hint.y;
 
-		wlserver_mousewarp( sx, sy, 0, true );
+		wlserver.mouse_surface_cursorx = sx;
+		wlserver.mouse_surface_cursory = sy;
+		wlr_seat_pointer_warp( wlserver.wlr.seat, sx, sy );
 	}
 }
 
@@ -2261,6 +2263,8 @@ static void wlserver_update_cursor_constraint()
 	{
 		wlserver.mouse_constraint_requires_warp = false;
 
+		wlserver_warp_to_constraint_hint();
+
 		if (!pixman_region32_contains_point(pRegion, floor(wlserver.mouse_surface_cursorx), floor(wlserver.mouse_surface_cursory), NULL))
 		{
 			int nboxes;
@@ -2270,8 +2274,7 @@ static void wlserver_update_cursor_constraint()
 				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[0].x1, boxes[0].x2);
 				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[0].y1, boxes[0].y2);
 
-				wlr_seat_pointer_notify_motion( wlserver.wlr.seat, 0, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-				wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+				wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 			}
 		}
 	}

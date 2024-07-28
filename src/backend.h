@@ -44,6 +44,7 @@ namespace gamescope
         // target/mapping values for the display brightness for undocking from a HDR display,
         // but don't want to expose HDR there as it is not good.
         bool bExposeHDRSupport = false;
+        bool bAlwaysPatchEdid = false;
 
         // The output encoding to use for HDR output.
         // For typical HDR10 displays, this will be PQ.
@@ -62,7 +63,7 @@ namespace gamescope
 
         bool ShouldPatchEDID() const
         {
-            return IsHDRG22();
+            return bAlwaysPatchEdid || IsHDRG22();
         }
 
         bool IsHDR10() const
@@ -236,6 +237,8 @@ namespace gamescope
 
         virtual TouchClickMode GetTouchClickMode() = 0;
 
+        virtual void DumpDebugInfo() = 0;
+
         static IBackend *Get();
         template <typename T>
         static bool Set();
@@ -263,6 +266,8 @@ namespace gamescope
         virtual BackendPresentFeedback& PresentationFeedback() override { return m_PresentFeedback; }
 
         virtual TouchClickMode GetTouchClickMode() override;
+
+        virtual void DumpDebugInfo() override;
     protected:
         BackendPresentFeedback m_PresentFeedback{};
     };

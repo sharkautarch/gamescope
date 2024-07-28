@@ -37,6 +37,9 @@ protocols = [
 
 	# wlroots protocols
 	'wlr-layer-shell-unstable-v1.xml',
+
+	# WIP protocols
+	'xx-color-management-v3.xml',
 ]
 
 protocols_client_src = []

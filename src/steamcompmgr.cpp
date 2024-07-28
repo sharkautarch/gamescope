@@ -94,6 +94,10 @@
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
 
+#include "wlr_begin.hpp"
+#include "wlr/types/wlr_pointer_constraints_v1.h"
+#include "wlr_end.hpp"
+
 #if HAVE_AVIF
 #include "avif/avif.h"
 #endif
@@ -794,32 +798,17 @@ static void _update_app_target_refresh_cycle()
 	if ( !GetBackend()->GetCurrentConnector() )
 		return;
 
-	static gamescope::GamescopeScreenType last_type;
-	static int last_target_fps;
-	static bool first = true;
-
 	gamescope::GamescopeScreenType type = GetBackend()->GetCurrentConnector()->GetScreenType();
+
 	int target_fps = g_nCombinedAppRefreshCycleOverride[type];
 
-	if ( !first && type == last_type && last_target_fps == target_fps )
-	{
-		return;
-	}
-
-	last_type = type;
-	last_target_fps = target_fps;
-	first = false;
+	g_nDynamicRefreshRate[ type ] = 0;
+	g_nSteamCompMgrTargetFPS = 0;
 
 	if ( !target_fps )
 	{
-		g_nDynamicRefreshRate[ type ] = 0;
-		g_nSteamCompMgrTargetFPS = 0;
 		return;
 	}
-
-	auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
-
-	g_nDynamicRefreshRate[ type ] = 0;
 
 	if ( g_nCombinedAppRefreshCycleChangeFPS[ type ] )
 	{
@@ -828,6 +817,8 @@ static void _update_app_target_refresh_cycle()
 
 	if ( g_nCombinedAppRefreshCycleChangeRefresh[ type ] )
 	{
+		auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
+
 		// Find highest mode to do refresh doubling with.
 		for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
 		{
@@ -855,6 +846,25 @@ void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType
 	g_nCombinedAppRefreshCycleChangeFPS[ type ] = change_fps_cap;
 	update_app_target_refresh_cycle();
 }
+
+gamescope::ConCommand cc_debug_set_fps_limit( "debug_set_fps_limit", "Set refresh cycle (debug)",
+[](std::span<std::string_view> svArgs)
+{
+	if ( svArgs.size() < 2 )
+		return;
+
+	// TODO: Expose all facets as args.
+	std::optional<int32_t> onFps = gamescope::Parse<int32_t>( svArgs[1] );
+	if ( !onFps )
+	{
+		console_log.errorf( "Failed to parse FPS." );
+		return;
+	}
+
+	int32_t nFps = *onFps;
+
+	steamcompmgr_set_app_refresh_cycle_override( GetBackend()->GetScreenType(), nFps, true, true );
+});
 
 static int g_nRuntimeInfoFd = -1;
 
@@ -1377,8 +1387,19 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 void MouseCursor::UpdatePosition()
 {
 	wlserver_lock();
-	m_x = wlserver.mouse_surface_cursorx;
-	m_y = wlserver.mouse_surface_cursory;
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
+	if ( pConstraint && pConstraint->current.cursor_hint.enabled )
+	{
+		m_x = pConstraint->current.cursor_hint.x;
+		m_y = pConstraint->current.cursor_hint.y;
+		m_bConstrained = true;
+	}
+	else
+	{
+		m_x = wlserver.mouse_surface_cursorx;
+		m_y = wlserver.mouse_surface_cursory;
+		m_bConstrained = false;
+	}
 	wlserver_unlock();
 }
 
@@ -2708,7 +2729,11 @@ paint_all(bool async)
 					rgbAvifImage.pixels = (uint8_t *)imageData.data();
 					rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
 
-					avifImageRGBToYUV( pAvifImage, &rgbAvifImage ); // Not really! See Matrix Coefficients IDENTITY above.
+					if ( ( avifResult = avifImageRGBToYUV( pAvifImage, &rgbAvifImage ) ) != AVIF_RESULT_OK ) // Not really! See Matrix Coefficients IDENTITY above.
+					{
+						xwm_log.errorf( "Failed to convert RGB to YUV: %u", avifResult );
+						return;
+					}
 
 					avifEncoder *pEncoder = avifEncoderCreate();
 					defer( avifEncoderDestroy( pEncoder ) );
@@ -7623,7 +7648,7 @@ steamcompmgr_main(int argc, char **argv)
 				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
 				( !window_is_steam( global_focus.inputFocusWindow ) );
 
-			const bool bHasPointerConstraint = wlserver.HasMouseConstraint(); // atomic, no lock needed
+			const bool bHasPointerConstraint = global_focus.cursor->IsConstrained();
 
 			uint32_t uAppId = global_focus.inputFocusWindow
 				? global_focus.inputFocusWindow->appID

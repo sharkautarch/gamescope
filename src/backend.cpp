@@ -120,4 +120,31 @@ namespace gamescope
 
         return cv_touch_click_mode;
     }
+
+    void CBaseBackend::DumpDebugInfo()
+    {
+        console_log.infof( "Uses Modifiers: %s", this->UsesModifiers() ? "true" : "false" );
+        console_log.infof( "VRR Active: %s", this->IsVRRActive() ? "true" : "false" );
+        console_log.infof( "Supports Plane Hardware Cursor: %s (not relevant for nested backends)", this->SupportsPlaneHardwareCursor() ? "true" : "false" );
+        console_log.infof( "Supports Tearing: %s", this->SupportsTearing() ? "true" : "false" );
+        console_log.infof( "Uses Vulkan Swapchain: %s", this->UsesVulkanSwapchain() ? "true" : "false" );
+        console_log.infof( "Is Session Based: %s", this->IsSessionBased() ? "true" : "false" );
+        console_log.infof( "Supports Explicit Sync: %s", this->SupportsExplicitSync() ? "true" : "false" );
+        console_log.infof( "Current Screen Type: %s", this->GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL ? "Internal" : "External" );
+        console_log.infof( "Is Visible: %s", this->IsVisible() ? "true" : "false" );
+        console_log.infof( "Is Nested: %s", this->GetNestedHints() != nullptr ? "true" : "false" );
+        console_log.infof( "Needs Frame Sync: %s", this->NeedsFrameSync() ? "true" : "false" );
+        console_log.infof( "Total Presents Queued: %lu", this->PresentationFeedback().TotalPresentsQueued() );
+        console_log.infof( "Total Presents Completed: %lu", this->PresentationFeedback().TotalPresentsCompleted() );
+        console_log.infof( "Current Presents In Flight: %lu", this->PresentationFeedback().CurrentPresentsInFlight() );
+    }
+
+    ConCommand cc_backend_info( "backend_info", "Dump debug info about the backend state",
+    []( std::span<std::string_view> svArgs )
+    {
+        if ( !GetBackend() )
+            return;
+
+        GetBackend()->DumpDebugInfo();
+    });
 }

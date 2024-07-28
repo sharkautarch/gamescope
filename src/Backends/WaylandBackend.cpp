@@ -29,6 +29,7 @@
 #include <single-pixel-buffer-v1-client-protocol.h>
 #include <presentation-time-client-protocol.h>
 #include <frog-color-management-v1-client-protocol.h>
+#include <xx-color-management-v3-client-protocol.h>
 #include <pointer-constraints-unstable-v1-client-protocol.h>
 #include <relative-pointer-unstable-v1-client-protocol.h>
 #include <fractional-scale-v1-client-protocol.h>
@@ -129,6 +130,7 @@ namespace gamescope
         friend CWaylandPlane;
 
         BackendConnectorHDRInfo m_HDRInfo{};
+        displaycolorimetry_t m_DisplayColorimetry = displaycolorimetry_709;
         std::vector<uint8_t> m_FakeEdid;
 
         CWaylandBackend *m_pBackend = nullptr;
@@ -222,6 +224,22 @@ namespace gamescope
             uint32_t uMaxFullFrameLuminance );
         static const frog_color_managed_surface_listener s_FrogColorManagedSurfaceListener;
 
+        void Wayland_XXColorManagementSurface_PreferredChanged( xx_color_management_surface_v3 *pColorManagementSurface );
+        static const xx_color_management_surface_v3_listener s_XXColorManagementSurfaceListener;
+        void UpdateXXPreferredColorManagement();
+
+        void Wayland_XXImageDescriptionInfo_Done( xx_image_description_info_v3 *pImageDescInfo );
+        void Wayland_XXImageDescriptionInfo_ICCFile( xx_image_description_info_v3 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize );
+        void Wayland_XXImageDescriptionInfo_Primaries( xx_image_description_info_v3 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
+        void Wayland_XXImageDescriptionInfo_PrimariesNamed( xx_image_description_info_v3 *pImageDescInfo, uint32_t uPrimaries );
+        void Wayland_XXImageDescriptionInfo_TFPower( xx_image_description_info_v3 *pImageDescInfo, uint32_t uExp);
+        void Wayland_XXImageDescriptionInfo_TFNamed( xx_image_description_info_v3 *pImageDescInfo, uint32_t uTF);
+        void Wayland_XXImageDescriptionInfo_Luminances( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum );
+        void Wayland_XXImageDescriptionInfo_TargetPrimaries( xx_image_description_info_v3 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY );
+        void Wayland_XXImageDescriptionInfo_TargetLuminance( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum );
+        void Wayland_XXImageDescriptionInfo_Target_MaxCLL( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMaxCLL );
+        void Wayland_XXImageDescriptionInfo_Target_MaxFALL( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMaxFALL );
+
         void Wayland_FractionalScale_PreferredScale( wp_fractional_scale_v1 *pFractionalScale, uint32_t uScale );
         static const wp_fractional_scale_v1_listener s_FractionalScaleListener;
 
@@ -233,6 +251,7 @@ namespace gamescope
         libdecor_frame *m_pFrame = nullptr;
         wl_subsurface *m_pSubsurface = nullptr;
         frog_color_managed_surface *m_pFrogColorManagedSurface = nullptr;
+        xx_color_management_surface_v3 *m_pXXColorManagedSurface = nullptr;
         wp_fractional_scale_v1 *m_pFractionalScale = nullptr;
         libdecor_window_state m_eWindowState = LIBDECOR_WINDOW_STATE_NONE;
         std::vector<wl_output *> m_pOutputs;
@@ -266,6 +285,10 @@ namespace gamescope
     const frog_color_managed_surface_listener CWaylandPlane::s_FrogColorManagedSurfaceListener =
     {
         .preferred_metadata = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_FrogColorManagedSurface_PreferredMetadata ),
+    };
+    const xx_color_management_surface_v3_listener CWaylandPlane::s_XXColorManagementSurfaceListener =
+    {
+        .preferred_changed = WAYLAND_USERDATA_TO_THIS( CWaylandPlane, Wayland_XXColorManagementSurface_PreferredChanged ),
     };
     const wp_fractional_scale_v1_listener CWaylandPlane::s_FractionalScaleListener =
     {
@@ -546,6 +569,7 @@ namespace gamescope
         wp_viewporter *GetViewporter() const { return m_pViewporter; }
         wp_presentation *GetPresentation() const { return m_pPresentation; }
         frog_color_management_factory_v1 *GetFrogColorManagementFactory() const { return m_pFrogColorMgmtFactory; }
+        xx_color_manager_v3 *GetXXColorManager() const { return m_pXXColorManager; }
         wp_fractional_scale_manager_v1 *GetFractionalScaleManager() const { return m_pFractionalScaleManager; }
         xdg_toplevel_icon_manager_v1 *GetToplevelIconManager() const { return m_pToplevelIconManager; }
         libdecor *GetLibDecor() const { return m_pLibDecor; }
@@ -596,6 +620,12 @@ namespace gamescope
         void Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface );
         static const wl_keyboard_listener s_KeyboardListener;
 
+        void Wayland_XXColorManager_SupportedIntent( xx_color_manager_v3 *pXXColorManager, uint32_t uRenderIntent );
+        void Wayland_XXColorManager_SupportedFeature( xx_color_manager_v3 *pXXColorManager, uint32_t uFeature );
+        void Wayland_XXColorManager_SupportedTFNamed( xx_color_manager_v3 *pXXColorManager, uint32_t uTF );
+        void Wayland_XXColorManager_SupportedPrimariesNamed( xx_color_manager_v3 *pXXColorManager, uint32_t uPrimaries );
+        static const xx_color_manager_v3_listener s_XXColorManagerListener;
+
         CWaylandInputThread m_InputThread;
 
         CWaylandConnector m_Connector;
@@ -615,10 +645,21 @@ namespace gamescope
         OwningRc<CVulkanTexture> m_pBlackTexture;
         wp_presentation *m_pPresentation = nullptr;
         frog_color_management_factory_v1 *m_pFrogColorMgmtFactory = nullptr;
+        xx_color_manager_v3 *m_pXXColorManager = nullptr;
         zwp_pointer_constraints_v1 *m_pPointerConstraints = nullptr;
         zwp_relative_pointer_manager_v1 *m_pRelativePointerManager = nullptr;
         wp_fractional_scale_manager_v1 *m_pFractionalScaleManager = nullptr;
         xdg_toplevel_icon_manager_v1 *m_pToplevelIconManager = nullptr;
+
+        struct 
+        {
+            std::vector<xx_color_manager_v3_primaries> ePrimaries;
+            std::vector<xx_color_manager_v3_transfer_function> eTransferFunctions;
+            std::vector<xx_color_manager_v3_render_intent> eRenderIntents;
+            std::vector<xx_color_manager_v3_feature> eFeatures;
+
+            bool bSupportsGamescopeColorManagement = false; // Has everything we want and need?
+        } m_XXColorManagerFeatures;
 
         std::unordered_map<wl_output *, WaylandOutputInfo> m_pOutputs;
 
@@ -690,6 +731,13 @@ namespace gamescope
         .modifiers     = WAYLAND_NULL(),
         .repeat_info   = WAYLAND_NULL(),
     };
+    const xx_color_manager_v3_listener CWaylandBackend::s_XXColorManagerListener
+    {
+        .supported_intent          = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_XXColorManager_SupportedIntent ),
+        .supported_feature         = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_XXColorManager_SupportedFeature ),
+        .supported_tf_named        = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_XXColorManager_SupportedTFNamed ),
+        .supported_primaries_named = WAYLAND_USERDATA_TO_THIS( CWaylandBackend, Wayland_XXColorManager_SupportedPrimariesNamed ),
+    };
 
     //////////////////
     // CWaylandFb
@@ -752,6 +800,7 @@ namespace gamescope
     CWaylandConnector::CWaylandConnector( CWaylandBackend *pBackend )
         : m_pBackend( pBackend )
     {
+        m_HDRInfo.bAlwaysPatchEdid = true;
     }
 
     CWaylandConnector::~CWaylandConnector()
@@ -810,18 +859,20 @@ namespace gamescope
         displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
         displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const
     {
-        if ( g_bForceHDR10OutputDebug )
+        *displayColorimetry = m_DisplayColorimetry;
+        *displayEOTF = EOTF_Gamma22;
+
+        if ( bHDR10 && GetHDRInfo().IsHDR10() )
         {
-            *displayColorimetry = displaycolorimetry_2020;
-            *displayEOTF = EOTF_PQ;
+            // For HDR10 output, expected content colorspace != native colorspace.
             *outputEncodingColorimetry = displaycolorimetry_2020;
-            *outputEncodingEOTF = EOTF_PQ;
+            *outputEncodingEOTF = GetHDRInfo().eOutputEncodingEOTF;
         }
         else
         {
-            *displayColorimetry = displaycolorimetry_709;
-            *displayEOTF = EOTF_Gamma22;
-            *outputEncodingColorimetry = displaycolorimetry_709;
+            // We always use default 'perceptual' intent, so
+            // this should be correct for SDR content.
+            *outputEncodingColorimetry = m_DisplayColorimetry;
             *outputEncodingEOTF = EOTF_Gamma22;
         }
     }
@@ -848,7 +899,17 @@ namespace gamescope
 
         m_pViewport = wp_viewporter_get_viewport( m_pBackend->GetViewporter(), m_pSurface );
 
-        if ( m_pBackend->GetFrogColorManagementFactory() )
+        if ( m_pBackend->GetXXColorManager() )
+        {
+            m_pXXColorManagedSurface = xx_color_manager_v3_get_surface( m_pBackend->GetXXColorManager(), m_pSurface );
+
+            // Only add the listener for the toplevel to avoid useless spam.
+            if ( !pParent )
+                xx_color_management_surface_v3_add_listener( m_pXXColorManagedSurface, &s_XXColorManagementSurfaceListener, this );
+
+            UpdateXXPreferredColorManagement();
+        }
+        else if ( m_pBackend->GetFrogColorManagementFactory() )
         {
             m_pFrogColorManagedSurface = frog_color_management_factory_v1_get_color_managed_surface( m_pBackend->GetFrogColorManagementFactory(), m_pSurface );
 
@@ -913,7 +974,11 @@ namespace gamescope
                 wp_presentation_feedback_add_listener( pFeedback, &s_PresentationFeedbackListener, this );
             }
 
-            if ( m_pFrogColorManagedSurface )
+            if ( m_pXXColorManagedSurface )
+            {
+                // TODO: Actually use this.
+            }
+            else if ( m_pFrogColorManagedSurface )
             {
                 frog_color_managed_surface_set_render_intent( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_RENDER_INTENT_PERCEPTUAL );
                 switch ( oState->eColorspace )
@@ -1018,8 +1083,8 @@ namespace gamescope
                     .flSrcY      = 0.0,
                     .flSrcWidth  = double( pLayer->tex->width() ),
                     .flSrcHeight = double( pLayer->tex->height() ),
-                    .nDstWidth   = int32_t( pLayer->tex->width() / double( pLayer->scale.x ) ),
-                    .nDstHeight  = int32_t( pLayer->tex->height() / double( pLayer->scale.y ) ),
+                    .nDstWidth   = int32_t( ceil( pLayer->tex->width() / double( pLayer->scale.x ) ) ),
+                    .nDstHeight  = int32_t( ceil( pLayer->tex->height() / double( pLayer->scale.y ) ) ),
                     .eColorspace = pLayer->colorspace,
                     .bOpaque     = pLayer->zpos == g_zposBase,
                     .uFractionalScale = GetScale(),
@@ -1167,6 +1232,12 @@ namespace gamescope
         pHDRInfo->uMaxFrameAverageLuminance = uMaxFullFrameLuminance;
         pHDRInfo->uMinContentLightLevel     = uMinLuminance;
 
+        auto *pDisplayColorimetry = &m_pBackend->m_Connector.m_DisplayColorimetry;
+        pDisplayColorimetry->primaries.r = glm::vec2{ uOutputDisplayPrimaryRedX * 0.00002f, uOutputDisplayPrimaryRedY * 0.00002f };
+        pDisplayColorimetry->primaries.g = glm::vec2{ uOutputDisplayPrimaryGreenX * 0.00002f, uOutputDisplayPrimaryGreenY * 0.00002f };
+        pDisplayColorimetry->primaries.b = glm::vec2{ uOutputDisplayPrimaryBlueX * 0.00002f, uOutputDisplayPrimaryBlueY * 0.00002f };
+        pDisplayColorimetry->white = glm::vec2{ uOutputWhitePointX * 0.00002f, uOutputWhitePointY * 0.00002f };
+
         xdg_log.infof( "PreferredMetadata: Red: %g %g, Green: %g %g, Blue: %g %g, White: %g %g, Max Luminance: %u nits, Min Luminance: %g nits, Max Full Frame Luminance: %u nits",
             uOutputDisplayPrimaryRedX * 0.00002, uOutputDisplayPrimaryRedY * 0.00002,
             uOutputDisplayPrimaryGreenX * 0.00002, uOutputDisplayPrimaryGreenY * 0.00002,
@@ -1176,6 +1247,87 @@ namespace gamescope
             uMinLuminance * 0.0001,
             uint32_t( uMaxFullFrameLuminance ) );
     }
+
+    //
+
+    void CWaylandPlane::Wayland_XXColorManagementSurface_PreferredChanged( xx_color_management_surface_v3 *pColorManagementSurface )
+    {
+        UpdateXXPreferredColorManagement();
+    }
+
+    void CWaylandPlane::UpdateXXPreferredColorManagement()
+    {
+        if ( m_pParent )
+            return;
+
+        xx_image_description_v3 *pImageDescription = xx_color_management_surface_v3_get_preferred( m_pXXColorManagedSurface );
+        xx_image_description_info_v3 *pImageDescInfo = xx_image_description_v3_get_information( pImageDescription );
+        static const xx_image_description_info_v3_listener s_Listener
+        {
+
+        };
+        xx_image_description_info_v3_add_listener( pImageDescInfo, &s_Listener, this );
+        wl_display_roundtrip( m_pBackend->GetDisplay() );
+
+        xx_image_description_info_v3_destroy( pImageDescInfo );
+        xx_image_description_v3_destroy( pImageDescription );
+    }
+
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_Done( xx_image_description_info_v3 *pImageDescInfo )
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_ICCFile( xx_image_description_info_v3 *pImageDescInfo, int32_t nICCFd, uint32_t uICCSize )
+    {
+        if ( nICCFd >= 0 )
+            close( nICCFd );
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_Primaries( xx_image_description_info_v3 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY )
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_PrimariesNamed( xx_image_description_info_v3 *pImageDescInfo, uint32_t uPrimaries )
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_TFPower( xx_image_description_info_v3 *pImageDescInfo, uint32_t uExp)
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_TFNamed( xx_image_description_info_v3 *pImageDescInfo, uint32_t uTF)
+    {
+        auto *pHDRInfo = &m_pBackend->m_Connector.m_HDRInfo;
+        pHDRInfo->bExposeHDRSupport   = ( cv_hdr_enabled && uTF == XX_COLOR_MANAGER_V3_TRANSFER_FUNCTION_ST2084_PQ );
+        pHDRInfo->eOutputEncodingEOTF = ( cv_hdr_enabled && uTF == XX_COLOR_MANAGER_V3_TRANSFER_FUNCTION_ST2084_PQ ) ? EOTF_PQ : EOTF_Gamma22;
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_Luminances( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum, uint32_t uRefLum )
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_TargetPrimaries( xx_image_description_info_v3 *pImageDescInfo, int32_t nRedX, int32_t nRedY, int32_t nGreenX, int32_t nGreenY, int32_t nBlueX, int32_t nBlueY, int32_t nWhiteX, int32_t nWhiteY )
+    {
+        auto *pDisplayColorimetry = &m_pBackend->m_Connector.m_DisplayColorimetry;
+        pDisplayColorimetry->primaries.r = glm::vec2{ nRedX / 10000.0f, nRedY / 10000.0f };
+        pDisplayColorimetry->primaries.g = glm::vec2{ nGreenX / 10000.0f, nGreenY / 10000.0f };
+        pDisplayColorimetry->primaries.b = glm::vec2{ nBlueX / 10000.0f, nBlueY / 10000.0f };
+        pDisplayColorimetry->white = glm::vec2{ nWhiteX / 10000.0f, nWhiteY / 10000.0f };
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_TargetLuminance( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMinLum, uint32_t uMaxLum )
+    {
+        
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_Target_MaxCLL( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMaxCLL )
+    {
+        auto *pHDRInfo = &m_pBackend->m_Connector.m_HDRInfo;
+        pHDRInfo->uMaxContentLightLevel = uMaxCLL;
+    }
+    void CWaylandPlane::Wayland_XXImageDescriptionInfo_Target_MaxFALL( xx_image_description_info_v3 *pImageDescInfo, uint32_t uMaxFALL )
+    {
+        auto *pHDRInfo = &m_pBackend->m_Connector.m_HDRInfo;
+        pHDRInfo->uMaxFrameAverageLuminance = uMaxFALL;
+    }
+
+    //
 
     void CWaylandPlane::Wayland_FractionalScale_PreferredScale( wp_fractional_scale_v1 *pFractionalScale, uint32_t uScale )
     {
@@ -1257,6 +1409,39 @@ namespace gamescope
 
         wl_registry_destroy( pRegistry );
         pRegistry = nullptr;
+
+        if ( m_pXXColorManager )
+        {
+            m_XXColorManagerFeatures.bSupportsGamescopeColorManagement = [this]() -> bool
+            {
+                // Features
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eFeatures, XX_COLOR_MANAGER_V3_FEATURE_PARAMETRIC ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eFeatures, XX_COLOR_MANAGER_V3_FEATURE_SET_PRIMARIES ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eFeatures, XX_COLOR_MANAGER_V3_FEATURE_SET_MASTERING_DISPLAY_PRIMARIES ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eFeatures, XX_COLOR_MANAGER_V3_FEATURE_EXTENDED_TARGET_VOLUME ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eFeatures, XX_COLOR_MANAGER_V3_FEATURE_SET_LUMINANCES ) )
+                    return false;
+
+                // Transfer Functions
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eTransferFunctions, XX_COLOR_MANAGER_V3_TRANSFER_FUNCTION_SRGB ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.eTransferFunctions, XX_COLOR_MANAGER_V3_TRANSFER_FUNCTION_ST2084_PQ ) )
+                    return false;
+                // TODO: Need scRGB 
+
+                // Primaries
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.ePrimaries, XX_COLOR_MANAGER_V3_PRIMARIES_SRGB ) )
+                    return false;
+                if ( !Algorithm::Contains( m_XXColorManagerFeatures.ePrimaries, XX_COLOR_MANAGER_V3_PRIMARIES_BT2020 ) )
+                    return false;
+
+                return true;
+            }();
+        }
 
         m_pLibDecor = libdecor_new( m_pDisplay, &s_LibDecorInterface );
         if ( !m_pLibDecor )
@@ -1829,7 +2014,7 @@ namespace gamescope
 
     bool CWaylandBackend::SupportsColorManagement() const
     {
-        return m_pFrogColorMgmtFactory != nullptr;
+        return m_pFrogColorMgmtFactory != nullptr || ( m_pXXColorManager != nullptr && m_XXColorManagerFeatures.bSupportsGamescopeColorManagement );
     }
 
     void CWaylandBackend::UpdateCursor()
@@ -1863,7 +2048,10 @@ namespace gamescope
 
     void CWaylandBackend::UpdateFullscreenState()
     {
-        if ( m_bDesiredFullscreenState != g_bFullscreen )
+        if ( !m_bVisible )
+            g_bFullscreen = false;
+
+        if ( m_bDesiredFullscreenState != g_bFullscreen && m_bVisible )
         {
             if ( m_bDesiredFullscreenState )
                 libdecor_frame_set_fullscreen( m_Planes[0].GetFrame(), nullptr );
@@ -1943,6 +2131,11 @@ namespace gamescope
         else if ( !strcmp( pInterface, frog_color_management_factory_v1_interface.name ) )
         {
             m_pFrogColorMgmtFactory = (frog_color_management_factory_v1 *)wl_registry_bind( pRegistry, uName, &frog_color_management_factory_v1_interface, 1u );
+        }
+        else if ( !strcmp( pInterface, xx_color_manager_v3_interface.name ) )
+        {
+            m_pXXColorManager = (xx_color_manager_v3 *)wl_registry_bind( pRegistry, uName, &xx_color_manager_v3_interface, 1u );
+            xx_color_manager_v3_add_listener( m_pXXColorManager, &s_XXColorManagerListener, this );
         }
         else if ( !strcmp( pInterface, zwp_pointer_constraints_v1_interface.name ) )
         {
@@ -2059,6 +2252,25 @@ namespace gamescope
         m_bKeyboardEntered = false;
         
         UpdateCursor();
+    }
+
+    // XX Color Manager
+
+    void CWaylandBackend::Wayland_XXColorManager_SupportedIntent( xx_color_manager_v3 *pXXColorManager, uint32_t uRenderIntent )
+    {
+        m_XXColorManagerFeatures.eRenderIntents.push_back( static_cast<xx_color_manager_v3_render_intent>( uRenderIntent ) );
+    }
+    void CWaylandBackend::Wayland_XXColorManager_SupportedFeature( xx_color_manager_v3 *pXXColorManager, uint32_t uFeature )
+    {
+        m_XXColorManagerFeatures.eFeatures.push_back( static_cast<xx_color_manager_v3_feature>( uFeature ) );
+    }
+    void CWaylandBackend::Wayland_XXColorManager_SupportedTFNamed( xx_color_manager_v3 *pXXColorManager, uint32_t uTF )
+    {
+        m_XXColorManagerFeatures.eTransferFunctions.push_back( static_cast<xx_color_manager_v3_transfer_function>( uTF ) );
+    }
+    void CWaylandBackend::Wayland_XXColorManager_SupportedPrimariesNamed( xx_color_manager_v3 *pXXColorManager, uint32_t uPrimaries )
+    {
+        m_XXColorManagerFeatures.ePrimaries.push_back( static_cast<xx_color_manager_v3_primaries>( uPrimaries ) );
     }
 
     ///////////////////////
