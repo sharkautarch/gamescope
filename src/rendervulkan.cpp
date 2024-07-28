@@ -10,6 +10,7 @@
 #include <array>
 #include <bitset>
 #include <thread>
+#include <iostream>
 #include <dlfcn.h>
 #include "vulkan_include.h"
 
@@ -1356,28 +1357,20 @@ void CVulkanCmdBuffer::end()
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
-#define is_aligned(POINTER, BYTE_COUNT) \
-    (reinterpret_cast<uintptr_t>( reinterpret_cast<const void *>(POINTER)) % (BYTE_COUNT) == 0) //https://stackoverflow.com/a/1898487
-
-
 void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 {
-		typedef struct alignas(32) aligned_chars_t {
-			char c;
-		} aligned_chars_t;
-		typedef aligned_chars_t* aligned_ptr alignas(32);
-		auto* blockStart = std::bit_cast<aligned_ptr*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
+		auto* blockStart = std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
 		static constexpr uint16_t u16Four = 4; 
 		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
 		
 		if (m_boundTextureBits <= u16Four) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
 			static constexpr auto size = offsetof(struct m_textureBlock, boundTextures) + (4)*ulSizeOfPointer;
-			
+			static_assert(size % 32 == 0);
+	
+			static_assert(alignof(decltype(CVulkanCmdBuffer::m_textureBlock)) == 32);
 #ifdef __clang__
 			__builtin_memset_inline(blockStart, 0, size);
 #else
-			static_assert(size % 32 == 0);
-			static_assert(alignof(m_textureBlock) == 32);
 			//clang knows that it can use aligned vector moves, but not gcc for some reason, even though gcc properly aligns m_textureBlock...
 			memset(std::assume_aligned<32>(blockStart), 0, size);
 #endif
@@ -1390,15 +1383,73 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 		static constexpr uint16_t u16Zero = 0;
 		m_boundTextureBits = u16Zero;
 }
+//#define DEBUG_clearBoundTexturesAboveSlot
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearBoundTexturesAboveSlot(uint16_t slot) {
+	auto bits = m_boundTextureBits;
+
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+	bits = bits | (bits << 1) | (bits << 2);
+	std::cout << "bits = " << std::bitset<16>(bits) << "\n"; 
+#endif
+
+	auto bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	if (bitsAboveSlot == 0) {
+		return;
+	}
+	auto posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	uint16_t slotAboveSlot = slot+1;
+	auto& __restrict__ boundTextures = m_getRefBoundTextures();
+	boundTextures[slotAboveSlot] = nullptr;
+
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+	std::cout << "posToClearTo = " << posToClearTo << "\n";
+	std::cout << "slotAboveSlot = " << slotAboveSlot << "\n";
+	std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+
+	//																									\/ equivalent to && (posToClearTo-2 < 16) -- using the below so that only one conditional jmp insn is generated for this if condition
+	if (	((uint16_t)(posToClearTo-2) > slotAboveSlot) & ~((uint16_t)(posToClearTo-2) ^ 0b1111'1111'1111'1111 ) & ~((uint16_t)(posToClearTo-2) ^ 0b1111'1111'1111'1110 ) ) {
+		static_assert( (~((uint16_t)(9-2) ^ 0b1111'1111'1111'1111 ) & ~((uint16_t)(9-2) ^ 0b1111'1111'1111'1110 )) != 0 );
+
+		uint16_t oneMinusEndIndex = posToClearTo-2;
+		boundTextures[oneMinusEndIndex] = nullptr;
+
+		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo-1); //adjust posToClearTo to make sure that the loop below isn't infinite
+	} else {
+		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo+1); //adjust posToClearTo to make sure that the loop below isn't infinite
+	}
+	
+	#pragma GCC unroll 1 //loop is already partially unrolled, no need to have gcc try to unroll it more
+	//										want to do ; i < posToClear ; but (uint16_t)(i-1) != (uint16_t)(posToClearTo) generates simpler assembly while still being correct
+	for (uint16_t i = slotAboveSlot+1; (uint16_t)(i-1) != (uint16_t)(posToClearTo); i+=2) {
+		auto*__restrict__ texPair = std::assume_aligned<16>(&(boundTextures[i])); //linux/unix abi ensures 16-byte alignment (and I double checked that boundTextures is at a 16-byte aligned address), and yet this is still necessary to coax gcc into generating aligned moves...
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+		std::cout << "texPair = " << texPair << ", texPair % 16 = " << (ptrdiff_t)texPair%16 << ", texPair % 32 = " << (ptrdiff_t)texPair%32 << "\n";
+#endif
+		memset(texPair, 0, sizeof(CVulkanTexture*)*2);
+	}
+	
+	uint16_t bitsBelowSlot = u16MaskOutBitsAbovePos(bits, slot);
+	m_boundTextureBits = bitsAboveSlot | bitsBelowSlot;
+}
+
+constexpr uint16_t CVULKANCMDBUFFER_TARGET_ATTR clearBoundTexturesAboveSlotTest(uint16_t slot) {
+	constexpr uint16_t bits = 0b1111'1111'1111'1111;
+	auto bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	if (bitsAboveSlot == 0) {
+		return 0;
+	}
+	auto posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	return posToClearTo;
+}
+
+static_assert(clearBoundTexturesAboveSlotTest(0)==16);
 
 void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture)
 {
+	assert(texture != nullptr);
 	m_getRefBoundTextures()[slot] = texture.get();
-	if ( m_getBoundTextures()[slot] ) {
-		setBoundTextureBit(slot);
-	} else {
-		unsetBoundTextureBit(slot);
-	}
+	setBoundTextureBit(slot);
 
 	if (texture)
 		m_textureRefs.emplace_back(std::move(texture));
@@ -1406,8 +1457,8 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> 
 
 void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d)
 {
-	m_shaperLut[slot] = lut1d.get();
-	m_lut3D[slot] = lut3d.get();
+	getShaperLut()[slot] = lut1d.get();
+	getLut3D()[slot] = lut3d.get();
 
 	if (lut1d != nullptr)
 		m_textureRefs.emplace_back(std::move(lut1d));
@@ -1582,11 +1633,11 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
 		// I need to change this, it's so utterly stupid and confusing.
-		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : VK_NULL_HANDLE;
+		shaperLutDescriptor[i].imageView = getShaperLut()[i] ? getShaperLut()[i]->srgbView() : VK_NULL_HANDLE;
 
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
+		lut3DDescriptor[i].imageView = getLut3D()[i] ? getLut3D()[i]->srgbView() : VK_NULL_HANDLE;
 	}
 
 	if (!m_getTarget()->isYcbcr())
@@ -3672,10 +3723,9 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 		cmdBuffer->setSamplerNearest(i, nearest);
 		cmdBuffer->setSamplerUnnormalized(i, true);
 	}
-	for (uint32_t i = frameInfo->layerCount; i < VKR_SAMPLER_SLOTS; i++)
-	{
-		cmdBuffer->bindTexture(i, nullptr);
-	}
+	
+	auto pos = (frameInfo->layerCount == 0) ? 0 : (frameInfo->layerCount - 1); //unlikely to ever happen, but just ensuring no overflow if frameInfo->layerCount is zero
+	cmdBuffer->clearBoundTexturesAboveSlot(pos);
 }
 
 std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture )
@@ -3715,10 +3765,8 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerNearest(0, false);
 		cmdBuffer->setSamplerUnnormalized(0, true);
-		for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
-		{
-			cmdBuffer->bindTexture(i, nullptr);
-		}
+		cmdBuffer->clearBoundTexturesAboveSlot(0);
+		
 		cmdBuffer->bindTarget(pYUVOutTexture);
 
 		const int pixelsPerGroup = 8;
@@ -3941,10 +3989,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			cmdBuffer->setTextureSrgb(0, true);
 			cmdBuffer->setSamplerNearest(0, false);
 			cmdBuffer->setSamplerUnnormalized(0, true);
-			for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
-			{
-				cmdBuffer->bindTexture(i, nullptr);
-			}
+			
+			cmdBuffer->clearBoundTexturesAboveSlot(0);
 			cmdBuffer->bindTarget(pPipewireTexture);
 
 			const int pixelsPerGroup = 8;

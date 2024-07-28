@@ -18,6 +18,8 @@
 
 #include "shaders/descriptor_set_constants.h"
 
+#include "Utils/Bits.h"
+
 class CVulkanCmdBuffer;
 
 // 1: Fade Plane (Fade outs between switching focus)
@@ -857,6 +859,23 @@ struct TextureState
 	}
 };
 
+static constexpr auto __attribute__((const)) u16SetBit(uint16_t bits, uint16_t pos) {
+	return gamescope::bits::setBit<uint16_t>(bits, pos); 
+}
+
+static constexpr auto __attribute__((const)) u16UnsetBit(uint16_t bits, uint16_t pos) {
+	return gamescope::bits::unsetBit<uint16_t>(bits, pos); 
+}
+
+static constexpr auto __attribute__((const)) u16MaskOutBitsBelowPos(uint16_t bits, uint16_t pos) {
+	return gamescope::bits::maskOutBitsBelowPos<uint16_t>(bits, pos); 
+}
+
+static constexpr auto __attribute__((const)) u16MaskOutBitsAbovePos(uint16_t bits, uint16_t pos) {
+	return gamescope::bits::maskOutBitsAbovePos<uint16_t>(bits, pos); 
+}
+	
+
 class CVulkanCmdBuffer
 {
 public:
@@ -887,6 +906,7 @@ public:
 	void begin() CVULKANCMDBUFFER_TARGET_ATTR;
 	void end();
 	void clearState() CVULKANCMDBUFFER_TARGET_ATTR;
+	void clearBoundTexturesAboveSlot(uint16_t slot) CVULKANCMDBUFFER_TARGET_ATTR;
 	void bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture);
 	void bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d);
 	void setTextureStorage(bool storage);
@@ -919,15 +939,15 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
 	
-	inline void setBoundTextureBit(uint32_t pos) {
-		static constexpr uint16_t bit = 1u;
-		m_boundTextureBits |= (bit << pos);
+	inline auto** getLut3D() { return std::assume_aligned<32>(&(m_lut3D[0])); }
+	inline auto** getShaperLut() { return std::assume_aligned<32>(&(m_shaperLut[0])); }
+	
+	inline void setBoundTextureBit(uint16_t pos) {
+		m_boundTextureBits = u16SetBit(m_boundTextureBits, pos);
 	}
 	
 	inline void unsetBoundTextureBit(uint32_t pos) {
-		static constexpr uint16_t bit = 0u;
-		uint16_t bitmask = 0b1111'1111'1111'1111 ^ (bit<<pos);
-		m_boundTextureBits &= bitmask;
+		m_boundTextureBits = u16UnsetBit(m_boundTextureBits, pos);
 	}
 
 	inline uint16_t __attribute__((pure)) getNumberOfBoundTextures() const {
@@ -942,18 +962,19 @@ private:
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
 	
-	// Draw State
-	uint32_t m_renderBufferOffset = 0;
-	
 	// Per Use State
-	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 bytes
 	
 	// Draw State
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D; 
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
 	
-	uint16_t m_boundTextureBits = 0;
+	uint8_t padding[32-4-2-sizeof(std::vector<gamescope::Rc<CVulkanTexture>>)]; //padding so that the two above arrays are 32-byte aligned  (2 + 24 + 4 + 2 = 32 bytes)
+	// Per Use State
+	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24 bytes (on gcc)
+	// Draw State
+	uint32_t m_renderBufferOffset = 0; // 4 bytes
+	uint16_t m_boundTextureBits = 0; // 2 bytes
 	
 	struct alignas(32) m_textureBlock {			
 			std::bitset<VKR_SAMPLER_SLOTS> useSrgb;
@@ -961,7 +982,6 @@ private:
 			std::array<SamplerState, VKR_SAMPLER_SLOTS> samplerState;
 			CVulkanTexture* boundTextures[VKR_SAMPLER_SLOTS];
 	} m_textureBlock alignas(32);
-	//static_assert(alignof(m_textureBlock) == 0);
 };
 
 uint32_t VulkanFormatToDRM( VkFormat vkFormat );
