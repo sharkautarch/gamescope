@@ -10,6 +10,7 @@
 #include <array>
 #include <bitset>
 #include <thread>
+#include <iostream>
 #include <dlfcn.h>
 #include "vulkan_include.h"
 
@@ -1198,8 +1199,17 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 
 std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 {
-	std::unique_ptr<CVulkanCmdBuffer> cmdBuffer;
-	if (m_unusedCmdBufs.empty())
+	auto finalize_buf = [this]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
+		//using this lambda allows for Return Value Optimization w/o duplicating code
+		if constexpr (bIsRecycled) {
+			m_unusedCmdBufs.pop_back();
+		}
+		cmdBuf->begin();
+		
+		return cmdBuf;
+	};
+
+	if (m_unusedCmdBufs.empty()) [[unlikely]]
 	{
 		VkCommandBuffer rawCmdBuffer;
 		VkCommandBufferAllocateInfo commandBufferAllocateInfo = {
@@ -1216,16 +1226,10 @@ std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer()
 			return nullptr;
 		}
 
-		cmdBuffer = std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily());
+		return finalize_buf.operator()<false>(std::make_unique<CVulkanCmdBuffer>(this, rawCmdBuffer, queue(), queueFamily()));
+	} else {
+		return finalize_buf.operator()<true>(std::move(m_unusedCmdBufs.back()));
 	}
-	else
-	{
-		cmdBuffer = std::move(m_unusedCmdBufs.back());
-		m_unusedCmdBufs.pop_back();
-	}
-
-	cmdBuffer->begin();
-	return cmdBuffer;
 }
 
 uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
@@ -1335,7 +1339,7 @@ void CVulkanCmdBuffer::reset()
 	m_textureState.clear();
 }
 
-void CVulkanCmdBuffer::begin()
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::begin()
 {
 	VkCommandBufferBeginInfo commandBufferBeginInfo = {
 		.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1354,17 +1358,108 @@ void CVulkanCmdBuffer::end()
 	vk_check( m_device->vk.EndCommandBuffer(m_cmdBuffer) );
 }
 
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
+{
+		auto* blockStart = std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
+		static constexpr uint16_t u16Four = 4; 
+		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
+		
+		if (m_boundTextureBits <= u16Four) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
+			static constexpr auto size = offsetof(struct m_textureBlock, boundTextures) + (4)*ulSizeOfPointer;
+			static_assert(size % 32 == 0);
+	
+			static_assert(alignof(decltype(CVulkanCmdBuffer::m_textureBlock)) == 32);
+#ifdef __clang__
+			__builtin_memset_inline(blockStart, 0, size);
+#else
+			//clang knows that it can use aligned vector moves, but not gcc for some reason, even though gcc properly aligns m_textureBlock...
+			memset(std::assume_aligned<32>(blockStart), 0, size);
+#endif
+		} else {
+			uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
+			auto size = offsetof(struct m_textureBlock, boundTextures) + (VKR_SAMPLER_SLOTS-u16LeadingZeros)*ulSizeOfPointer;
+			
+			memset(blockStart, 0, size);
+		}
+		static constexpr uint16_t u16Zero = 0;
+		m_boundTextureBits = u16Zero;
+}
+//#define DEBUG_clearBoundTexturesAboveSlot
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearBoundTexturesAboveSlot(uint16_t slot) {
+	auto bits = m_boundTextureBits;
+
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+	bits = bits | (bits << 1) | (bits << 2);
+	std::cout << "bits = " << std::bitset<16>(bits) << "\n"; 
+#endif
+
+	auto bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	if (bitsAboveSlot == 0) {
+		return;
+	}
+	auto posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	uint16_t slotAboveSlot = slot+1;
+	auto& __restrict__ boundTextures = m_getRefBoundTextures();
+	boundTextures[slotAboveSlot] = nullptr;
+
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+	std::cout << "posToClearTo = " << posToClearTo << "\n";
+	std::cout << "slotAboveSlot = " << slotAboveSlot << "\n";
+	std::atomic_signal_fence(std::memory_order_seq_cst);
+#endif
+
+	//																									\/ equivalent to && (posToClearTo-2 < 16) -- using the below so that only one conditional jmp insn is generated for this if condition
+	if (	((uint16_t)(posToClearTo-2) > slotAboveSlot) & ~((uint16_t)(posToClearTo-2) ^ 0b1111'1111'1111'1111 ) & ~((uint16_t)(posToClearTo-2) ^ 0b1111'1111'1111'1110 ) ) {
+		static_assert( (~((uint16_t)(9-2) ^ 0b1111'1111'1111'1111 ) & ~((uint16_t)(9-2) ^ 0b1111'1111'1111'1110 )) != 0 );
+
+		uint16_t oneMinusEndIndex = posToClearTo-2;
+		boundTextures[oneMinusEndIndex] = nullptr;
+
+		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo-1); //adjust posToClearTo to make sure that the loop below isn't infinite
+	} else {
+		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo+1); //adjust posToClearTo to make sure that the loop below isn't infinite
+	}
+	
+	#pragma GCC unroll 1 //loop is already partially unrolled, no need to have gcc try to unroll it more
+	//										want to do ; i < posToClear ; but (uint16_t)(i-1) != (uint16_t)(posToClearTo) generates simpler assembly while still being correct
+	for (uint16_t i = slotAboveSlot+1; (uint16_t)(i-1) != (uint16_t)(posToClearTo); i+=2) {
+		auto*__restrict__ texPair = std::assume_aligned<16>(&(boundTextures[i])); //linux/unix abi ensures 16-byte alignment (and I double checked that boundTextures is at a 16-byte aligned address), and yet this is still necessary to coax gcc into generating aligned moves...
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+		std::cout << "texPair = " << texPair << ", texPair % 16 = " << (ptrdiff_t)texPair%16 << ", texPair % 32 = " << (ptrdiff_t)texPair%32 << "\n";
+#endif
+		memset(texPair, 0, sizeof(CVulkanTexture*)*2);
+	}
+	
+	uint16_t bitsBelowSlot = u16MaskOutBitsAbovePos(bits, slot);
+	m_boundTextureBits = bitsAboveSlot | bitsBelowSlot;
+}
+
+constexpr uint16_t CVULKANCMDBUFFER_TARGET_ATTR clearBoundTexturesAboveSlotTest(uint16_t slot) {
+	constexpr uint16_t bits = 0b1111'1111'1111'1111;
+	auto bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	if (bitsAboveSlot == 0) {
+		return 0;
+	}
+	auto posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	return posToClearTo;
+}
+
+static_assert(clearBoundTexturesAboveSlotTest(0)==16);
+
 void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> texture)
 {
-	m_boundTextures[slot] = texture.get();
+	assert(texture != nullptr);
+	m_getRefBoundTextures()[slot] = texture.get();
+	setBoundTextureBit(slot);
+
 	if (texture)
 		m_textureRefs.emplace_back(std::move(texture));
 }
 
 void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d)
 {
-	m_shaperLut[slot] = lut1d.get();
-	m_lut3D[slot] = lut3d.get();
+	getShaperLut()[slot] = lut1d.get();
+	getLut3D()[slot] = lut3d.get();
 
 	if (lut1d != nullptr)
 		m_textureRefs.emplace_back(std::move(lut1d));
@@ -1374,36 +1469,24 @@ void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTex
 
 void CVulkanCmdBuffer::setTextureSrgb(uint32_t slot, bool srgb)
 {
-	m_useSrgb[slot] = srgb;
+	m_getUseSrgb()[slot] = srgb;
 }
 
 void CVulkanCmdBuffer::setSamplerNearest(uint32_t slot, bool nearest)
 {
-	m_samplerState[slot].bNearest = nearest;
+	m_getSamplerState()[slot].bNearest = nearest;
 }
 
 void CVulkanCmdBuffer::setSamplerUnnormalized(uint32_t slot, bool unnormalized)
 {
-	m_samplerState[slot].bUnnormalized = unnormalized;
+	m_getSamplerState()[slot].bUnnormalized = unnormalized;
 }
 
 void CVulkanCmdBuffer::bindTarget(gamescope::Rc<CVulkanTexture> target)
 {
-	m_target = target.get();
+	m_getTarget() = target.get();
 	if (target)
 		m_textureRefs.emplace_back(std::move(target));
-}
-
-void CVulkanCmdBuffer::clearState()
-{
-	for (auto& texture : m_boundTextures)
-		texture = nullptr;
-
-	for (auto& sampler : m_samplerState)
-		sampler = {};
-
-	m_target = nullptr;
-	m_useSrgb.reset();
 }
 
 template<class PushData, class... Args>
@@ -1421,14 +1504,16 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
+void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
 {
-	for (auto src : m_boundTextures)
+	const uint32_t numBoundTextures = getNumberOfBoundTextures();
+	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
-		if (src)
+		auto src = m_getBoundTextures()[slot];
+		if (src) [[likely]]
 			prepareSrcImage(src);
 	}
-	assert(m_target != nullptr);
+	assert(m_getTarget() != nullptr);
 	prepareDestImage(m_target);
 	
 	const barrier_info_t barrier_info = {
@@ -1442,7 +1527,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 
 	VkDescriptorSet descriptorSet = m_device->descriptorSet();
 	
-	bool bYcbcr = m_target->isYcbcr();
+	bool bYcbcr = m_getTarget()->isYcbcr();
 	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
 	VkWriteDescriptorSet writeDescriptorSets[wDescLen];
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
@@ -1529,20 +1614,20 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	scratchDescriptor.offset = m_renderBufferOffset;
 	scratchDescriptor.range = VK_WHOLE_SIZE;
 
-	for (uint32_t i = 0; i < VKR_SAMPLER_SLOTS; i++)
+	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
-		imageDescriptors[i].sampler = m_device->sampler(m_samplerState[i]);
+		imageDescriptors[i].sampler = m_device->sampler(m_getSamplerState[i]);
 		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		if (m_boundTextures[i] == nullptr)
+		if (m_getBoundTextures()[slot] == nullptr) [[unlikely]]
 			continue;
 
-		VkImageView view = m_useSrgb[i] ? m_boundTextures[i]->srgbView() : m_boundTextures[i]->linearView();
+		VkImageView view = m_getUseSrgb()[slot] ? m_getBoundTextures()[slot]->srgbView() : m_getBoundTextures()[slot]->linearView();
 
-		if (m_boundTextures[i]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
-			ycbcrImageDescriptors[i].imageView = view;
+		if (m_getBoundTextures()[slot]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
+			ycbcrImageDescriptors[slot].imageView = view;
 		else
-			imageDescriptors[i].imageView = view;
+			imageDescriptors[slot].imageView = view;
 	}
 
 	for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
@@ -1558,24 +1643,24 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
 		// I need to change this, it's so utterly stupid and confusing.
-		shaperLutDescriptor[i].imageView = m_shaperLut[i] ? m_shaperLut[i]->srgbView() : VK_NULL_HANDLE;
+		shaperLutDescriptor[i].imageView = getShaperLut()[i] ? getShaperLut()[i]->srgbView() : VK_NULL_HANDLE;
 
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		lut3DDescriptor[i].imageView = m_lut3D[i] ? m_lut3D[i]->srgbView() : VK_NULL_HANDLE;
+		lut3DDescriptor[i].imageView = getLut3D()[i] ? getLut3D()[i]->srgbView() : VK_NULL_HANDLE;
 	}
 
 	if (!bYcbcr)
 	{
-		targetDescriptors[0].imageView = m_target->srgbView();
+		targetDescriptors[0].imageView = m_getTarget()->srgbView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 	else
 	{
-		targetDescriptors[0].imageView = m_target->lumaView();
+		targetDescriptors[0].imageView = m_getTarget()->lumaView();
 		targetDescriptors[0].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 
-		targetDescriptors[1].imageView = m_target->chromaView();
+		targetDescriptors[1].imageView = m_getTarget()->chromaView();
 		targetDescriptors[1].imageLayout = VK_IMAGE_LAYOUT_GENERAL;
 	}
 
@@ -1585,7 +1670,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 
 	m_device->vk.CmdDispatch(m_cmdBuffer, x, y, z);
 
-	markDirty(m_target);
+	markDirty(m_getTarget());
 }
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
@@ -2402,10 +2487,6 @@ uint32_t CVulkanTexture::DecRef()
 		pBackendFb->DecRef();
 	}
 	return uRefCount;
-}
-
-CVulkanTexture::CVulkanTexture( void )
-{
 }
 
 CVulkanTexture::~CVulkanTexture( void )
@@ -3610,10 +3691,9 @@ void bind_all_layers(CVulkanCmdBuffer* cmdBuffer, const struct FrameInfo_t *fram
 		cmdBuffer->setSamplerNearest(i, nearest);
 		cmdBuffer->setSamplerUnnormalized(i, true);
 	}
-	for (uint32_t i = frameInfo->layerCount; i < VKR_SAMPLER_SLOTS; i++)
-	{
-		cmdBuffer->bindTexture(i, nullptr);
-	}
+	
+	auto pos = (frameInfo->layerCount == 0) ? 0 : (frameInfo->layerCount - 1); //unlikely to ever happen, but just ensuring no overflow if frameInfo->layerCount is zero
+	cmdBuffer->clearBoundTexturesAboveSlot(pos);
 }
 
 std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, gamescope::Rc<CVulkanTexture> pYUVOutTexture )
@@ -3653,10 +3733,8 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerNearest(0, false);
 		cmdBuffer->setSamplerUnnormalized(0, true);
-		for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
-		{
-			cmdBuffer->bindTexture(i, nullptr);
-		}
+		cmdBuffer->clearBoundTexturesAboveSlot(0);
+		
 		cmdBuffer->bindTarget(pYUVOutTexture);
 
 		const int pixelsPerGroup = 8;
@@ -3888,10 +3966,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			cmdBuffer->setTextureSrgb(0, true);
 			cmdBuffer->setSamplerNearest(0, false);
 			cmdBuffer->setSamplerUnnormalized(0, true);
-			for (uint32_t i = 1; i < VKR_SAMPLER_SLOTS; i++)
-			{
-				cmdBuffer->bindTexture(i, nullptr);
-			}
+			
+			cmdBuffer->clearBoundTexturesAboveSlot(0);
 			cmdBuffer->bindTarget(pPipewireTexture);
 
 			const int pixelsPerGroup = 8;
