@@ -966,8 +966,8 @@ private:
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 bytes
 	
 	// Draw State
-	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D; 
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D; 
 	
 	uint8_t padding[32-4-2-sizeof(std::vector<gamescope::Rc<CVulkanTexture>>)]; //padding so that the two above arrays are 32-byte aligned  (2 + 24 + 4 + 2 = 32 bytes)
 	// Per Use State
