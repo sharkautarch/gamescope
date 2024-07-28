@@ -1514,7 +1514,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 			prepareSrcImage(src);
 	}
 	assert(m_getTarget() != nullptr);
-	prepareDestImage(m_target);
+	prepareDestImage(m_getTarget());
 	
 	const barrier_info_t barrier_info = {
 			.shader_sync_info = {
@@ -1529,7 +1529,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 	
 	bool bYcbcr = m_getTarget()->isYcbcr();
 	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
-	VkWriteDescriptorSet writeDescriptorSets[wDescLen];
+	VkWriteDescriptorSet writeDescriptorSets[7];
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
@@ -1616,9 +1616,9 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 
 	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
-		imageDescriptors[i].sampler = m_device->sampler(m_getSamplerState[i]);
-		imageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		ycbcrImageDescriptors[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		imageDescriptors[slot].sampler = m_device->sampler(m_getSamplerState()[slot]);
+		imageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		ycbcrImageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		if (m_getBoundTextures()[slot] == nullptr) [[unlikely]]
 			continue;
 
