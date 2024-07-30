@@ -661,18 +661,6 @@ bool g_bRt = false;
 int g_argc;
 char **g_argv;
 
-template<unsigned ...Len>
-constexpr auto constexpr_strcat(const char (&...strings)[Len]) { //https://stackoverflow.com/a/75619411
-  constexpr unsigned N = (... + Len) - sizeof...(Len);
-  std::array<char, N + 1> result = {};
-  result[N] = '\0';
-
-  auto it = result.begin();
-  (void)( (void)(it = std::copy_n(strings, Len-1, it), 0), ...);
-  return result;
-}
-
-
 int main(int argc, char **argv)
 {
 	g_argc = argc;
