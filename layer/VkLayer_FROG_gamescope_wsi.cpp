@@ -207,6 +207,7 @@ namespace GamescopeWSILayer {
     xcb_connection_t* connection;
     xcb_window_t window;
     GamescopeLayerClient::Flags flags;
+    std::optional<VkPresentModeKHR> preferredMode;
     bool hdrOutput;
 
     bool isWayland() const {
@@ -927,8 +928,6 @@ namespace GamescopeWSILayer {
       const VkSwapchainCreateInfoKHR*  pCreateInfo,
       const VkAllocationCallbacks*     pAllocator,
             VkSwapchainKHR*            pSwapchain) {
-      if (getenv("GAMESCOPE_WSI_PRESENT_MODE"))
-      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
       auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
 
       if (!gamescopeSurface) {
@@ -945,6 +944,12 @@ namespace GamescopeWSILayer {
           s_warned = true;
         }
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
+      }
+      
+      if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
+      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
+      	gamescopeSurface->preferredMode.emplace{static_cast<VkPresentModeKHR>(pPresentMode[0])};
+      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *preferredMode);
       }
 
       if (pCreateInfo->oldSwapchain) {
@@ -965,20 +970,35 @@ namespace GamescopeWSILayer {
       vkroots::ChainPatcher<VkSwapchainPresentModesCreateInfoEXT>
         presentModePatcher(&swapchainInfo, [&](VkSwapchainPresentModesCreateInfoEXT *pPresentModesCreateInfo)
       {
+      	// If user requested Immediate present mode, use immediate in WSI layer, otherwise just use mailbox:
+      	static constexpr std::array<VkPresentModeKHR, 1> s_ImmediateMode = {{
+          VK_PRESENT_MODE_IMMEDIATE_KHR,
+        }};
+      
         // Always send MAILBOX as the mode to the driver, as we implement FIFO ourselves -- using the
         // Gamescope swapchain protocol.
         static constexpr std::array<VkPresentModeKHR, 1> s_MailboxMode = {{
           VK_PRESENT_MODE_MAILBOX_KHR,
         }};
-        pPresentModesCreateInfo->presentModeCount = uint32_t(s_MailboxMode.size());
-        pPresentModesCreateInfo->pPresentModes    = s_MailboxMode.data();
+        if (!preferredMode || *preferredMode != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
+          pPresentModesCreateInfo->presentModeCount = uint32_t(s_MailboxMode.size());
+          pPresentModesCreateInfo->pPresentModes    = s_MailboxMode.data();
+        } else {
+          pPresentModesCreateInfo->presentModeCount = uint32_t(s_ImmediateMode.size());
+          pPresentModesCreateInfo->pPresentModes    = s_ImmediateMode.data();
+        }
+        
         return true;
       });
 
       // Force the colorspace to sRGB before sending to the driver.
       swapchainInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
-      // We always send MAILBOX to the driver.
-      swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+      // We always send MAILBOX to the driver (unless gamescope is running w/ immediate present mode).
+      if (!preferredMode || *preferredMode != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
+      	swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
+      } else {
+      	swapchainInfo.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+      }
 
       fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
@@ -1154,6 +1174,13 @@ namespace GamescopeWSILayer {
         return false;
       }();
 
+			std::optional<VkPresentModeKHR> preferredMode
+      if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
+      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
+      	preferredMode.emplace{static_cast<VkPresentModeKHR>(pPresentMode[0])};
+      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *preferredMode);
+      }
+
       // Grab the actual intended present modes.
       std::optional<VkSwapchainPresentModeInfoEXT> oOriginalPresentModeInfo;
       const auto *pPresentModeInfo = vkroots::FindInChain<VkSwapchainPresentModeInfoEXT>(&presentInfo);
@@ -1167,7 +1194,14 @@ namespace GamescopeWSILayer {
       {
         for (uint32_t i = 0; i < presentInfo.swapchainCount; i++) {
           if (auto gamescopeSwapchain = GamescopeSwapchain::get(presentInfo.pSwapchains[i])) {
-            mailboxModes.emplace_back(VK_PRESENT_MODE_MAILBOX_KHR);
+            if (auto gamescopeSurface = GamescopeSurface::get(gamescopeSwapchain->surface);
+                     gamescopeSurface && gamescopeSurface->preferredMode 
+                     && *(gamescopeSurface->preferredMode) == VK_PRESENT_MODE_IMMEDIATE_KHR) 
+            {
+              mailboxModes.emplace_back(VK_PRESENT_MODE_IMMEDIATE_KHR);
+            } else {
+              mailboxModes.emplace_back(VK_PRESENT_MODE_MAILBOX_KHR);
+            }
           }
         }
 
