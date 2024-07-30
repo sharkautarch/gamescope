@@ -696,7 +696,7 @@ namespace GamescopeWSILayer {
         } else if (pPresentModeCount != nullptr && pPresentModes != nullptr && state->preferredMode && *(state->preferredMode) == VK_PRESENT_MODE_IMMEDIATE_KHR)
         {
           if (pPresentModes != nullptr) {
-            pPresentModes[std::max((int32_t)count-1, 0)] = VK_PRESENT_MODE_IMMEDIATE_KHR;
+            pPresentModes[std::max((int32_t)(*pPresentModeCount)-1, 0)] = VK_PRESENT_MODE_IMMEDIATE_KHR;
           } else {
             *pPresentModeCount++;
           }
