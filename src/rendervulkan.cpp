@@ -2910,7 +2910,7 @@ bool vulkan_supports_hdr10()
 }
 
 extern bool g_bOutputHDREnabled;
-extern uint8_t g_u8PreferredPresentMode;
+extern int16_t g_preferredPresentMode;
 bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 {
 	uint32_t imageCount = pOutput->surfaceCaps.minImageCount + 1;
@@ -2984,7 +2984,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.preTransform = pOutput->surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-		.presentMode = static_cast<VkPresentModeKHR>(g_u8PreferredPresentMode),
+		.presentMode = static_cast<VkPresentModeKHR>(g_preferredPresentMode),
 		.clipped = VK_TRUE,
 	};
 
@@ -3184,7 +3184,7 @@ bool vulkan_make_output()
 			{
 				vk_errorf( result, "vkGetPhysicalDeviceSurfacePresentModesKHR failed" );
 				return false;
-			} else if (auto preferredPresentMode=static_cast<VkPresentModeKHR>(g_u8PreferredPresentMode); 
+			} else if (auto preferredPresentMode=static_cast<VkPresentModeKHR>(g_preferredPresentMode); 
 								!gamescope::Algorithm::Contains(pOutput->presentModes, preferredPresentMode)) {
 			  
 			  auto presentModeToStr = [](VkPresentModeKHR mode) -> const char* {
@@ -3221,7 +3221,7 @@ bool vulkan_make_output()
 			  
 			DONE:;
 				vk_log.warnf("Preferred present mode '%s' not available, falling back to present mode '%s'\n", presentModeToStr(preferredPresentMode), presentModeToStr(fallback));
-				g_u8PreferredPresentMode = static_cast<uint8_t>(fallback);
+				g_preferredPresentMode = static_cast<int16_t>(fallback);
 			}
 		}
 		

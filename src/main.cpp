@@ -647,7 +647,7 @@ static void UpdateCompatEnvVars()
 		}
 	}
 }
-uint8_t g_u8PreferredPresentMode = 2;
+int16_t g_preferredPresentMode = 2;
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
@@ -776,7 +776,7 @@ int main(int argc, char **argv)
 				} else if (strcmp(opt_name, "backend") == 0) {
 					eCurrentBackend = parse_backend_name( optarg );
 				} else if (strcmp(opt_name, "vk-present-mode") == 0) {
-					g_u8PreferredPresentMode = atoi( optarg );
+					g_preferredPresentMode = atoi( optarg );
 				} else if (strcmp(opt_name, "cursor-scale-height") == 0) {
 					g_nCursorScaleHeight = atoi(optarg);
 				} else if (strcmp(opt_name, "mangoapp") == 0) {
@@ -977,8 +977,11 @@ int main(int argc, char **argv)
 	}
 #endif
 
-	if (g_u8PreferredPresentMode != 2u && g_u8PreferredPresentMode >= 0u && g_u8PreferredPresentMode <= 3u) {
-		setenv("GAMESCOPE_WSI_PRESENT_MODE", g_u8PreferredPresentMode, 1);
+	if (g_preferredPresentMode != 2 && g_preferredPresentMode >= 0 && g_preferredPresentMode <= 3) {
+		static constinit char presentModeEnv[2];
+		presentModeEnv[0]=static_cast<char>(g_preferredPresentMode);
+		presentModeEnv[1]='\0';
+		setenv("GAMESCOPE_WSI_PRESENT_MODE", presentModeEnv, 1);
 	}
 
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );

@@ -948,8 +948,8 @@ namespace GamescopeWSILayer {
       
       if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
       	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
-      	gamescopeSurface->preferredMode.emplace{static_cast<VkPresentModeKHR>(pPresentMode[0])};
-      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *preferredMode);
+      	gamescopeSurface->preferredMode.emplace(static_cast<VkPresentModeKHR>(pPresentMode[0]));
+      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *(gamescopeSurface->preferredMode));
       }
 
       if (pCreateInfo->oldSwapchain) {
@@ -980,7 +980,7 @@ namespace GamescopeWSILayer {
         static constexpr std::array<VkPresentModeKHR, 1> s_MailboxMode = {{
           VK_PRESENT_MODE_MAILBOX_KHR,
         }};
-        if (!preferredMode || *preferredMode != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
+        if (!(gamescopeSurface->preferredMode) || *(gamescopeSurface->preferredMode) != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
           pPresentModesCreateInfo->presentModeCount = uint32_t(s_MailboxMode.size());
           pPresentModesCreateInfo->pPresentModes    = s_MailboxMode.data();
         } else {
@@ -994,7 +994,7 @@ namespace GamescopeWSILayer {
       // Force the colorspace to sRGB before sending to the driver.
       swapchainInfo.imageColorSpace = VK_COLOR_SPACE_SRGB_NONLINEAR_KHR;
       // We always send MAILBOX to the driver (unless gamescope is running w/ immediate present mode).
-      if (!preferredMode || *preferredMode != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
+      if (!(gamescopeSurface->preferredMode) || *(gamescopeSurface->preferredMode) != VK_PRESENT_MODE_IMMEDIATE_KHR ) {
       	swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
       } else {
       	swapchainInfo.presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
@@ -1173,13 +1173,6 @@ namespace GamescopeWSILayer {
         }
         return false;
       }();
-
-			std::optional<VkPresentModeKHR> preferredMode
-      if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
-      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
-      	preferredMode.emplace{static_cast<VkPresentModeKHR>(pPresentMode[0])};
-      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *preferredMode);
-      }
 
       // Grab the actual intended present modes.
       std::optional<VkSwapchainPresentModeInfoEXT> oOriginalPresentModeInfo;
