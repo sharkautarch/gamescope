@@ -813,6 +813,7 @@ namespace GamescopeWSILayer {
       }
 
       fprintf(stderr, "[Gamescope WSI] Made gamescope surface for xid: 0x%x\n", window);
+      
       auto gamescopeSurface = GamescopeSurface::create(*pSurface, GamescopeSurfaceData {
         .instance        = instance,
         .display         = gamescopeInstance->display,
@@ -824,6 +825,12 @@ namespace GamescopeWSILayer {
         .flags           = flags,
         .hdrOutput       = hdrOutput,
       });
+      
+      if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
+      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
+      	gamescopeSurface->preferredMode.emplace(static_cast<VkPresentModeKHR>(pPresentMode[0]));
+      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *(gamescopeSurface->preferredMode));
+      }
 
       DumpGamescopeSurfaceState(gamescopeInstance, gamescopeSurface);
 
@@ -953,12 +960,6 @@ namespace GamescopeWSILayer {
           s_warned = true;
         }
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
-      }
-      
-      if (char* pPresentMode = getenv("GAMESCOPE_WSI_PRESENT_MODE"); pPresentMode != nullptr) {
-      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
-      	gamescopeSurface->preferredMode.emplace(static_cast<VkPresentModeKHR>(pPresentMode[0]));
-      	printf("[Gamescope WSI] GAMESCOPE_WSI_PRESENT_MODE=%u\n", *(gamescopeSurface->preferredMode));
       }
 
       if (pCreateInfo->oldSwapchain) {
