@@ -15,23 +15,6 @@
       },
       "disable_environment": {
         "DISABLE_GAMESCOPE_WSI": "1"
-      },
-      "features": {
-        "settings": [
-          {
-            "key": "present_mode",
-            "env": "GAMESCOPE_WSI_PRESENT_MODE",
-            "label": "Gamescope WSI Layer vk present mode",
-            "description": "Gamescope WSI Layer: preferred present mode. Defaults to vsync/FIFO mode. Note that using the frame limiter will restrict the present mode to only vsync/FIFO. \
-            immediate/tearing: 0, mailbox/triple buffering=1, fifo/vsync=2, relaxed/adaptive vsync=3",
-            "type": "INT",
-            "default": 2,
-            "range": {
-              "min": 0,
-              "max": 3
-            }
-          }
-        ]
       }
     }
 }
