@@ -695,11 +695,17 @@ namespace GamescopeWSILayer {
           return vkroots::helpers::array(s_FifoPresentModes, pPresentModeCount, pPresentModes);
         } else if (pPresentModeCount != nullptr && pPresentModes != nullptr && state->preferredMode && *(state->preferredMode) == VK_PRESENT_MODE_IMMEDIATE_KHR)
         {
+          VkResult res = pDispatch->GetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, pPresentModeCount, pPresentModes);
+          if ( res != VK_SUCCESS)
+            return res;
+
           if (pPresentModes != nullptr) {
             pPresentModes[std::max((int32_t)(*pPresentModeCount)-1, 0)] = VK_PRESENT_MODE_IMMEDIATE_KHR;
           } else {
             *pPresentModeCount = *pPresentModeCount + 1;
           }
+
+          return res;
         }
       }
 
