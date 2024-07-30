@@ -6,6 +6,7 @@
 #include <vector>
 #include <cstring>
 #include <string>
+#include <filesystem>
 #if defined(__linux__)
 #include <sys/capability.h>
 #endif
@@ -70,6 +71,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "mangoapp", no_argument, nullptr, 0 },
 
 	{ "backend", required_argument, nullptr, 0 },
+	{ "vk-present-mode", required_argument, nullptr, 0},
 
 	// nested mode options
 	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
@@ -179,6 +181,9 @@ const char usage[] =
 #endif
 	"                                     headless => use headless backend (no window, no DRM output)\n"
 	"                                     wayland => use Wayland backend\n"
+	"  --vk-present-mode              preferred vulkan present mode\n"
+	"                                     Note that using the frame limiter will restrict the present mode to only vsync/FIFO.\n"
+  "                                     immediate/tearing: 0, mailbox/triple buffering=1, fifo/vsync=2 (default), relaxed/adaptive vsync=3\n"
 	"  --cursor                       path to default cursor image\n"
 	"  -R, --ready-fd                 notify FD when ready\n"
 	"  --rt                           Use realtime scheduling\n"
@@ -642,7 +647,7 @@ static void UpdateCompatEnvVars()
 		}
 	}
 }
-
+uint8_t g_u8PreferredPresentMode = 2;
 int g_nPreferredOutputWidth = 0;
 int g_nPreferredOutputHeight = 0;
 bool g_bExposeWayland = false;
@@ -655,6 +660,18 @@ bool g_bRt = false;
 // For now...
 int g_argc;
 char **g_argv;
+
+template<unsigned ...Len>
+constexpr auto constexpr_strcat(const char (&...strings)[Len]) { //https://stackoverflow.com/a/75619411
+  constexpr unsigned N = (... + Len) - sizeof...(Len);
+  std::array<char, N + 1> result = {};
+  result[N] = '\0';
+
+  auto it = result.begin();
+  (void)( (void)(it = std::copy_n(strings, Len-1, it), 0), ...);
+  return result;
+}
+
 
 int main(int argc, char **argv)
 {
@@ -970,6 +987,108 @@ int main(int argc, char **argv)
 	}
 #endif
 
+	static constexpr const char* sl_relPathToLayerSettingsDir = ".local/share/vulkan/loader_settings.d/"; 
+	static constexpr const char* sl_layerSettingsFile = "vk_loader_settings.json"; //the documentation claimed that the settings file is under ".local/share/vulkan/settings.d/" but the code indicates that it's actually ".local/share/vulkan/loader_settings.d" -_-
+	//https://github.com/KhronosGroup/Vulkan-Loader/blob/be0e1c3683a39a26b4f1a3859226b07a482d030e/loader/settings.c#L228
+	
+	
+	std::filesystem::path layerSettingsFs{};
+	bool bLayerSettingsFileWasEmpty = false;
+	bool bSkippedNested = false;
+	
+	const char* homeDir = getenv("HOME");
+	
+	//if the layer settings file is empty, we will wipe the settings file before the main process shuts down
+	auto lambda = [&](){ if (homeDir != nullptr && !bSkippedNested && bLayerSettingsFileWasEmpty) { FILE* f2 = fopen(layerSettingsFs.c_str(), "w+"); fflush(f2); fclose(f2); } };
+	defer( lambda(); );
+	
+	if (!homeDir) {
+		fprintf(stderr, "Warning: Unable to get home directory path from $HOME env\n");
+		goto SKIP_LAYER_SETTINGS;
+	}
+		
+	layerSettingsFs = std::filesystem::path{homeDir} / sl_relPathToLayerSettingsDir;
+
+	if ( g_u8PreferredPresentMode != 2 && g_u8PreferredPresentMode <= 3 ) //skip if using default FIFO present mode
+	{
+		FILE* file = nullptr;
+		defer( fclose(file) ); //fclose(file) does not crash if file is nullptr
+		long filePos = 0;
+		
+		static constexpr std::array gamescopeWSILayerConfigStr = constexpr_strcat("VK_LAYER_FROG_gamescope_wsi_" , GAMESCOPE_WSI_CPU_FAMILY , ".present_mode");
+#ifdef __x86_64__ //make sure constexpr_strcat works correctly:
+		static constexpr std::array checkAgainst = {'V', 'K','_','L','A','Y','E','R','_','F','R','O','G','_','g','a','m','e','s','c','o','p','e','_','w','s','i','_','x','8','6','_','6','4','.','p','r','e','s','e','n','t','_','m','o','d','e','\0'};
+		static_assert(gamescopeWSILayerConfigStr == checkAgainst);
+#endif
+		char gamescopeWSILayerConfigSetting[sizeof(gamescopeWSILayerConfigStr) + 32];
+		sprintf(gamescopeWSILayerConfigSetting, "%s = %hhu\n", gamescopeWSILayerConfigStr.data(), g_u8PreferredPresentMode);
+		auto settingLen = strlen(gamescopeWSILayerConfigSetting);
+		
+		if (!std::filesystem::exists(layerSettingsFs)) {
+			fprintf(stderr, "Notice: Layer settings directory does not exist, attempting to create it...\n");
+			std::error_code ec;
+			std::filesystem::create_directories(layerSettingsFs, ec);
+			if (ec) {
+				fprintf(stderr, "Warning: Unable to create layer settings directory, error: %s\n", (ec == std::errc::permission_denied) ? "permission denied" : "unknown");
+				bSkippedNested=true;
+				goto SKIP_LAYER_SETTINGS_NESTED;
+			}
+		}
+		
+		
+		layerSettingsFs = layerSettingsFs / sl_layerSettingsFile;
+		file = fopen(layerSettingsFs.c_str(), "r+");
+
+		if (fseek(file, 0, SEEK_END) != 0 
+				|| (filePos = ftell(file)) == -1L )
+		{
+			fprintf(stderr, "Warning: Unable to create/access layer settings file\n");
+			bSkippedNested=true;
+			goto SKIP_LAYER_SETTINGS_NESTED;
+		}
+		
+		if (filePos < 2) {
+			bLayerSettingsFileWasEmpty = true;
+			fseek(file, 0, SEEK_END);
+			fputc('\n', file);
+			fputs(gamescopeWSILayerConfigSetting, file);
+		}
+		else {
+			fseek(file, 0, SEEK_SET);
+			char buf[128];
+			bool bOverwroteSetting = false;
+			while (fgets(buf, sizeof buf, file) != nullptr) {
+				char* pSubStr;
+				if ( (pSubStr = strstr(buf, gamescopeWSILayerConfigStr.data())) != nullptr ) {
+					long bufLen = strlen(buf);
+					long offsetFromBuf = static_cast<long>(pSubStr - buf);
+					fseek(file, -bufLen + offsetFromBuf, SEEK_CUR);
+					fwrite(gamescopeWSILayerConfigSetting, sizeof(gamescopeWSILayerConfigSetting[0]), settingLen, file);
+					if (settingLen < static_cast<size_t>(bufLen-offsetFromBuf)) {
+						char zerosBuf[128];
+						
+						memset(zerosBuf, ' ', (bufLen-offsetFromBuf) - settingLen);
+						zerosBuf[(bufLen-offsetFromBuf) - settingLen] = 0;
+						fwrite(zerosBuf, sizeof(zerosBuf[0]), (bufLen-offsetFromBuf) - settingLen, file);
+					}
+					bOverwroteSetting=true;
+				}
+			}
+			
+			if (!bOverwroteSetting) {
+				fseek(file, 0, SEEK_END);
+				fputc('\n', file);
+				fputs(gamescopeWSILayerConfigSetting, file);
+			}
+		}
+		fflush(file);
+	SKIP_LAYER_SETTINGS_NESTED:; 	
+	}
+	
+	SKIP_LAYER_SETTINGS:;
+	
+	
+	
 	std::thread steamCompMgrThread( steamCompMgrThreadRun, argc, argv );
 
 	handle_signal_action.sa_handler = handle_signal;

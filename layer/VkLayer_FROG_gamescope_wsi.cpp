@@ -927,6 +927,8 @@ namespace GamescopeWSILayer {
       const VkSwapchainCreateInfoKHR*  pCreateInfo,
       const VkAllocationCallbacks*     pAllocator,
             VkSwapchainKHR*            pSwapchain) {
+      if (getenv("GAMESCOPE_WSI_PRESENT_MODE"))
+      	printf("[Gamescope WSI] found GAMESCOPE_WSI_PRESENT_MODE env\n");
       auto gamescopeSurface = GamescopeSurface::get(pCreateInfo->surface);
 
       if (!gamescopeSurface) {

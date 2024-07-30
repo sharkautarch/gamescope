@@ -53,6 +53,7 @@
 #include "shaders/ffx_fsr1.h"
 
 #include "reshade_effect_manager.hpp"
+#include "Utils/Algorithm.h"
 
 extern bool g_bWasPartialComposite;
 
@@ -2909,7 +2910,7 @@ bool vulkan_supports_hdr10()
 }
 
 extern bool g_bOutputHDREnabled;
-
+extern uint8_t g_u8PreferredPresentMode;
 bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 {
 	uint32_t imageCount = pOutput->surfaceCaps.minImageCount + 1;
@@ -2983,7 +2984,7 @@ bool vulkan_make_swapchain( VulkanOutput_t *pOutput )
 		.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
 		.preTransform = pOutput->surfaceCaps.currentTransform,
 		.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
-		.presentMode = VK_PRESENT_MODE_FIFO_KHR,
+		.presentMode = static_cast<VkPresentModeKHR>(g_u8PreferredPresentMode),
 		.clipped = VK_TRUE,
 	};
 
@@ -3183,6 +3184,44 @@ bool vulkan_make_output()
 			{
 				vk_errorf( result, "vkGetPhysicalDeviceSurfacePresentModesKHR failed" );
 				return false;
+			} else if (auto preferredPresentMode=static_cast<VkPresentModeKHR>(g_u8PreferredPresentMode); 
+								!gamescope::Algorithm::Contains(pOutput->presentModes, preferredPresentMode)) {
+			  
+			  auto presentModeToStr = [](VkPresentModeKHR mode) -> const char* {
+			  	switch (mode) {
+			  		case VK_PRESENT_MODE_IMMEDIATE_KHR:
+			  			return "immediate";
+			  		case VK_PRESENT_MODE_MAILBOX_KHR:
+			  			return "mailbox";
+			  		case VK_PRESENT_MODE_FIFO_KHR:
+			  			return "fifo";
+			  		case VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+			  			return "relaxed";
+			  		default:
+			  			return "unknown";
+			  	}
+			  };
+			  
+			  //fallbacks:
+			  //immediate->mailbox, relaxed->immediate, mailbox->{immediate or fifo}, other -> fifo
+			  
+			  VkPresentModeKHR fallback = preferredPresentMode;
+			  if (fallback == VK_PRESENT_MODE_FIFO_RELAXED_KHR || fallback == VK_PRESENT_MODE_MAILBOX_KHR) {
+			  	fallback = VK_PRESENT_MODE_IMMEDIATE_KHR;
+			  	if (gamescope::Algorithm::Contains(pOutput->presentModes, fallback))
+			  		goto DONE;
+			  }
+			  
+			  if (fallback == VK_PRESENT_MODE_IMMEDIATE_KHR && gamescope::Algorithm::Contains(pOutput->presentModes, VK_PRESENT_MODE_MAILBOX_KHR)) {
+			  	fallback = VK_PRESENT_MODE_MAILBOX_KHR;
+			  	goto DONE;
+			  }
+			  
+			  fallback = VK_PRESENT_MODE_FIFO_KHR;
+			  
+			DONE:;
+				vk_log.warnf("Preferred present mode '%s' not available, falling back to present mode '%s'\n", presentModeToStr(preferredPresentMode), presentModeToStr(fallback));
+				g_u8PreferredPresentMode = static_cast<uint8_t>(fallback);
 			}
 		}
 		
