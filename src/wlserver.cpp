@@ -25,6 +25,7 @@
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -186,7 +187,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 
 	const auto& pFeedback = wlserver_surface_swapchain_feedback(surf);
 
-	struct wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
+	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
 		wlr_linux_drm_syncobj_v1_get_surface_state( surf );
 
 	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {

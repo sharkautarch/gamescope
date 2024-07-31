@@ -2634,11 +2634,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 		return false;
 	}
 
-	if (sampledShmFormats.formats == nullptr 
-			|| std::none_of( sampledShmFormats.formats, sampledShmFormats.formats+sampledShmFormats.len, [=](wlr_drm_format format) { return format.format == drmFormat;} ) ) 
-	{ 
-		wlr_drm_format_set_add( &sampledShmFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
-	}
+	wlr_drm_format_set_add( &sampledShmFormats, drmFormat, DRM_FORMAT_MOD_LINEAR );
 
 	if ( !g_device.supportsModifiers() )
 	{
@@ -4043,17 +4039,21 @@ static const struct wlr_texture_impl texture_impl = {
 	.destroy = texture_destroy,
 };
 
-static const struct wlr_drm_format_set *renderer_get_texture_formats(struct wlr_renderer *wlr_renderer, uint32_t buffer_caps) {
-	if (buffer_caps & WLR_BUFFER_CAP_DMABUF) {
+static const struct wlr_drm_format_set *renderer_get_texture_formats( struct wlr_renderer *wlr_renderer, uint32_t buffer_caps )
+{
+	if (buffer_caps & WLR_BUFFER_CAP_DMABUF)
+	{
 		return &sampledDRMFormats;
-	} else if (buffer_caps & WLR_BUFFER_CAP_DATA_PTR) {
+	}
+	else if (buffer_caps & WLR_BUFFER_CAP_DATA_PTR)
+	{
 		return &sampledShmFormats;
-	} else {
+	}
+	else
+	{
 		return nullptr;
 	}
 }
-
-
 
 static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
 {
@@ -4086,7 +4086,7 @@ struct wlr_renderer *vulkan_renderer_create( void )
 {
 	static constexpr uint32_t render_buffer_caps = WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR | WLR_BUFFER_CAP_SHM;
 	VulkanRenderer_t *renderer = new VulkanRenderer_t();
-	wlr_renderer_init(&renderer->base, &renderer_impl, render_buffer_caps);
+	wlr_renderer_init(&renderer->base, &renderer_impl, WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR);
 	return &renderer->base;
 }
 
@@ -4174,6 +4174,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
+	texCreateFlags.bFlippable = true;
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 

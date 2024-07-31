@@ -53,8 +53,8 @@ struct wlserver_vk_swapchain_feedback
 
 struct GamescopeTimelinePoint
 {
-	decltype(wlr_linux_drm_syncobj_surface_v1_state::acquire_timeline) pTimeline = nullptr;
-	decltype(wlr_linux_drm_syncobj_surface_v1_state::acquire_point) ulPoint = 0;
+	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
+	uint64_t ulPoint = 0;
 
 	void Release();
 };
