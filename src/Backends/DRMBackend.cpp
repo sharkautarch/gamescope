@@ -2177,8 +2177,7 @@ namespace gamescope
 			drm_log.infof( "[colorimetry]: Steam Deck LCD detected. Using known colorimetry" );
 			m_Mutable.DisplayColorimetry = displaycolorimetry_steamdeck_measured;
 		}
-		else if (m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ||
-				 m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
+		else
 		{
 			// Steam Deck OLED has calibrated chromaticity coordinates in the EDID
 			// for each unit.

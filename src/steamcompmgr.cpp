@@ -7032,23 +7032,6 @@ extern bool g_bLaunchMangoapp;
 
 extern void ShutdownGamescope();
 
-static gamescope::ConCommand cc_launch( "launch", "Launch an application with the given args.",
-[]( std::span<std::string_view> svArgs )
-{
-	if ( svArgs.size() < 2 )
-		return;
-
-	// Need them to be null terminated.
-	std::vector<std::string> sArgs;
-	for ( auto iter = svArgs.begin() + 1; iter != svArgs.end(); iter++ )
-		sArgs.push_back( std::string( *iter ) );
-
-	std::vector<char *> argv;
-	for ( std::string &sArg : sArgs )
-		argv.push_back( sArg.data() );
-	gamescope::Process::SpawnProcessInWatchdog( argv.data() );
-});
-
 gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
 static LogScope s_LaunchLogScope( "launch" );
 

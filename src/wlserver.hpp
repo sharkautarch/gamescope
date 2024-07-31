@@ -43,7 +43,7 @@ struct wlserver_vk_swapchain_feedback
 
 struct GamescopeTimelinePoint
 {
-	struct wlr_render_timeline *pTimeline = nullptr;
+	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
 	uint64_t ulPoint = 0;
 
 	void Release();
