@@ -968,6 +968,10 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
+      if (gamescopeSurface->preferredMode && *(gamescopeSurface->preferredMode) == VK_PRESENT_MODE_IMMEDIATE_KHR ) {
+        const_cast<VkSwapchainCreateInfoKHR*>(pCreateInfo)->presentMode = VK_PRESENT_MODE_IMMEDIATE_KHR;
+      }
+
       if (pCreateInfo->oldSwapchain) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
           gamescopeSwapchain->retired = true;
