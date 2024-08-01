@@ -111,7 +111,7 @@ struct wlr_surface *wlserver_surface_to_main_surface( struct wlr_surface *pSurfa
 
 std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 {
-	static std::vector<ResListEntry_t> commits;
+	static constinit std::vector<ResListEntry_t> commits;
 	commits.clear();
 	commits.reserve(16);
 

@@ -512,18 +512,18 @@ namespace gamescope
 
         virtual std::span<const char *const> GetInstanceExtensions() const override
 		{
-            static std::vector<std::string> s_exts;
+            static constinit std::vector<std::string> s_exts;
             GetVulkanInstanceExtensionsRequired( s_exts );
-            static std::vector<const char *> s_extPtrs;
+            static constinit std::vector<const char *> s_extPtrs;
             for ( const std::string &ext : s_exts )
                 s_extPtrs.emplace_back( ext.c_str() );
 			return std::span<const char *const>{ s_extPtrs.begin(), s_extPtrs.end() };
 		}
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
-            static std::vector<std::string> s_exts;
+            static constinit std::vector<std::string> s_exts;
             GetVulkanDeviceExtensionsRequired( pVkPhysicalDevice, s_exts );
-            static std::vector<const char *> s_extPtrs;
+            static constinit std::vector<const char *> s_extPtrs;
             for ( const std::string &ext : s_exts )
                 s_extPtrs.emplace_back( ext.c_str() );
 			return std::span<const char *const>{ s_extPtrs.begin(), s_extPtrs.end() };

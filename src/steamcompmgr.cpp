@@ -1089,7 +1089,7 @@ retry:
 static inline void stats_printf( const char* format, ...)
 {
 	static char buffer[256];
-	static std::string eventstr;
+	static constinit std::string eventstr;
 
 	va_list args;
 	va_start(args, format);
@@ -6061,7 +6061,7 @@ void handle_done_commits_xwayland( xwayland_ctx_t *ctx, bool vblank, uint64_t vb
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	static std::vector< CommitDoneEntry_t > commits_before_their_time;
+	static constinit std::vector< CommitDoneEntry_t > commits_before_their_time;
 	commits_before_their_time.clear();
 	commits_before_their_time.reserve( 32 );
 
@@ -6118,7 +6118,7 @@ void handle_done_commits_xdg( bool vblank, uint64_t vblank_idx )
 	uint64_t next_refresh_time = g_SteamCompMgrVBlankTime.schedule.ulTargetVBlank;
 
 	// commits that were not ready to be presented based on their display timing.
-	static std::vector< CommitDoneEntry_t > commits_before_their_time;
+	static constinit std::vector< CommitDoneEntry_t > commits_before_their_time;
 	commits_before_their_time.clear();
 	commits_before_their_time.reserve( 32 );
 
