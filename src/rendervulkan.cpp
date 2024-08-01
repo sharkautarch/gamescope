@@ -1361,10 +1361,9 @@ void CVulkanCmdBuffer::end()
 void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 {
 		auto* blockStart = std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
-		static constexpr uint16_t u16Four = 4; 
 		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
 		
-		if (m_boundTextureBits <= u16Four) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
+		if (m_boundTextureBits <= (uint16_t)4) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
 			static constexpr auto size = offsetof(struct m_textureBlock, boundTextures) + (4)*ulSizeOfPointer;
 			static_assert(size % 32 == 0);
 	
@@ -1376,13 +1375,13 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 			memset(std::assume_aligned<32>(blockStart), 0, size);
 #endif
 		} else {
-			uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
-			auto size = offsetof(struct m_textureBlock, boundTextures) + (VKR_SAMPLER_SLOTS-u16LeadingZeros)*ulSizeOfPointer;
+			const uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
+			const auto size = offsetof(struct m_textureBlock, boundTextures) + (VKR_SAMPLER_SLOTS-u16LeadingZeros)*ulSizeOfPointer;
 			
 			memset(blockStart, 0, size);
 		}
-		static constexpr uint16_t u16Zero = 0;
-		m_boundTextureBits = u16Zero;
+		
+		m_boundTextureBits = 0;
 }
 //#define DEBUG_clearBoundTexturesAboveSlot
 void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::clearBoundTexturesAboveSlot(uint16_t slot) {
@@ -1403,7 +1402,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::cl
 		return;
 	}
 	uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
-	uint16_t slotAboveSlot = slot+1;
+	const uint16_t slotAboveSlot = slot+1;
 	auto& __restrict__ boundTextures = m_getRefBoundTextures();
 	boundTextures[slotAboveSlot] = nullptr;
 
@@ -1418,7 +1417,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::cl
 	}
 
 	const uint16_t oneMinusEndIndex = posToClearTo-2;
-	if (	oneMinusEndIndex > slotAboveSlot & (oneMinusEndIndex < 16) ) {
+	if (	(oneMinusEndIndex > slotAboveSlot) & (oneMinusEndIndex < 16) ) {
 		boundTextures[oneMinusEndIndex] = nullptr;
 		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo-1); //adjust posToClearTo to make sure that the loop below isn't infinite
 	} else {
