@@ -1643,7 +1643,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
 		// I need to change this, it's so utterly stupid and confusing.
-		shaperLutDescriptor[i].imageView = getShaperLut()[i] ? getShaperLut()[i]->srgbView() : VK_NULL_HANDLE;
+		shaperLutDescriptor[i].imageView = (getShaperLut(i) && *getShaperLut(i)) ? (*(getShaperLut(i)))->srgbView()  : VK_NULL_HANDLE;
 
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
