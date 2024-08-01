@@ -145,7 +145,8 @@ namespace gamescope
 
     class IBackendFb : public IRcObject
     {
-        // Dummy
+    public:
+        virtual void SetReleasePoint( const GamescopeTimelinePoint &point ) = 0;
     };
 
     class CBaseBackendFb : public IBackendFb
@@ -157,8 +158,11 @@ namespace gamescope
         uint32_t IncRef() override;
         uint32_t DecRef() override;
 
+        void SetReleasePoint( const GamescopeTimelinePoint &point ) override;
+
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
+        std::optional<GamescopeTimelinePoint> m_oPoint;
     };
 
     class IBackend

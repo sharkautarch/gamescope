@@ -50,15 +50,6 @@ struct wlserver_vk_swapchain_feedback
 	std::shared_ptr<gamescope::BackendBlob> hdr_metadata_blob;
 };
 
-
-struct GamescopeTimelinePoint
-{
-	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
-	uint64_t ulPoint = 0;
-
-	void Release();
-};
-
 struct GamescopeAcquireTimelineState
 {
 	int32_t nEventFd = -1;

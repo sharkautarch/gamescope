@@ -1207,7 +1207,7 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 static gamescope::CBufferMemoizer s_BufferMemos;
 
 static gamescope::Rc<commit_t>
-import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo, std::optional<GamescopeTimelinePoint> oReleasePoint )
 {
 	gamescope::Rc<commit_t> commit = new commit_t;
 
@@ -1225,6 +1225,13 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
+		if ( oReleasePoint )
+		{
+			if ( gamescope::IBackendFb *pBackendFb = pTexture->GetBackendFb() )
+			{
+				pBackendFb->SetReleasePoint( *oReleasePoint );
+			}
+		}
 		// Going from OwningRc -> Rc now.
 		commit->vulkanTex = pTexture;
 		return commit;
@@ -1236,6 +1243,9 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	{
 		pBackendFb = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
 	}
+
+	if ( pBackendFb && oReleasePoint )
+		pBackendFb->SetReleasePoint( *oReleasePoint );
 	gamescope::OwningRc<CVulkanTexture> pOwnedTexture = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
 	commit->vulkanTex = pOwnedTexture;
 
@@ -6286,7 +6296,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	gamescope::Rc<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo );
+	gamescope::Rc<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo, std::move( reslistentry.oReleasePoint ) );
 
 	int fence = -1;
 	if ( newCommit != nullptr )
@@ -6324,7 +6334,6 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			newCommit->SetReleasePoint( reslistentry.oReleasePoint );
 			if ( bKnownReady )
 				newCommit->Signal();
 			else

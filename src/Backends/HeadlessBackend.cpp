@@ -178,7 +178,7 @@ namespace gamescope
 
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-			return nullptr;
+			return new CBaseBackendFb( pBuffer );
 		}
 
 		virtual bool UsesModifiers() const override

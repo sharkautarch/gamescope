@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 namespace gamescope
 {
 	class BackendBlob;
@@ -60,6 +62,14 @@ enum GamescopePanelOrientation
 	GAMESCOPE_PANEL_ORIENTATION_180, // upside down
 
 	GAMESCOPE_PANEL_ORIENTATION_AUTO,
+};
+
+struct GamescopeTimelinePoint
+{
+	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
+	uint64_t ulPoint = 0;
+
+	void Release();
 };
 
 // Disable partial composition for now until we get
