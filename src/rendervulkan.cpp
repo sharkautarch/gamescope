@@ -1393,13 +1393,12 @@ void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::cl
 #endif
 
 	const uint16_t bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	if (bitsAboveSlot == 0) {
+		return;
+	}
 	{
 		const uint16_t bitsBelowSlot = u16MaskOutBitsAbovePos(bits, slot);
 		m_boundTextureBits = bitsBelowSlot;
-	}
-
-	if (bitsAboveSlot == 0) {
-		return;
 	}
 	uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
 	const uint16_t slotAboveSlot = slot+1;
