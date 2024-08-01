@@ -772,7 +772,7 @@ public:
 
 		uint8_t *ptr = ((uint8_t*)m_uploadBufferData) + m_uploadBufferOffset;
 		m_uploadBufferOffset += size;
-		return ptr;
+		return std::assume_aligned<16>(ptr);
 	}
 
 	#define VK_FUNC(x) PFN_vk##x x = nullptr;
