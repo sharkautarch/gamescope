@@ -1122,8 +1122,8 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
 	
-	inline auto** __attribute__((const)) getShaperLut(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_shaperLut)[i]) : nullptr; }
-	inline auto** __attribute__((const)) getLut3D(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_lut3D)[i]) : nullptr; }
+	inline auto** __attribute__((const)) getShaperLut(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_shaperLut.data())[i]) : nullptr; }
+	inline auto** __attribute__((const)) getLut3D(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_lut3D.data())[i]) : nullptr; }
 	
 	inline void setBoundTextureBit(uint16_t pos) {
 		m_boundTextureBits = u16SetBit(m_boundTextureBits, pos);
