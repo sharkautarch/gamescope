@@ -1458,8 +1458,8 @@ void CVulkanCmdBuffer::bindTexture(uint32_t slot, gamescope::Rc<CVulkanTexture> 
 
 void CVulkanCmdBuffer::bindColorMgmtLuts(uint32_t slot, gamescope::Rc<CVulkanTexture> lut1d, gamescope::Rc<CVulkanTexture> lut3d)
 {
-	getShaperLut()[slot] = lut1d.get();
-	getLut3D()[slot] = lut3d.get();
+	*getShaperLut(slot) = lut1d.get();
+	*getLut3D(slot) = lut3d.get();
 
 	if (lut1d != nullptr)
 		m_textureRefs.emplace_back(std::move(lut1d));
@@ -1647,7 +1647,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 
 		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		lut3DDescriptor[i].imageView = getLut3D()[i] ? getLut3D()[i]->srgbView() : VK_NULL_HANDLE;
+		lut3DDescriptor[i].imageView = (getLut3D(i) && *getLut3D(i)) ? (*(getLut3D(i)))->srgbView() : VK_NULL_HANDLE;
 	}
 
 	if (!bYcbcr)

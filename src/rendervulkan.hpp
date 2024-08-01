@@ -1122,8 +1122,8 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
 	
-	inline auto** getLut3D() { return std::assume_aligned<32>(&(m_lut3D[0])); }
-	inline auto** getShaperLut() { return std::assume_aligned<32>(&(m_shaperLut[0])); }
+	inline auto** __attribute__((const)) getShaperLut(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_shaperLut)[i]) : nullptr; }
+	inline auto** __attribute__((const)) getLut3D(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_lut3D)[i]) : nullptr; }
 	
 	inline void setBoundTextureBit(uint16_t pos) {
 		m_boundTextureBits = u16SetBit(m_boundTextureBits, pos);
@@ -1146,16 +1146,15 @@ private:
 	uint32_t m_queueFamily;
 	
 	// Per Use State
-	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 bytes
+	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 
+	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24 bytes (on gcc)
 	
 	// Draw State
-	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
-	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D; 
+	std::array<CVulkanTexture *, EOTF_Count> m_shaperLut;
+	std::array<CVulkanTexture *, EOTF_Count> m_lut3D;
 	
 	bool m_previousCopy = false;
-	uint8_t padding[32-4-2-sizeof(m_previousCopy)-sizeof(std::vector<gamescope::Rc<CVulkanTexture>>)]; //padding so that the two above arrays are 32-byte aligned  (2 + 24 + 4 + 2 = 32 bytes)
-	// Per Use State
-	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24 bytes (on gcc)
+	uint8_t padding[16-4-2-sizeof(m_previousCopy)]; //padding so that the two above arrays are 32-byte aligned  (2 + 24 + 4 + 2 = 32 bytes)
 	// Draw State
 	uint32_t m_renderBufferOffset = 0; // 4 bytes
 	uint16_t m_boundTextureBits = 0; // 2 bytes
