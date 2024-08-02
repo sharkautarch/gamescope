@@ -1360,7 +1360,7 @@ void CVulkanCmdBuffer::end()
 
 void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 {
-		auto* blockStart = std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock));	
+		auto* blockStart = std::assume_aligned<32>(std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock)));	
 		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
 		
 		if (m_boundTextureBits <= (uint16_t)4) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
@@ -1372,7 +1372,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 			__builtin_memset_inline(blockStart, 0, size);
 #else
 			//clang knows that it can use aligned vector moves, but not gcc for some reason, even though gcc properly aligns m_textureBlock...
-			memset(std::assume_aligned<32>(blockStart), 0, size);
+			memset(blockStart, 0, size);
 #endif
 		} else {
 			const uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
