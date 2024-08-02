@@ -1634,7 +1634,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		imageDescriptors[slot].sampler = m_device->sampler(m_getSamplerState()[slot]);
 		imageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ycbcrImageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		if (bBoundTextureGap() && m_getBoundTextures()[slot] == nullptr) [[unlikely]] {
+		if (bBoundTextureGap && m_getBoundTextures()[slot] == nullptr) [[unlikely]] {
 			imageDescriptors[slot].imageView = {};
 			continue;
 		}
