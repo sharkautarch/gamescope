@@ -1122,8 +1122,24 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
 	
-	inline auto** __attribute__((const)) getShaperLut(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_shaperLut.data())[i]) : nullptr; }
-	inline auto** __attribute__((const)) getLut3D(uint32_t i) { return i < EOTF_Count ? &(std::assume_aligned<16>(m_lut3D.data())[i]) : nullptr; }
+	CVulkanTexture**__restrict__ __attribute__((const)) getShaperLut(uint32_t i) {
+		if (i < EOTF_Count) {
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_shaperLut.data())[i]);
+			return ptr;
+		} else {
+			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
+			return ptr; 
+		}
+	}
+	CVulkanTexture**__restrict__ __attribute__((const)) getLut3D(uint32_t i) {
+		if (i < EOTF_Count) {
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_lut3D.data())[i]);
+			return ptr;
+		} else {
+			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
+			return ptr;
+		}
+	}
 	
 	inline void setBoundTextureBit(uint16_t pos) {
 		m_boundTextureBits = u16SetBit(m_boundTextureBits, pos);
@@ -1133,6 +1149,10 @@ public:
 		m_boundTextureBits = u16UnsetBit(m_boundTextureBits, pos);
 	}
 
+	//not applying __attribute__((target("lzcnt"))) over here, because there's no guard against using zero on std::countl_zero() for this function
+	//w/ normal x86_64 compile cpu target, lzcnt is not available, and std::countl_zero will ensure it doesn't feed zero into bsf when using the bsf instruction
+	//when allowing the compiler to use lzcnt, std::countl_zero can feed zero into lzcnt, which would be an issue on cpus that decode lzcnt into bsf
+	// (for all of the places where I apply __attribute__((target("lzcnt"))), there's no possibility of zero being fed into std::countl_zero())
 	inline uint16_t __attribute__((pure)) getNumberOfBoundTextures() const {
 		return VKR_SAMPLER_SLOTS - std::countl_zero(m_boundTextureBits);
 	}

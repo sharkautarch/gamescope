@@ -37,6 +37,7 @@
 #include "steamcompmgr.hpp"
 #include "log.hpp"
 #include "Utils/Process.h"
+#include "Utils/Directives.h"
 
 #include "cs_composite_blit.h"
 #include "cs_composite_blur.h"
@@ -1360,28 +1361,40 @@ void CVulkanCmdBuffer::end()
 
 void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 {
-		auto* blockStart = std::assume_aligned<32>(std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock)));	
+		const uint16_t bits = std::exchange(m_boundTextureBits, (uint16_t)0);
+		auto*__restrict__ blockStart = std::assume_aligned<32>(std::bit_cast<std::byte*, decltype(m_textureBlock)*>(std::addressof(m_textureBlock)));	
 		static constexpr uint64_t ulSizeOfPointer = sizeof(CVulkanTexture*);
 		
-		if (m_boundTextureBits <= (uint16_t)4) [[likely]] { //fast-path: only requires 4-5 sse vector (128bit) moves  
-			static constexpr auto size = offsetof(struct m_textureBlock, boundTextures) + (4)*ulSizeOfPointer;
-			static_assert(size % 32 == 0);
-	
-			static_assert(alignof(decltype(CVulkanCmdBuffer::m_textureBlock)) == 32);
+		static constexpr auto sizeUpperBlock = offsetof(struct m_textureBlock, boundTextures);
+		static_assert(sizeUpperBlock == 32);
 #ifdef __clang__
-			__builtin_memset_inline(blockStart, 0, size);
+			__builtin_memset_inline(blockStart, 0, sizeUpperBlock);
 #else
-			//clang knows that it can use aligned vector moves, but not gcc for some reason, even though gcc properly aligns m_textureBlock...
-			memset(blockStart, 0, size);
+			memset(blockStart, 0, sizeUpperBlock);
 #endif
-		} else {
-			const uint16_t u16LeadingZeros = std::countl_zero(m_boundTextureBits);
-			const auto size = offsetof(struct m_textureBlock, boundTextures) + (VKR_SAMPLER_SLOTS-u16LeadingZeros)*ulSizeOfPointer;
-			
-			memset(blockStart, 0, size);
+
+		if (bits == 0) [[unlikely]] {
+			return;
 		}
 		
-		m_boundTextureBits = 0;
+		auto*__restrict__ boundTextures = std::assume_aligned<32>( &(m_textureBlock.boundTextures[0]) );
+		const auto endIndexPlusOne = static_cast<size_t>(VKR_SAMPLER_SLOTS-std::countl_zero(bits));
+		if (endIndexPlusOne % 2 != 0) {
+			boundTextures[endIndexPlusOne-1] = 0; //offsetting from the end instead of from the start, to ensure that the vector moves are always 16 byte-aligned
+
+			ITERATION_INDEPENDENT_LOOP
+			for (size_t i = 0; i < endIndexPlusOne-1; i+=2) {
+				boundTextures[i] = 0;
+				boundTextures[i+1] = 0;
+			} 
+		} else {
+
+			ITERATION_INDEPENDENT_LOOP
+			for (size_t i = 0; i < endIndexPlusOne; i+=2) {
+				boundTextures[i] = 0;
+				boundTextures[i+1] = 0;
+			}
+		}
 }
 //#define DEBUG_clearBoundTexturesAboveSlot
 void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::clearBoundTexturesAboveSlot(uint16_t slot) {
@@ -1504,7 +1517,7 @@ void CVulkanCmdBuffer::bindPipeline(VkPipeline pipeline)
 	m_device->vk.CmdBindPipeline(m_cmdBuffer, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
 }
 
-void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
+void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int total_dispatches, unsigned int curr_dispatch_no)
 {
 	const uint32_t numBoundTextures = getNumberOfBoundTextures();
 	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
@@ -1630,22 +1643,24 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::dispatch(uint32_t x, uint32_
 			imageDescriptors[slot].imageView = view;
 	}
 
+	SamplerState linearState;
+	linearState.bNearest = false;
+	linearState.bUnnormalized = false;
+	SamplerState nearestState; // TODO(Josh): Probably want to do this when I bring in tetrahedral interpolation.
+	nearestState.bNearest = true;
+	nearestState.bUnnormalized = false;
+	auto samplerLinear = m_device->sampler(linearState), samplerNearest = m_device->sampler(nearestState);
+			
+	ITERATION_INDEPENDENT_LOOP
 	for (uint32_t i = 0; i < VKR_LUT3D_COUNT; i++)
 	{
-		SamplerState linearState;
-		linearState.bNearest = false;
-		linearState.bUnnormalized = false;
-		SamplerState nearestState; // TODO(Josh): Probably want to do this when I bring in tetrahedral interpolation.
-		nearestState.bNearest = true;
-		nearestState.bUnnormalized = false;
-
-		shaperLutDescriptor[i].sampler = m_device->sampler(linearState);
+		shaperLutDescriptor[i].sampler = samplerLinear;
 		shaperLutDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		// TODO(Josh): I hate the fact that srgbView = view *as* raw srgb and treat as linear.
 		// I need to change this, it's so utterly stupid and confusing.
 		shaperLutDescriptor[i].imageView = (getShaperLut(i) && *getShaperLut(i)) ? (*(getShaperLut(i)))->srgbView()  : VK_NULL_HANDLE;
 
-		lut3DDescriptor[i].sampler = m_device->sampler(nearestState);
+		lut3DDescriptor[i].sampler = samplerNearest;
 		lut3DDescriptor[i].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		lut3DDescriptor[i].imageView = (getLut3D(i) && *getLut3D(i)) ? (*(getLut3D(i)))->srgbView() : VK_NULL_HANDLE;
 	}
