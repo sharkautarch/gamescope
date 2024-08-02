@@ -181,15 +181,22 @@ gamescope_version = vcs_tag(
     cpp_args: gamescope_cpp_args,
   )
 
+gamescope_core_src = [
+  'convar.cpp',
+  'log.cpp',
+  'Utils/Process.cpp',
+  'Utils/Version.cpp',
+]
+
 if pipewire_dep.found()
-  executable( 'gamescopestream', ['Apps/gamescopestream.cpp', 'log.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+  executable( 'gamescopestream', ['Apps/gamescopestream.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
 endif
 
-executable('gamescopereaper', ['Utils/Process.cpp', 'Apps/gamescopereaper.cpp', 'log.cpp'], gamescope_version, install:true )
+executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
-executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], dependencies:[benchmark_dep, glm_dep])
+executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, dependencies:[benchmark_dep, glm_dep])
 
-executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], dependencies:[glm_dep])
+executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, dependencies:[glm_dep])
 
-executable('gamescopectl', ['Apps/gamescopectl.cpp', 'convar.cpp', 'log.cpp', 'Utils/Version.cpp', 'Utils/Process.cpp'], gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )

@@ -1,11 +1,11 @@
 #pragma once
 
-#include <stdarg.h>
-#include <stdio.h>
-#include <errno.h>
-#include <string.h>
-#include <stdint.h>
+#include <cstdarg>
+#include <cstdint>
+
+#include <memory>
 #include <functional>
+#include <string_view>
 
 #ifdef __GNUC__
 #define ATTRIB_PRINTF(start, end) __attribute__((format(printf, start, end)))
@@ -13,7 +13,8 @@
 #define ATTRIB_PRINTF(start, end)
 #endif
 
-enum LogPriority {
+enum LogPriority
+{
 	LOG_SILENT,
 	LOG_ERROR,
 	LOG_WARNING,
@@ -21,17 +22,17 @@ enum LogPriority {
 	LOG_DEBUG,
 };
 
-class LogScope {
-	const char *name;
-	enum LogPriority priority;
+struct LogConVar_t;
 
-	bool has(enum LogPriority priority);
-	void vprintf(enum LogPriority priority, const char *fmt, va_list args) ATTRIB_PRINTF(3, 0);
-	void logf(enum LogPriority priority, const char *fmt, ...) ATTRIB_PRINTF(3, 4);
-
+class LogScope
+{
 public:
-	LogScope(const char *name);
-	LogScope(const char *name, enum LogPriority priority);
+	LogScope( std::string_view psvName, LogPriority eMaxPriority = LOG_INFO );
+	LogScope( std::string_view psvName, std::string_view psvPrefix, LogPriority eMaxPriority = LOG_INFO );
+	~LogScope();
+
+	bool Enabled( LogPriority ePriority ) const;
+	void SetPriority( LogPriority ePriority ) { m_eMaxPriority = ePriority; }
 
 	void vlogf(enum LogPriority priority, const char *fmt, va_list args) ATTRIB_PRINTF(3, 0);
 
@@ -44,6 +45,17 @@ public:
 
 	bool bPrefixEnabled = true;
 
-	using LoggingListenerFunc = std::function<void(LogPriority ePriority, const char *pScope, const char *pText)>;
+	using LoggingListenerFunc = std::function<void( LogPriority ePriority, std::string_view psvScope, const char *psvText )>;
 	std::unordered_map<uintptr_t, LoggingListenerFunc> m_LoggingListeners;
+
+private:
+	void vprintf(enum LogPriority priority, const char *fmt, va_list args) ATTRIB_PRINTF(3, 0);
+	void logf(enum LogPriority priority, const char *fmt, ...) ATTRIB_PRINTF(3, 4);
+
+	std::string_view m_psvName;
+	std::string_view m_psvPrefix;
+
+	LogPriority m_eMaxPriority = LOG_INFO;
+	
+	std::unique_ptr<LogConVar_t> m_pEnableConVar;
 };

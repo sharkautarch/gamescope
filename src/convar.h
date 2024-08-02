@@ -129,7 +129,7 @@ namespace gamescope
     template <typename T>
     class ConVar : public ConCommand
     {
-        using ConVarCallbackFunc = std::function<void()>;
+        using ConVarCallbackFunc = std::function<void(ConVar<T> &)>;
     public:
         ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr, bool bRunCallbackAtStartup = false )
             : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); } )
@@ -160,7 +160,7 @@ namespace gamescope
             if ( !m_bInCallback && m_Callback )
             {
                 m_bInCallback = true;
-                m_Callback();
+                m_Callback( *this );
                 m_bInCallback = false;
             }
         }

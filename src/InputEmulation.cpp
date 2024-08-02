@@ -1,12 +1,14 @@
 #if HAVE_LIBEIS
 
 #include <libeis.h>
-#include <stdio.h>
+
+#include <cstdio>
+#include <cstring>
 
 #include "InputEmulation.h"
 #include "wlserver.hpp"
 
-static LogScope gamescope_ei("gamescope-ei");
+static LogScope gamescope_ei("gamescope_ei");
 
 namespace gamescope
 {

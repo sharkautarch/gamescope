@@ -370,7 +370,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 						vk.GetPhysicalDeviceSurfaceSupportKHR( cphysDev, computeOnlyIndex, surface, &canPresent );
 						if ( !canPresent )
 						{
-							vk_log.debugf( "physical device %04x:%04x compute queue doesn't support presenting on our surface, using graphics queue", deviceProperties.vendorID, deviceProperties.deviceID );
+							vk_log.infof( "physical device %04x:%04x compute queue doesn't support presenting on our surface, using graphics queue", deviceProperties.vendorID, deviceProperties.deviceID );
 							computeOnlyIndex = ~0u;
 						}
 					}

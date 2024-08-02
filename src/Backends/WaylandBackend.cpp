@@ -790,6 +790,8 @@ namespace gamescope
         assert( m_pHostBuffer );
         assert( m_pHostBuffer == pBuffer );
 
+        xdg_log.debugf( "buffer_release: %p", pBuffer );
+
         OnCompositorRelease();
     }
 

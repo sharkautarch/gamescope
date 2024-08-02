@@ -1235,7 +1235,7 @@ static const struct gamescope_private_interface gamescope_private_impl = {
 static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_private_interface, version, id );
-	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ](LogPriority ePriority, const char *pScope, const char *pText)
+	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ]( LogPriority ePriority, std::string_view psvScope, const char *pText )
 	{
 		if ( !wlserver_is_lock_held() )
 			return;
