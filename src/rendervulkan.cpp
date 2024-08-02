@@ -1627,14 +1627,13 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	scratchDescriptor.offset = m_renderBufferOffset;
 	scratchDescriptor.range = VK_WHOLE_SIZE;
 
-	const bool bBoundTextureGap = BNonContiguousBoundTextures();
 	ITERATION_INDEPENDENT_LOOP
 	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
 		imageDescriptors[slot].sampler = m_device->sampler(m_getSamplerState()[slot]);
 		imageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ycbcrImageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		if (bBoundTextureGap && m_getBoundTextures()[slot] == nullptr) [[unlikely]] {
+		if (m_getBoundTextures()[slot] == nullptr) [[unlikely]] {
 			imageDescriptors[slot].imageView = {};
 			continue;
 		}
@@ -1645,6 +1644,11 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		else
 			imageDescriptors[slot].imageView = view;
 	}
+	
+	ITERATION_INDEPENDENT_LOOP
+	for (uint32_t slot = numBoundTextures; slot < VKR_SAMPLER_SLOTS; slot++) {
+		imageDescriptors[slot] = {};
+	}  
 
 	SamplerState linearState;
 	linearState.bNearest = false;
