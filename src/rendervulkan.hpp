@@ -1122,7 +1122,7 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
 	
-	CVulkanTexture**__restrict__ __attribute__((const)) getShaperLut(uint32_t i) {
+	CVulkanTexture**__restrict__ __attribute__((pure)) getShaperLut(uint32_t i) {
 		if (i < EOTF_Count) {
 			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_shaperLut.data())[i]);
 			return ptr;
@@ -1131,7 +1131,7 @@ public:
 			return ptr; 
 		}
 	}
-	CVulkanTexture**__restrict__ __attribute__((const)) getLut3D(uint32_t i) {
+	CVulkanTexture**__restrict__ __attribute__((pure)) getLut3D(uint32_t i) {
 		if (i < EOTF_Count) {
 			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_lut3D.data())[i]);
 			return ptr;
@@ -1139,6 +1139,10 @@ public:
 			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
 			return ptr;
 		}
+	}
+	
+	bool __attribute__((pure)) BNonContiguousBoundTextures() const {
+		return std::popcount(m_boundTextureBits) != std::countl_zero(m_boundTextureBits);
 	}
 	
 	inline void setBoundTextureBit(uint16_t pos) {
