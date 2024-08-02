@@ -1124,7 +1124,7 @@ public:
 	
 	CVulkanTexture**__restrict__ __attribute__((const)) getShaperLut(uint32_t i) {
 		if (i < EOTF_Count) {
-			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_shaperLut.data())[i]);
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_shaperLut.data())[i]);
 			return ptr;
 		} else {
 			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
@@ -1133,7 +1133,7 @@ public:
 	}
 	CVulkanTexture**__restrict__ __attribute__((const)) getLut3D(uint32_t i) {
 		if (i < EOTF_Count) {
-			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_lut3D.data())[i]);
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_lut3D.data())[i]);
 			return ptr;
 		} else {
 			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
