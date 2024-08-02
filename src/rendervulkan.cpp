@@ -1543,7 +1543,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	bool bYcbcr = m_getTarget()->isYcbcr();
 	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
 	VkWriteDescriptorSet writeDescriptorSets[7];
-	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors = {};
+	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors;
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> shaperLutDescriptor = {};
@@ -1634,9 +1634,10 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		imageDescriptors[slot].sampler = m_device->sampler(m_getSamplerState()[slot]);
 		imageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 		ycbcrImageDescriptors[slot].imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-		if (bBoundTextureGap() && m_getBoundTextures()[slot] == nullptr) [[unlikely]]
+		if (bBoundTextureGap() && m_getBoundTextures()[slot] == nullptr) [[unlikely]] {
+			imageDescriptors[slot].imageView = {};
 			continue;
-
+		}
 		VkImageView view = m_getUseSrgb()[slot] ? m_getBoundTextures()[slot]->srgbView() : m_getBoundTextures()[slot]->linearView();
 
 		if (m_getBoundTextures()[slot]->format() == VK_FORMAT_G8_B8R8_2PLANE_420_UNORM)
