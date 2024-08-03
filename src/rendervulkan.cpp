@@ -1544,6 +1544,27 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	size_t wDescLen = 6 + (bYcbcr ? 1 : 0);
 	VkWriteDescriptorSet writeDescriptorSets[7];
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> imageDescriptors;
+	
+	#if 0
+	{
+		uint32_t endIndex = VKR_SAMPLER_SLOTS;
+		if (numBoundTextures <= VKR_SAMPLER_SLOTS/2) {
+			endIndex = VKR_SAMPLER_SLOTS/2;
+			memset(&(imageDescriptors[VKR_SAMPLER_SLOTS/2]), 0, sizeof(imageDescriptors[0]) * VKR_SAMPLER_SLOTS/2);
+		}
+		
+		if (numBoundTextures <= VKR_SAMPLER_SLOTS/4) {
+			endIndex = VKR_SAMPLER_SLOTS/4;
+			memset(&(imageDescriptors[VKR_SAMPLER_SLOTS/4]), 0, sizeof(imageDescriptors[0]) * VKR_SAMPLER_SLOTS/4);
+		}
+		
+		#pragma GCC unroll(2)
+		for (uint32_t slot = numBoundTextures; slot < endIndex; slot++) {
+			imageDescriptors[slot] = {};
+		}
+	}
+	#endif
+	
 	std::array<VkDescriptorImageInfo, VKR_SAMPLER_SLOTS> ycbcrImageDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_TARGET_SLOTS> targetDescriptors = {};
 	std::array<VkDescriptorImageInfo, VKR_LUT3D_COUNT> shaperLutDescriptor = {};
@@ -1585,7 +1606,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		.dstSet = descriptorSet,
 		.dstBinding = 3,
 		.dstArrayElement = 0,
-		.descriptorCount = imageDescriptors.size(),
+		.descriptorCount = numBoundTextures,
 		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 		.pImageInfo = imageDescriptors.data(),
 	};
@@ -1597,7 +1618,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 			.dstSet = descriptorSet,
 			.dstBinding = 4,
 			.dstArrayElement = 0,
-			.descriptorCount = ycbcrImageDescriptors.size(),
+			.descriptorCount = numBoundTextures,
 			.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
 			.pImageInfo = ycbcrImageDescriptors.data(),
 		};
@@ -1627,7 +1648,6 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 	scratchDescriptor.offset = m_renderBufferOffset;
 	scratchDescriptor.range = VK_WHOLE_SIZE;
 
-	ITERATION_INDEPENDENT_LOOP
 	for (uint32_t slot = 0; slot != numBoundTextures; slot++) [[likely]]
 	{
 		imageDescriptors[slot].sampler = m_device->sampler(m_getSamplerState()[slot]);
@@ -1644,11 +1664,6 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 		else
 			imageDescriptors[slot].imageView = view;
 	}
-	
-	ITERATION_INDEPENDENT_LOOP
-	for (uint32_t slot = numBoundTextures; slot < VKR_SAMPLER_SLOTS; slot++) {
-		imageDescriptors[slot] = {};
-	}  
 
 	SamplerState linearState;
 	linearState.bNearest = false;
