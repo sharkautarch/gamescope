@@ -1040,6 +1040,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 		return false;
 	}
 
+	// Don't allow rollback of mode_id after connector change
+	drm->current.mode_id = drm->pending.mode_id;
+
 	const struct wlserver_output_info wlserver_output_info = {
 		.description = description,
 		.phys_width = (int) best->GetModeConnector()->mmWidth,
@@ -2875,6 +2878,11 @@ bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn )
 	if (!drm_set_crtc(drm, pCRTC)) {
 		return false;
 	}
+
+	// If we are changing connector, zero out the current and pending mode IDs.
+	// So we don't try to use one mode from the old connector on the new one if we roll back.
+	drm->pending.mode_id = nullptr;
+	drm->current.mode_id = nullptr;
 
 	drm->pConnector = conn;
 	drm->needs_modeset = true;
