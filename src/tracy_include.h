@@ -24,7 +24,7 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 #	define TRACY_TRY try
 #	define TRACY_CATCH catch(const ETracyExit& e) { e.m_bPthreadExit ? pthread_exit(const_cast<void*>(e.m_pStatus)) : exit(e.m_status); }
 # define TRACY_GET_SRC_LOC(name) [](const std::source_location loc = std::source_location::current()) { return tracy::SourceLocationData(name, loc.function_name(), loc.file_name(), loc.line()); }()
-# define TRACY_FIBER_ZONE_START(oVariable, name) static constexpr auto __attribute__((no_icf,used)) tracy_loc = TRACY_GET_SRC_LOC(name); oVariable.emplace(&tracy_loc, true)
+# define TRACY_FIBER_ZONE_START(oVariable, name) static constexpr auto __attribute__((used)) tracy_loc = TRACY_GET_SRC_LOC(name); oVariable.emplace(&tracy_loc, true)
 # define TRACY_FIBER_ZONE_END(oVariable) oVariable.reset()
 # define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
 # define TracyScopedLock( varname, first, second ) tracy::ScopedLockable varname { first, second, ([] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, "std::mutex " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }()) }
@@ -59,7 +59,7 @@ struct ETracyExit : public std::exception {
 		const bool m_bPthreadExit;
 		ETracyExit(void* pStatus, bool bPthreadExit) : m_status{0}, m_pStatus{pStatus}, m_bPthreadExit{bPthreadExit} {}
 		ETracyExit(int status) : m_status{status}, m_pStatus{nullptr}, m_bPthreadExit{false} {} 
-		constexpr const char * what () {
+		constexpr const char * what () const noexcept {
 		    return "Custom exception for safely exiting from within a Tracy profiler zone";
 		}
 };
