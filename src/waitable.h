@@ -458,17 +458,11 @@ namespace gamescope
 
                 if constexpr ( UseTracking() )
                 {
-#ifndef TRACY_ENABLE
-                    std::scoped_lock lock( m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
-#else
-										tracy::DoubleLockable<std::mutex>::doubleLock(m_AddedWaitablesMutex, m_RemovedWaitablesMutex);
-#endif
+                    TracyScopedLock( lock, m_AddedWaitablesMutex, m_RemovedWaitablesMutex );
+
                     for ( auto& pRemoved : m_RemovedWaitables )
                         std::erase( m_AddedWaitables, pRemoved );
                     m_RemovedWaitables.clear();
-#ifdef TRACY_ENABLE
-										tracy::DoubleLockable<std::mutex>::doubleUnlock(m_AddedWaitablesMutex, m_RemovedWaitablesMutex);
-#endif
                 }
             }
         }
@@ -484,9 +478,6 @@ namespace gamescope
         // of objects (eg. shared_ptr) could be too short.
         // Eg. RemoveWaitable but still processing events, or about
         // to start processing events.
-        #ifndef TracyLockable
-        #error "uh oh"
-        #endif
         TracyDoubleLockable(std::mutex, m_AddedWaitablesMutex);
         std::vector<WaitableType> m_AddedWaitables;
 

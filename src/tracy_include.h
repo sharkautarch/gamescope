@@ -11,7 +11,10 @@
 extern const char* const sl_steamcompmgr_name;
 extern const char* const sl_vblankFrameName;
 extern const char* const sl_img_waiter_fiber;
+
+#ifdef TRACY_ENABLE
 inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
+#endif
 
 #ifdef TRACY_ENABLE
 #include <pthread.h>
@@ -24,6 +27,7 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 # define TRACY_FIBER_ZONE_START(oVariable, name) static constexpr auto __attribute__((no_icf,used)) tracy_loc = TRACY_GET_SRC_LOC(name); oVariable.emplace(&tracy_loc, true)
 # define TRACY_FIBER_ZONE_END(oVariable) oVariable.reset()
 # define TracyDoubleLockable( type, varname ) tracy::DoubleLockable<type> varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }
+# define TracyScopedLock( varname, first, second ) tracy::ScopedLockable varname { first, second, ([] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, "std::mutex " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }()) }
 //pthread lock instrumentation seems to trigger an assert on tracy server, so leaving it commented out for now:
 #	if 0
 #		define TracyPthreadLockable( type, varname, initializer ) tracy::PthreadLockable varname { [] () -> const tracy::SourceLocationData* { static constexpr tracy::SourceLocationData srcloc { nullptr, #type " " #varname, TracyFile, TracyLine, 0 }; return &srcloc; }() }; \
@@ -40,10 +44,11 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 #	define MAYBE_NORETURN [[noreturn]]
 #	define TRACY_TRY
 #	define TRACY_CATCH 
-#	define tracy_force_inline
-# define TRACY_FIBER_ZONE_START(variable, ctx, name)
+//#	define tracy_force_inline
+# define TRACY_FIBER_ZONE_START(oVariable, name)
 # define TRACY_FIBER_ZONE_END(oVariable)
 # define TracyDoubleLockable( type, varname ) type varname
+# define TracyScopedLock( varname, first, second ) std::scoped_lock varname { first, second }
 #	define TracyPthreadLockable( type, varname, initializer ) type varname = initializer
 #endif
 
@@ -86,13 +91,15 @@ namespace tracy
 		      m_ctx.AfterUnlock();
 		  }
 
-		  static tracy_force_inline void doubleLock(DoubleLockable& l1, DoubleLockable& l2)
+		  static tracy_force_inline void doubleLock(DoubleLockable& l1, DoubleLockable& l2, const SourceLocationData* srcloc)
 		  {
 		      const auto runAfter1 = l1.m_ctx.BeforeLock();
 		      const auto runAfter2 = l2.m_ctx.BeforeLock();
 		      std::lock(l1.m_lockable, l2.m_lockable);
 		      if( runAfter1 ) l1.m_ctx.AfterLock();
 		      if( runAfter2 ) l2.m_ctx.AfterLock();
+		      l1.Mark(srcloc);
+		      l2.Mark(srcloc);
 		  }
 
 		  static tracy_force_inline void doubleUnlock(DoubleLockable& l1, DoubleLockable& l2)
@@ -125,6 +132,26 @@ namespace tracy
 		  LockableCtx m_ctx;
 	};
 	
+	template<class T>
+	class ScopedLockable
+	{
+	public:
+			tracy_force_inline ScopedLockable( DoubleLockable<T>& l1, DoubleLockable<T>& l2, const SourceLocationData* srcloc ) : m_l1{l1}, m_l2{l2}
+			{
+				DoubleLockable<T>::doubleLock(m_l1, m_l2, srcloc);
+			}
+			
+			tracy_force_inline ~ScopedLockable() {
+				DoubleLockable<T>::doubleUnlock(m_l1, m_l2);
+			}
+			
+			ScopedLockable( const ScopedLockable& ) = delete;
+		  ScopedLockable& operator=( const ScopedLockable& ) = delete;
+	private:
+			DoubleLockable<T>& m_l1;
+			DoubleLockable<T>& m_l2;
+	};
+
 	class PthreadLockable
 	{
 	public:

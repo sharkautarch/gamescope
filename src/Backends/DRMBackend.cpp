@@ -475,11 +475,11 @@ struct drm_t {
 
 	// FBs currently queued to go on screen.
 	// May be accessed by page flip handler thread and req thread, thus mutex.
-	std::mutex m_QueuedFbIdsMutex;
+	TracyDoubleLockable(std::mutex, m_QueuedFbIdsMutex);
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_QueuedFbIds;
 	// FBs currently on screen.
 	// Accessed only on page flip handler thread.
-	std::mutex m_mutVisibleFbIds;
+	TracyDoubleLockable(std::mutex, m_mutVisibleFbIds);
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_VisibleFbIds;
 
 	std::atomic < uint32_t > uPendingFlipCount = { 0 };
@@ -708,7 +708,7 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	ulLastVBlankTime = vblanktime;
 
 	{
-		std::scoped_lock lock{ g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds };
+		TracyScopedLock( lock, g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds );
 		// Swap and clear from queue -> visible to avoid allocations.
 		g_DRM.m_VisibleFbIds.swap( g_DRM.m_QueuedFbIds );
 		g_DRM.m_QueuedFbIds.clear();

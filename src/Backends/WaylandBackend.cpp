@@ -258,7 +258,7 @@ namespace gamescope
         bool m_bNeedsDecorCommit = false;
         uint32_t m_uFractionalScale = 120;
 
-        std::mutex m_PlaneStateLock;
+        TracyLockable(std::mutex, m_PlaneStateLock);
         std::optional<WaylandPlaneState> m_oCurrentPlaneState;
     };
     const wl_surface_listener CWaylandPlane::s_SurfaceListener =
