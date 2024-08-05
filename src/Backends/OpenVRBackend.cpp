@@ -654,55 +654,59 @@ namespace gamescope
 
 		virtual OwningRc<IBackendFb> ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf ) override
 		{
-            if ( !UsesModifiers() )
-                return nullptr;
-
-			vr::DmabufAttributes_t dmabufAttributes =
+            if ( UsesModifiers() )
             {
-                .unWidth       = uint32_t( pDmaBuf->width ),
-                .unHeight      = uint32_t( pDmaBuf->height ),
-                .unDepth       = 1,
-                .unMipLevels   = 1,
-                .unArrayLayers = 1,
-                .unSampleCount = 1,
-                .unFormat      = pDmaBuf->format,
-                .ulModifier    = pDmaBuf->modifier,
-                .unPlaneCount  = uint32_t( pDmaBuf->n_planes ),
-                .plane         =
+                vr::DmabufAttributes_t dmabufAttributes =
                 {
+                    .unWidth       = uint32_t( pDmaBuf->width ),
+                    .unHeight      = uint32_t( pDmaBuf->height ),
+                    .unDepth       = 1,
+                    .unMipLevels   = 1,
+                    .unArrayLayers = 1,
+                    .unSampleCount = 1,
+                    .unFormat      = pDmaBuf->format,
+                    .ulModifier    = pDmaBuf->modifier,
+                    .unPlaneCount  = uint32_t( pDmaBuf->n_planes ),
+                    .plane         =
                     {
-                        .unOffset = pDmaBuf->offset[0],
-                        .unStride = pDmaBuf->stride[0],
-                        .nFd      = pDmaBuf->fd[0],
-                    },
-                    {
-                        .unOffset = pDmaBuf->offset[1],
-                        .unStride = pDmaBuf->stride[1],
-                        .nFd      = pDmaBuf->fd[1],
-                    },
-                    {
-                        .unOffset = pDmaBuf->offset[2],
-                        .unStride = pDmaBuf->stride[2],
-                        .nFd      = pDmaBuf->fd[2],
-                    },
-                    {
-                        .unOffset = pDmaBuf->offset[3],
-                        .unStride = pDmaBuf->stride[3],
-                        .nFd      = pDmaBuf->fd[3],
-                    },
-                }
-            };
+                        {
+                            .unOffset = pDmaBuf->offset[0],
+                            .unStride = pDmaBuf->stride[0],
+                            .nFd      = pDmaBuf->fd[0],
+                        },
+                        {
+                            .unOffset = pDmaBuf->offset[1],
+                            .unStride = pDmaBuf->stride[1],
+                            .nFd      = pDmaBuf->fd[1],
+                        },
+                        {
+                            .unOffset = pDmaBuf->offset[2],
+                            .unStride = pDmaBuf->stride[2],
+                            .nFd      = pDmaBuf->fd[2],
+                        },
+                        {
+                            .unOffset = pDmaBuf->offset[3],
+                            .unStride = pDmaBuf->stride[3],
+                            .nFd      = pDmaBuf->fd[3],
+                        },
+                    }
+                };
 
-            vr::SharedTextureHandle_t ulSharedHandle = 0;
-            if ( !m_pIPCResourceManager->ImportDmabuf( vr::VRApplication_Overlay, &dmabufAttributes, &ulSharedHandle ) )
-                return nullptr;
-            assert( ulSharedHandle != 0 );
+                vr::SharedTextureHandle_t ulSharedHandle = 0;
+                if ( !m_pIPCResourceManager->ImportDmabuf( vr::VRApplication_Overlay, &dmabufAttributes, &ulSharedHandle ) )
+                    return nullptr;
+                assert( ulSharedHandle != 0 );
 
-            // Take the first reference!
-            if ( !m_pIPCResourceManager->RefResource( ulSharedHandle, nullptr ) )
-                return nullptr;
+                // Take the first reference!
+                if ( !m_pIPCResourceManager->RefResource( ulSharedHandle, nullptr ) )
+                    return nullptr;
 
-            return new COpenVRFb{ this, ulSharedHandle, pBuffer };
+                return new COpenVRFb{ this, ulSharedHandle, pBuffer };
+            }
+            else
+            {
+                return new COpenVRFb{ this, 0, pBuffer };
+            }
 		}
 
 		virtual bool UsesModifiers() const override
@@ -1169,7 +1173,8 @@ namespace gamescope
 
     COpenVRFb::~COpenVRFb()
     {
-        m_pBackend->GetIPCResourceManager()->UnrefResource( m_ulHandle );
+        if ( m_ulHandle != 0 )
+            m_pBackend->GetIPCResourceManager()->UnrefResource( m_ulHandle );
         m_ulHandle = 0;
     }
 

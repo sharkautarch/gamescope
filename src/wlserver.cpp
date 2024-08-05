@@ -25,7 +25,7 @@
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
-#include <wlr/render/timeline.h>
+#include <wlr/render/drm_syncobj.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -71,6 +71,10 @@
 #include <set>
 
 static LogScope wl_log("wlserver");
+
+using namespace std::literals;
+
+extern gamescope::ConVar<bool> cv_drm_debug_disable_explicit_sync;
 
 //#define GAMESCOPE_SWAPCHAIN_DEBUG
 
@@ -119,7 +123,7 @@ void GamescopeTimelinePoint::Release()
 
 	//fprintf( stderr, "Release: %lu\n", ulPoint );
 	drmSyncobjTimelineSignal( pTimeline->drm_fd, &pTimeline->handle, &ulPoint, 1 );
-	wlr_render_timeline_unref( pTimeline );
+	wlr_drm_syncobj_timeline_unref( pTimeline );
 }
 
 //
@@ -131,7 +135,7 @@ void GamescopeTimelinePoint::Release()
 
 static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
 {
-	if (!oPoint)
+	if (!oPoint || !(oPoint->pTimeline) )
 		return std::nullopt;
 
 	uint64_t uSignalledPoint = 0;
@@ -176,6 +180,8 @@ static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( cons
 	}
 }
 
+gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false );
+
 std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 {
 	auto wl_surf = get_wl_surface_info( surf );
@@ -183,13 +189,24 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 	const auto& pFeedback = wlserver_surface_swapchain_feedback(surf);
 
 	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
-		wlr_linux_drm_syncobj_v1_get_surface_state( wlserver.wlr.drm_syncobj_manager_v1, surf );
+		wlr_linux_drm_syncobj_v1_get_surface_state( surf );
 
 	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {
 			std::in_place_t{},
 			pSyncState->acquire_timeline,
 			pSyncState->acquire_point
 	};
+
+	if ( pSyncState && cv_drm_debug_syncobj_force_wait_on_commit )
+	{
+		int ret = drmSyncobjTimelineWait( pSyncState->acquire_timeline->drm_fd, &pSyncState->acquire_timeline->handle, &pSyncState->acquire_point, 1, INT64_MAX, DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, nullptr );
+		if ( ret )
+		{
+			wl_log.errorf( "drmSyncobjWait failed!" );
+			return std::nullopt;
+		}
+	}
+
 	std::optional<GamescopeAcquireTimelineState> oAcquireState = TimelinePointToEventFd( oAcquirePoint );
 	std::optional<GamescopeTimelinePoint> oReleasePoint;
 	if ( pSyncState )
@@ -200,7 +217,7 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		}
 
 		oReleasePoint.emplace(
-			  wlr_render_timeline_ref( pSyncState->release_timeline ),
+			  wlr_drm_syncobj_timeline_ref( pSyncState->release_timeline ),
 			  pSyncState->release_point 
 		);
 	}
@@ -1239,7 +1256,7 @@ static const struct gamescope_private_interface gamescope_private_impl = {
 static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_private_interface, version, id );
-	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ](LogPriority ePriority, const char *pScope, const char *pText)
+	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ]( LogPriority ePriority, std::string_view psvScope, const char *pText )
 	{
 		if ( !wlserver_is_lock_held() )
 			return;
@@ -1452,6 +1469,10 @@ void wlserver_set_output_info( const wlserver_output_info *info )
 static bool filter_global(const struct wl_client *client, const struct wl_global *global, void *data)
 {
 	const struct wl_interface *iface = wl_global_get_interface(global);
+
+	if ( cv_drm_debug_disable_explicit_sync && iface->name == "wp_linux_drm_syncobj_manager_v1"sv )
+		return false;
+
 	if (strcmp(iface->name, wl_output_interface.name) != 0)
 		return true;
 
@@ -2271,7 +2292,9 @@ static void wlserver_warp_to_constraint_hint()
 		double sx = pConstraint->current.cursor_hint.x;
 		double sy = pConstraint->current.cursor_hint.y;
 
-		wlserver_mousewarp( sx, sy, 0, true );
+		wlserver.mouse_surface_cursorx = sx;
+		wlserver.mouse_surface_cursory = sy;
+		wlr_seat_pointer_warp( wlserver.wlr.seat, sx, sy );
 	}
 }
 
@@ -2284,6 +2307,8 @@ static void wlserver_update_cursor_constraint()
 	{
 		wlserver.mouse_constraint_requires_warp = false;
 
+		wlserver_warp_to_constraint_hint();
+
 		if (!pixman_region32_contains_point(pRegion, floor(wlserver.mouse_surface_cursorx), floor(wlserver.mouse_surface_cursory), NULL))
 		{
 			int nboxes;
@@ -2293,8 +2318,7 @@ static void wlserver_update_cursor_constraint()
 				wlserver.mouse_surface_cursorx = std::clamp<double>( wlserver.mouse_surface_cursorx, boxes[0].x1, boxes[0].x2);
 				wlserver.mouse_surface_cursory = std::clamp<double>( wlserver.mouse_surface_cursory, boxes[0].y1, boxes[0].y2);
 
-				wlr_seat_pointer_notify_motion( wlserver.wlr.seat, 0, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
-				wlr_seat_pointer_notify_frame( wlserver.wlr.seat );
+				wlr_seat_pointer_warp( wlserver.wlr.seat, wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory );
 			}
 		}
 	}

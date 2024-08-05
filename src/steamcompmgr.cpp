@@ -94,6 +94,10 @@
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
 
+#include "wlr_begin.hpp"
+#include "wlr/types/wlr_pointer_constraints_v1.h"
+#include "wlr_end.hpp"
+
 #if HAVE_AVIF
 #include "avif/avif.h"
 #endif
@@ -311,7 +315,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 				buildPQColorimetry( &inputColorimetry, &colorMapping, displayColorimetry );
 			}
 
-			calcColorTransform( &g_tmpLut1d, s_nLutSize1d, &g_tmpLut3d, s_nLutEdgeSize3d, inputColorimetry, inputEOTF,
+			calcColorTransform<s_nLutEdgeSize3d>( &g_tmpLut1d, s_nLutSize1d, &g_tmpLut3d, inputColorimetry, inputEOTF,
 				outputEncodingColorimetry, newColorMgmt.outputEncodingEOTF,
 				newColorMgmt.outputVirtualWhite, newColorMgmt.chromaticAdaptationMode,
 				colorMapping, newColorMgmt.nightmode, tonemapping, pLook, flGain );
@@ -794,32 +798,17 @@ static void _update_app_target_refresh_cycle()
 	if ( !GetBackend()->GetCurrentConnector() )
 		return;
 
-	static gamescope::GamescopeScreenType last_type;
-	static int last_target_fps;
-	static bool first = true;
-
 	gamescope::GamescopeScreenType type = GetBackend()->GetCurrentConnector()->GetScreenType();
+
 	int target_fps = g_nCombinedAppRefreshCycleOverride[type];
 
-	if ( !first && type == last_type && last_target_fps == target_fps )
-	{
-		return;
-	}
-
-	last_type = type;
-	last_target_fps = target_fps;
-	first = false;
+	g_nDynamicRefreshRate[ type ] = 0;
+	g_nSteamCompMgrTargetFPS = 0;
 
 	if ( !target_fps )
 	{
-		g_nDynamicRefreshRate[ type ] = 0;
-		g_nSteamCompMgrTargetFPS = 0;
 		return;
 	}
-
-	auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
-
-	g_nDynamicRefreshRate[ type ] = 0;
 
 	if ( g_nCombinedAppRefreshCycleChangeFPS[ type ] )
 	{
@@ -828,6 +817,8 @@ static void _update_app_target_refresh_cycle()
 
 	if ( g_nCombinedAppRefreshCycleChangeRefresh[ type ] )
 	{
+		auto rates = GetBackend()->GetCurrentConnector()->GetValidDynamicRefreshRates();
+
 		// Find highest mode to do refresh doubling with.
 		for ( auto rate = rates.rbegin(); rate != rates.rend(); rate++ )
 		{
@@ -855,6 +846,25 @@ void steamcompmgr_set_app_refresh_cycle_override( gamescope::GamescopeScreenType
 	g_nCombinedAppRefreshCycleChangeFPS[ type ] = change_fps_cap;
 	update_app_target_refresh_cycle();
 }
+
+gamescope::ConCommand cc_debug_set_fps_limit( "debug_set_fps_limit", "Set refresh cycle (debug)",
+[](std::span<std::string_view> svArgs)
+{
+	if ( svArgs.size() < 2 )
+		return;
+
+	// TODO: Expose all facets as args.
+	std::optional<int32_t> onFps = gamescope::Parse<int32_t>( svArgs[1] );
+	if ( !onFps )
+	{
+		console_log.errorf( "Failed to parse FPS." );
+		return;
+	}
+
+	int32_t nFps = *onFps;
+
+	steamcompmgr_set_app_refresh_cycle_override( GetBackend()->GetScreenType(), nFps, true, true );
+});
 
 static int g_nRuntimeInfoFd = -1;
 
@@ -1201,7 +1211,7 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 static gamescope::CBufferMemoizer s_BufferMemos;
 
 static gamescope::Rc<commit_t>
-import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo )
+import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buffer *buf, bool async, std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback, std::vector<struct wl_resource*> presentation_feedbacks, std::optional<uint32_t> present_id, uint64_t desired_present_time, bool fifo, std::optional<GamescopeTimelinePoint> oReleasePoint )
 {
 	gamescope::Rc<commit_t> commit = new commit_t;
 
@@ -1219,6 +1229,13 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
+		if ( oReleasePoint )
+		{
+			if ( gamescope::IBackendFb *pBackendFb = pTexture->GetBackendFb() )
+			{
+				pBackendFb->SetReleasePoint( *oReleasePoint );
+			}
+		}
 		// Going from OwningRc -> Rc now.
 		commit->vulkanTex = pTexture;
 		return commit;
@@ -1230,6 +1247,9 @@ import_commit ( steamcompmgr_win_t *w, struct wlr_surface *surf, struct wlr_buff
 	{
 		pBackendFb = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
 	}
+
+	if ( pBackendFb && oReleasePoint )
+		pBackendFb->SetReleasePoint( *oReleasePoint );
 	gamescope::OwningRc<CVulkanTexture> pOwnedTexture = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
 	commit->vulkanTex = pOwnedTexture;
 
@@ -1381,8 +1401,19 @@ MouseCursor::MouseCursor(xwayland_ctx_t *ctx)
 void MouseCursor::UpdatePosition()
 {
 	wlserver_lock();
-	m_x = wlserver.mouse_surface_cursorx;
-	m_y = wlserver.mouse_surface_cursory;
+	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
+	if ( pConstraint && pConstraint->current.cursor_hint.enabled )
+	{
+		m_x = pConstraint->current.cursor_hint.x;
+		m_y = pConstraint->current.cursor_hint.y;
+		m_bConstrained = true;
+	}
+	else
+	{
+		m_x = wlserver.mouse_surface_cursorx;
+		m_y = wlserver.mouse_surface_cursory;
+		m_bConstrained = false;
+	}
 	wlserver_unlock();
 }
 
@@ -1839,6 +1870,8 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 	return &(*g_HeldCommits[ HELD_COMMIT_BASE ]->feedback);
 }
 
+gamescope::ConVar<bool> cv_paint_debug_pause_base_plane( "paint_debug_pause_base_plane", false, "Pause updates to the base plane." );
+
 static void
 paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
@@ -1854,7 +1887,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 
 	if ( flags & PaintWindowFlag::BasePlane )
 	{
-		if ( lastCommit == nullptr )
+		if ( lastCommit == nullptr || cv_paint_debug_pause_base_plane )
 		{
 			// If we're the base plane and have no valid contents
 			// pick up that buffer we've been holding onto if we have one.
@@ -2703,7 +2736,11 @@ paint_all(bool async)
 					rgbAvifImage.pixels = (uint8_t *)imageData.data();
 					rgbAvifImage.rowBytes = g_nOutputWidth * kCompCnt * sizeof( uint16_t );
 
-					avifImageRGBToYUV( pAvifImage, &rgbAvifImage ); // Not really! See Matrix Coefficients IDENTITY above.
+					if ( ( avifResult = avifImageRGBToYUV( pAvifImage, &rgbAvifImage ) ) != AVIF_RESULT_OK ) // Not really! See Matrix Coefficients IDENTITY above.
+					{
+						xwm_log.errorf( "Failed to convert RGB to YUV: %u", avifResult );
+						return;
+					}
 
 					avifEncoder *pEncoder = avifEncoderCreate();
 					defer( avifEncoderDestroy( pEncoder ) );
@@ -3853,12 +3890,15 @@ determine_and_apply_focus()
 		}
 	}
 
-	// Update last focus commit
-	if ( global_focus.focusWindow &&
-		 previous_focus.focusWindow != global_focus.focusWindow &&
-		 !global_focus.focusWindow->isSteamStreamingClient )
+	if ( !cv_paint_debug_pause_base_plane )
 	{
-		get_window_last_done_commit( global_focus.focusWindow, g_HeldCommits[ HELD_COMMIT_BASE ] );
+		// Update last focus commit
+		if ( global_focus.focusWindow &&
+			previous_focus.focusWindow != global_focus.focusWindow &&
+			!global_focus.focusWindow->isSteamStreamingClient )
+		{
+			get_window_last_done_commit( global_focus.focusWindow, g_HeldCommits[ HELD_COMMIT_BASE ] );
+		}
 	}
 
 	// Set SDL window title
@@ -5016,7 +5056,11 @@ steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
 
 static inline float santitize_float( float f )
 {
+#ifndef __FAST_MATH__
 	return ( std::isfinite( f ) ? f : 0.f );
+#else
+	return f;
+#endif
 }
 
 static void
@@ -5971,7 +6015,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 			// If this is the main plane, repaint
 			if ( w == global_focus.focusWindow && !w->isSteamStreamingClient )
 			{
-				g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+				if ( !cv_paint_debug_pause_base_plane )
+					g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 				hasRepaint = true;
 			}
 
@@ -5982,7 +6027,8 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 
 			if ( w->isSteamStreamingClientVideo && global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient )
 			{
-				g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
+				if ( !cv_paint_debug_pause_base_plane )
+					g_HeldCommits[ HELD_COMMIT_BASE ] = w->commit_queue[ j ];
 				hasRepaint = true;
 			}
 
@@ -6244,7 +6290,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	gamescope::Rc<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo );
+	gamescope::Rc<commit_t> newCommit = import_commit( w, reslistentry.surf, buf, reslistentry.async, std::move(reslistentry.feedback), std::move(reslistentry.presentation_feedbacks), reslistentry.present_id, reslistentry.desired_present_time, reslistentry.fifo, std::move( reslistentry.oReleasePoint ) );
 
 	int fence = -1;
 	if ( newCommit != nullptr )
@@ -6282,7 +6328,6 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		gpuvis_trace_printf( "pushing wait for commit %lu win %lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 		{
 			newCommit->SetFence( fence, mango_nudge, doneCommits );
-			newCommit->SetReleasePoint( reslistentry.oReleasePoint );
 			if ( bKnownReady )
 				newCommit->Signal();
 			else {
@@ -7026,23 +7071,6 @@ extern bool g_bLaunchMangoapp;
 
 extern void ShutdownGamescope();
 
-static gamescope::ConCommand cc_launch( "launch", "Launch an application with the given args.",
-[]( std::span<std::string_view> svArgs )
-{
-	if ( svArgs.size() < 2 )
-		return;
-
-	// Need them to be null terminated.
-	std::vector<std::string> sArgs;
-	for ( auto iter = svArgs.begin() + 1; iter != svArgs.end(); iter++ )
-		sArgs.push_back( std::string( *iter ) );
-
-	std::vector<char *> argv;
-	for ( std::string &sArg : sArgs )
-		argv.push_back( sArg.data() );
-	gamescope::Process::SpawnProcessInWatchdog( argv.data() );
-});
-
 gamescope::ConVar<bool> cv_shutdown_on_primary_child_death( "shutdown_on_primary_child_death", true, "Should gamescope shutdown when the primary application launched in it was shut down?" );
 static LogScope s_LaunchLogScope( "launch" );
 
@@ -7050,9 +7078,9 @@ static std::vector<uint32_t> s_uRelativeMouseFilteredAppids;
 static gamescope::ConVar<std::string> cv_mouse_relative_filter_appids( "mouse_relative_filter_appids",
 "8400" /* Geometry Wars: Retro Evolved */,
 "Comma separated appids to filter out using relative mouse mode for.",
-[]()
+[]( gamescope::ConVar<std::string> &cvar )
 {
-	std::vector<std::string_view> sFilterAppids = gamescope::Split( cv_mouse_relative_filter_appids, "," );
+	std::vector<std::string_view> sFilterAppids = gamescope::Split( cvar, "," );
 	std::vector<uint32_t> uFilterAppids;
 	uFilterAppids.reserve( sFilterAppids.size() );
 	for ( auto &sFilterAppid : sFilterAppids )
@@ -7625,7 +7653,7 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 				( global_focus.cursor && global_focus.cursor->imageEmpty() ) &&
 				( !window_is_steam( global_focus.inputFocusWindow ) );
 
-			const bool bHasPointerConstraint = wlserver.HasMouseConstraint(); // atomic, no lock needed
+			const bool bHasPointerConstraint = global_focus.cursor->IsConstrained();
 
 			uint32_t uAppId = global_focus.inputFocusWindow
 				? global_focus.inputFocusWindow->appID

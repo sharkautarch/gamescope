@@ -479,13 +479,14 @@ struct drm_t {
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_QueuedFbIds;
 	// FBs currently on screen.
 	// Accessed only on page flip handler thread.
+	std::mutex m_mutVisibleFbIds;
 	std::vector<gamescope::Rc<gamescope::IBackendFb>> m_VisibleFbIds;
 
-	std::mutex flip_lock;
+	std::atomic < uint32_t > uPendingFlipCount = { 0 };
 
-	std::atomic < bool > paused;
-	std::atomic < int > out_of_date;
-	std::atomic < bool > needs_modeset;
+	std::atomic < bool > paused = { false };
+	std::atomic < int > out_of_date = { false };
+	std::atomic < bool > needs_modeset = { false };
 
 	std::unordered_map< std::string, int > connector_priorities;
 
@@ -539,8 +540,7 @@ extern GamescopePanelOrientation g_DesiredInternalOrientation;
 
 extern bool g_bForceDisableColorMgmt;
 
-static LogScope drm_log("drm");
-static LogScope drm_verbose_log("drm", LOG_SILENT);
+static LogScope drm_log( "drm" );
 
 static std::unordered_map< std::string, std::string > pnps = {};
 
@@ -694,23 +694,28 @@ static void page_flip_handler(int fd, unsigned int frame, unsigned int sec, unsi
 	if ( g_DRM.pCRTC->GetObjectId() != crtc_id )
 		return;
 
+	static uint64_t ulLastVBlankTime = 0;
+
 	// This is the last vblank time
 	uint64_t vblanktime = sec * 1'000'000'000lu + usec * 1'000lu;
 	GetVBlankTimer().MarkVBlank( vblanktime, true );
 
 	// TODO: get the fbids_queued instance from data if we ever have more than one in flight
 
-	drm_verbose_log.debugf("page_flip_handler %" PRIu64, pCtx->ulPendingFlipCount);
+	drm_log.debugf("page_flip_handler %" PRIu64 " delta: %" PRIu64, pCtx->ulPendingFlipCount, vblanktime - ulLastVBlankTime );
 	gpuvis_trace_printf("page_flip_handler %" PRIu64, pCtx->ulPendingFlipCount);
 
+	ulLastVBlankTime = vblanktime;
+
 	{
-		std::unique_lock lock( g_DRM.m_QueuedFbIdsMutex );
+		std::scoped_lock lock{ g_DRM.m_QueuedFbIdsMutex, g_DRM.m_mutVisibleFbIds };
 		// Swap and clear from queue -> visible to avoid allocations.
 		g_DRM.m_VisibleFbIds.swap( g_DRM.m_QueuedFbIds );
 		g_DRM.m_QueuedFbIds.clear();
 	}
 
-	g_DRM.flip_lock.unlock();
+	g_DRM.uPendingFlipCount--;
+	g_DRM.uPendingFlipCount.notify_all();
 
 	mangoapp_output_update( vblanktime );
 
@@ -1034,6 +1039,9 @@ static bool setup_best_connector(struct drm_t *drm, bool force, bool initial)
 	if (!drm_set_mode(drm, mode)) {
 		return false;
 	}
+
+	// Don't allow rollback of mode_id after connector change
+	drm->current.mode_id = drm->pending.mode_id;
 
 	const struct wlserver_output_info wlserver_output_info = {
 		.description = description,
@@ -1400,7 +1408,7 @@ void finish_drm(struct drm_t *drm)
 		drm->m_QueuedFbIds.clear();
 	}
 	{
-		std::unique_lock lock( drm->flip_lock );
+		std::unique_lock lock( drm->m_mutVisibleFbIds );
 		drm->m_VisibleFbIds.clear();
 	}
 	drm->sdr_static_metadata = nullptr;
@@ -1423,7 +1431,7 @@ gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *d
 
 	if ( !wlr_drm_format_set_has( &drm->formats, dma_buf->format, dma_buf->modifier ) )
 	{
-		drm_verbose_log.errorf( "Cannot import FB to DRM: format 0x%" PRIX32 " and modifier 0x%" PRIX64 " not supported for scan-out", dma_buf->format, dma_buf->modifier );
+		drm_log.errorf( "Cannot import FB to DRM: format 0x%" PRIX32 " and modifier 0x%" PRIX64 " not supported for scan-out", dma_buf->format, dma_buf->modifier );
 		return nullptr;
 	}
 
@@ -1463,7 +1471,7 @@ gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *d
 		}
 	}
 
-	drm_verbose_log.debugf("make fbid %u", fb_id);
+	drm_log.debugf("make fbid %u", fb_id);
 
 	pBackendFb = new gamescope::CDRMFb( fb_id, buf );
 
@@ -2113,6 +2121,8 @@ namespace gamescope
 
 		drm_log.infof("Connector %s -> %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel );
 
+		const bool bIsDeckHDUnofficial = ( m_Mutable.szMakePNP == "DHD"sv && m_Mutable.szModel == "DeckHD-1200p"sv );
+
 		const bool bSteamDeckDisplay =
 			( m_Mutable.szMakePNP == "WLC"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
 			( m_Mutable.szMakePNP == "ANX"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
@@ -2138,6 +2148,17 @@ namespace gamescope
 			else
 			{
 				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD;
+				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
+			}
+		}
+
+		if ( bIsDeckHDUnofficial )
+		{
+			static constexpr uint32_t kPIDJupiterDHD = 0x4001;
+
+			if ( pProduct->product == kPIDJupiterDHD )
+			{
+				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD;
 				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
 			}
 		}
@@ -2294,7 +2315,7 @@ namespace gamescope
 				.uMinContentLightLevel = nits_to_u16_dark( 0 ),
 			};
 		}
-		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
+		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD || eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD )
 		{
 			// Set up some HDR fallbacks for undocking
 			return BackendConnectorHDRInfo
@@ -2356,7 +2377,7 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 
 			if ( pDrmFb == nullptr )
 			{
-				drm_verbose_log.errorf("drm_prepare_liftoff: layer %d has no FB", i );
+				drm_log.debugf("drm_prepare_liftoff: layer %d has no FB", i );
 				return -EINVAL;
 			}
 
@@ -2562,9 +2583,9 @@ drm_prepare_liftoff( struct drm_t *drm, const struct FrameInfo_t *frameInfo, boo
 	}
 
 	if ( ret == 0 )
-		drm_verbose_log.debugf( "can drm present %i layers", frameInfo->layerCount );
+		drm_log.debugf( "can drm present %i layers", frameInfo->layerCount );
 	else
-		drm_verbose_log.debugf( "can NOT drm present %i layers", frameInfo->layerCount );
+		drm_log.debugf( "can NOT drm present %i layers", frameInfo->layerCount );
 
 	return ret;
 }
@@ -2857,6 +2878,11 @@ bool drm_set_connector( struct drm_t *drm, gamescope::CDRMConnector *conn )
 	if (!drm_set_crtc(drm, pCRTC)) {
 		return false;
 	}
+
+	// If we are changing connector, zero out the current and pending mode IDs.
+	// So we don't try to use one mode from the old connector on the new one if we roll back.
+	drm->pending.mode_id = nullptr;
+	drm->current.mode_id = nullptr;
 
 	drm->pConnector = conn;
 	drm->needs_modeset = true;
@@ -3622,10 +3648,11 @@ namespace gamescope
 			defer( if ( drm->req != nullptr ) { drmModeAtomicFree( drm->req ); drm->req = nullptr; } );
 
 			bool isPageFlip = drm->flags & DRM_MODE_PAGE_FLIP_EVENT;
+			uint32_t uNewPendingFlipCount = 0;
 
 			if ( isPageFlip )
 			{
-				drm->flip_lock.lock();
+				uNewPendingFlipCount = ++drm->uPendingFlipCount;
 
 				// Do it before the commit, as otherwise the pageflip handler could
 				// potentially beat us to the refcount checks.
@@ -3641,7 +3668,7 @@ namespace gamescope
 			m_uNextPresentCtx = ( m_uNextPresentCtx + 1 ) % 3;
 			m_PresentCtxs[uCurrentPresentCtx].ulPendingFlipCount = m_PresentFeedback.m_uQueuedPresents;
 
-			drm_verbose_log.debugf("flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents);
+			drm_log.debugf("flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents);
 			gpuvis_trace_printf( "flip commit %" PRIu64, (uint64_t)m_PresentFeedback.m_uQueuedPresents );
 
 			ret = drmModeAtomicCommit(drm->fd, drm->req, drm->flags, &m_PresentCtxs[uCurrentPresentCtx] );
@@ -3653,7 +3680,7 @@ namespace gamescope
 				{
 					drm_log.errorf( "fatal flip error, aborting" );
 					if ( isPageFlip )
-						drm->flip_lock.unlock();
+						drm->uPendingFlipCount--;
 					abort();
 				}
 
@@ -3671,7 +3698,7 @@ namespace gamescope
 				m_PresentFeedback.m_uQueuedPresents--;
 
 				if ( isPageFlip )
-					drm->flip_lock.unlock();
+					drm->uPendingFlipCount--;
 
 				return ret;
 			} else {
@@ -3719,9 +3746,9 @@ namespace gamescope
 
 			if ( isPageFlip )
 			{
-				// Wait for flip handler to unlock
-				drm->flip_lock.lock();
-				drm->flip_lock.unlock();
+				// Wait for bPendingFlip to change from true -> false.
+				drm->uPendingFlipCount.wait( uNewPendingFlipCount );
+				assert( drm->uPendingFlipCount == 0 );
 			}
 
 			return ret;

@@ -4,10 +4,10 @@
 #include <algorithm>
 #include "Utils/Algorithm.h"
 
-#include "color_helpers.h"
+#include "color_helpers_impl.h"
 
-const uint32_t nLutSize1d = 4096;
-const uint32_t nLutEdgeSize3d = 17;
+using color_bench::nLutEdgeSize3d;
+using color_bench::nLutSize1d;
 
 uint16_t lut1d[nLutSize1d*4];
 uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
@@ -38,7 +38,7 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
     float flGain = 1.0f;
 
     for (auto _ : state) {
-        calcColorTransform( &lut1d_float, nLutSize1d, &lut3d_float, nLutEdgeSize3d, inputColorimetry, inputEOTF,
+        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
             outputEncodingColorimetry, EOTF_Gamma22,
             destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
             colorMapping, nightmode, tonemapping, nullptr, flGain );

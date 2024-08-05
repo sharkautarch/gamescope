@@ -13,7 +13,7 @@
 #include <source_location>
 
 #include "main.hpp"
-#include "color_helpers.h"
+
 #include "gamescope_shared.h"
 #include "backend.h"
 
@@ -421,7 +421,7 @@ struct wlr_renderer *vulkan_renderer_create( void );
 
 using mat3x4 = std::array<std::array<float, 4>, 3>;
 
-#include "color_helpers.h"
+#include "color_helpers_impl.h"
 
 struct gamescope_color_mgmt_t
 {
@@ -459,8 +459,9 @@ struct gamescope_color_mgmt_t
 	bool operator != (const gamescope_color_mgmt_t&) const = default;
 };
 
-static constexpr uint32_t s_nLutEdgeSize3d = 17;
-static constexpr uint32_t s_nLutSize1d = 4096;
+//namespace members from "color_helpers_impl.h":
+using rendervulkan::s_nLutEdgeSize3d;
+using rendervulkan::s_nLutSize1d;
 
 struct gamescope_color_mgmt_luts
 {

@@ -129,7 +129,7 @@ static bool Contains( const std::span<const T> x, T value )
 }
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
-static std::vector< uint32_t > sampledShmFormats{};
+static struct wlr_drm_format_set sampledShmFormats = {};
 static struct wlr_drm_format_set sampledDRMFormats = {};
 
 static LogScope vk_log("vulkan");
@@ -368,7 +368,7 @@ bool CVulkanDevice::selectPhysDev(VkSurfaceKHR surface)
 						vk.GetPhysicalDeviceSurfaceSupportKHR( cphysDev, computeOnlyIndex, surface, &canPresent );
 						if ( !canPresent )
 						{
-							vk_log.debugf( "physical device %04x:%04x compute queue doesn't support presenting on our surface, using graphics queue", deviceProperties.vendorID, deviceProperties.deviceID );
+							vk_log.infof( "physical device %04x:%04x compute queue doesn't support presenting on our surface, using graphics queue", deviceProperties.vendorID, deviceProperties.deviceID );
 							computeOnlyIndex = ~0u;
 						}
 					}
@@ -2625,8 +2625,7 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 		return false;
 	}
 
-	if ( std::find( sampledShmFormats.begin(), sampledShmFormats.end(), drmFormat ) == sampledShmFormats.end() ) 
-		sampledShmFormats.push_back( drmFormat );
+	wlr_drm_format_set_add( &sampledShmFormats, drmFormat, DRM_FORMAT_MOD_LINEAR );
 
 	if ( !g_device.supportsModifiers() )
 	{
@@ -4034,21 +4033,20 @@ static const struct wlr_texture_impl texture_impl = {
 	.destroy = texture_destroy,
 };
 
-static uint32_t renderer_get_render_buffer_caps( struct wlr_renderer *renderer )
+static const struct wlr_drm_format_set *renderer_get_texture_formats( struct wlr_renderer *wlr_renderer, uint32_t buffer_caps )
 {
-	return 0;
-}
-
-static const uint32_t *renderer_get_shm_texture_formats( struct wlr_renderer *wlr_renderer, size_t *len
- )
-{
-	*len = sampledShmFormats.size();
-	return sampledShmFormats.data();
-}
-
-static const struct wlr_drm_format_set *renderer_get_dmabuf_texture_formats( struct wlr_renderer *wlr_renderer )
-{
-	return &sampledDRMFormats;
+	if (buffer_caps & WLR_BUFFER_CAP_DMABUF)
+	{
+		return &sampledDRMFormats;
+	}
+	else if (buffer_caps & WLR_BUFFER_CAP_DATA_PTR)
+	{
+		return &sampledShmFormats;
+	}
+	else
+	{
+		return nullptr;
+	}
 }
 
 static int renderer_get_drm_fd( struct wlr_renderer *wlr_renderer )
@@ -4072,10 +4070,8 @@ static struct wlr_render_pass *renderer_begin_buffer_pass( struct wlr_renderer *
 }
 
 static const struct wlr_renderer_impl renderer_impl = {
-	.get_shm_texture_formats = renderer_get_shm_texture_formats,
-	.get_dmabuf_texture_formats = renderer_get_dmabuf_texture_formats,
+	.get_texture_formats = renderer_get_texture_formats,
 	.get_drm_fd = renderer_get_drm_fd,
-	.get_render_buffer_caps = renderer_get_render_buffer_caps,
 	.texture_from_buffer = renderer_texture_from_buffer,
 	.begin_buffer_pass = renderer_begin_buffer_pass,
 };
@@ -4083,7 +4079,7 @@ static const struct wlr_renderer_impl renderer_impl = {
 struct wlr_renderer *vulkan_renderer_create( void )
 {
 	VulkanRenderer_t *renderer = new VulkanRenderer_t();
-	wlr_renderer_init(&renderer->base, &renderer_impl);
+	wlr_renderer_init(&renderer->base, &renderer_impl, WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR);
 	return &renderer->base;
 }
 
@@ -4171,6 +4167,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 	CVulkanTexture::createFlags texCreateFlags;
 	texCreateFlags.bSampled = true;
 	texCreateFlags.bTransferDst = true;
+	texCreateFlags.bFlippable = true;
 	if ( pTex->BInit( width, height, 1u, drmFormat, texCreateFlags, nullptr, 0, 0, nullptr, pBackendFb ) == false )
 		return nullptr;
 

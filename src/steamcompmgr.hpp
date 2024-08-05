@@ -95,6 +95,8 @@ public:
 	void GetDesiredSize( int& nWidth, int &nHeight );
 
 	void checkSuspension();
+
+	bool IsConstrained() const { return m_bConstrained; }
 private:
 
 	bool getTexture();
@@ -102,6 +104,7 @@ private:
 	void updateCursorFeedback( bool bForce = false );
 
 	int m_x = 0, m_y = 0;
+	bool m_bConstrained = false;
 	int m_hotspotX = 0, m_hotspotY = 0;
 
 	gamescope::OwningRc<CVulkanTexture> m_texture;

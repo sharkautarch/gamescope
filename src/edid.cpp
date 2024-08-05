@@ -15,7 +15,7 @@ extern "C"
 #include "libdisplay-info/cta.h"
 }
 
-static LogScope edid_log("josh edid");
+static LogScope edid_log("edid");
 
 namespace gamescope
 {

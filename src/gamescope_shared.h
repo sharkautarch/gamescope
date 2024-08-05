@@ -1,6 +1,8 @@
 #pragma once
 #include "tracy_include.h"
 
+#include <cstdint>
+
 namespace gamescope
 {
 	class BackendBlob;
@@ -9,6 +11,7 @@ namespace gamescope
 	{
 		GAMESCOPE_KNOWN_DISPLAY_UNKNOWN,
 		GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD,      // Jupiter
+		GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD,  // Jupiter Deck HD
 		GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC, // Galileo SDC
 		GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE, // Galileo BOE
 	};
@@ -60,6 +63,14 @@ enum GamescopePanelOrientation
 	GAMESCOPE_PANEL_ORIENTATION_180, // upside down
 
 	GAMESCOPE_PANEL_ORIENTATION_AUTO,
+};
+
+struct GamescopeTimelinePoint
+{
+	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
+	uint64_t ulPoint = 0;
+
+	void Release();
 };
 
 // Disable partial composition for now until we get
