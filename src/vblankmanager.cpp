@@ -39,10 +39,14 @@ namespace gamescope
 			// Majority of backends fall down this optimal
 			// timerfd path, vs nudge thread.
 			g_VBlankLog.infof( "Using timerfd." );
+			static constexpr char msg[] = "Using timerfd."; 
+			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 		}
 		else
 		{
 			g_VBlankLog.infof( "Using nudge thread." );
+			static constexpr char msg[] = "Using nudge thread."; 
+			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 
 			if ( pipe2( m_nNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
 			{
@@ -305,12 +309,14 @@ namespace gamescope
 						continue;
 
 					g_VBlankLog.errorf_errno( "Failed to read nudge pipe. Pre-emptively re-arming." );
+					TracyMessageL("Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming.");
 					ArmNextVBlank( true );
 					return;
 				}
 				else if ( ret != sizeof( VBlankTime ) )
 				{
 					g_VBlankLog.errorf( "Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming." );
+					TracyMessageL("Nudge pipe had less data than sizeof( VBlankTime ). Pre-emptively re-arming.");
 					ArmNextVBlank( true );
 					return;
 				}
@@ -324,6 +330,7 @@ namespace gamescope
 			if ( ulDiff > 1'000'000ul )
 			{
 				gpuvis_trace_printf( "Ignoring stale vblank... Pre-emptively re-arming." );
+				TracyMessageL("Ignoring stale vblank... Pre-emptively re-arming.");
 				ArmNextVBlank( true );
 				return;
 			}
@@ -394,10 +401,12 @@ namespace gamescope
 				if ( ret <= 0 )
 				{
 					g_VBlankLog.errorf_errno( "Nudge write failed" );
+					TracyMessageL("Nudge write failed");
 				}
 				else
 				{
 					gpuvis_trace_printf( "sent vblank (nudge thread)" );
+					TracyMessageL("sent vblank (nudge thread)");
 				}
 				
 #ifdef TRACY_ENABLE

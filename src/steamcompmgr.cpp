@@ -93,6 +93,7 @@
 #include "BufferMemo.h"
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
+#include "Utils/Version.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
@@ -2864,6 +2865,7 @@ paint_all(bool async)
 
 	gpuvis_trace_end_ctx_printf( paintID, "paint_all" );
 	gpuvis_trace_printf( "paint_all %i layers", (int)frameInfo.layerCount );
+	ZoneTextF( "paint_all %i layers", (int)frameInfo.layerCount );
 }
 
 /* Get prop from window
@@ -3339,6 +3341,7 @@ found:;
 
 void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win_t* > &vecPossibleFocusWindows )
 {
+	ZoneScopedN("xwayland_ctx_t::DetermineAndApplyFocus()");
 	xwayland_ctx_t *ctx = this;
 
 	steamcompmgr_win_t *inputFocus = NULL;
@@ -3403,7 +3406,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 					sizeof(wmState) / sizeof(wmState[0]));
 
 		gpuvis_trace_printf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
-
+		ZoneTextF( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
 		if ( debugFocus == true )
 		{
 			xwm_log.debugf( "determine_and_apply_focus focus %lu", ctx->focus.focusWindow->xwayland().id );
@@ -4630,6 +4633,7 @@ destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
 static void
 damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 {
+	ZoneScopedN("damage_win()");
 	steamcompmgr_win_t	*w = find_win(ctx, de->drawable);
 	steamcompmgr_win_t *focus = ctx->focus.focusWindow;
 
@@ -4660,6 +4664,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 	}
 
 	gpuvis_trace_printf( "damage_win win %lx appID %u", w->xwayland().id, w->appID );
+	ZoneTextF( "damage_win win %lx appID %u", w->xwayland().id, w->appID );
 }
 
 static void
@@ -5976,6 +5981,7 @@ register_systray(xwayland_ctx_t *ctx)
 
 bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t commitID, uint64_t earliestPresentTime, uint64_t earliestLatchTime )
 {
+	ZoneScopedN("handle_done_commit()");
 	bool bFoundWindow = false;
 	uint32_t j;
 	for ( j = 0; j < w->commit_queue.size(); j++ )
@@ -5983,6 +5989,9 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		if ( w->commit_queue[ j ]->commitID == commitID )
 		{
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
+			static constinit char msg[12 + sizeof(uint64_t)+1];
+			int msgSz = sprintf(msg, "commit %lu done\n", w->commit_queue[ j ]->commitID);
+			TracyMessageC(msg, msgSz, TRACY_COLOR(LightSteelBlue));
 			w->commit_queue[ j ]->done = true;
 			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;
 			w->commit_queue[ j ]->present_margin = earliestPresentTime - earliestLatchTime;
@@ -6333,6 +6342,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 				newCommit->Signal();
 			else {
 				ZoneScopedN("g_ImageWaiter.AddWaitable()");
+				ZoneTextF("commit=%lu, win=%lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 				TracyFiberEnter(sl_img_waiter_fiber);
 				TRACY_FIBER_ZONE_START(g_zone_img_waiter, "wait for commit");
 				g_ImageWaiter.AddWaitable( newCommit.get() );
@@ -7181,6 +7191,8 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 void
 steamcompmgr_main(int argc, char **argv) TRACY_TRY
 {
+	[[maybe_unused]] auto sv_version = gamescope::GetVersion();
+	TracyAppInfo(sv_version.data(), sv_version.size());
 	int	readyPipeFD = -1;
 
 	// Reset getopt() state

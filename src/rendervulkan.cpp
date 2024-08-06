@@ -2820,6 +2820,7 @@ void vulkan_present_to_window( void )
 	{
 		// Only way to clear hdr metadata for a swapchain in Vulkan
 		// is to recreate the swapchain.
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		g_output.swapchainHDRMetadata = nullptr;
 		vulkan_remake_swapchain();
 	}
@@ -2844,11 +2845,15 @@ void vulkan_present_to_window( void )
 		g_currentPresentWaitId = presentId;
 		g_currentPresentWaitId.notify_all();
 	}
-	else
+	else {
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		vulkan_remake_swapchain();
+	}
 
-	while ( !acquire_next_image() )
+	while ( !acquire_next_image() ) {
+		TracyMessageL("vulkan_present_to_window(): remaking swapchain");
 		vulkan_remake_swapchain();
+	}
 }
 
 gamescope::Rc<CVulkanTexture> vulkan_create_1d_lut(uint32_t size)

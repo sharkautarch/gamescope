@@ -286,6 +286,7 @@ void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 }
 
 void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
+	ZoneScopedN("xwayland_surface_commit()");
 	wlr_surface->current.committed = 0;
 
 	wlserver_x11_surface_info *wlserver_x11_surface_info = get_wl_surface_info(wlr_surface)->x11_surface;
@@ -318,6 +319,7 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 	struct wlr_buffer *buf = wlr_buffer_lock( tex->buf );
 
 	gpuvis_trace_printf( "xwayland_surface_commit wlr_surface %p", wlr_surface );
+	ZoneTextF("xwayland_surface_commit wlr_surface %p", wlr_surface);
 
 	if (wlserver_x11_surface_info)
 	{

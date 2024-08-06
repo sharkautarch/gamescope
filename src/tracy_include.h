@@ -1,9 +1,28 @@
+#ifndef __TRACYSCOPED_GAMESCOPE__
+#define __TRACYSCOPED_HPP__
+#endif
+
 #pragma once
 #include <exception>
 #include <optional>
+
 #include "tracy/Tracy.hpp"
 #include "tracy/TracyC.h"
 
+
+// Hacky workaround for a compiler error that seems to happen when using tracy::ScopedZone::TextFmt 
+// due to gcc being angry that a variadic function (the va_args kind) has the __attribute__((always_inline)) attribute on it
+#ifndef __TRACYSCOPED_GAMESCOPE__
+#undef tracy_force_inline 
+#define tracy_force_inline inline
+#undef __TRACYSCOPED_HPP__
+#include "client/TracyScoped.hpp"
+#define __TRACYSCOPED_GAMESCOPE__
+#endif
+//************************************************************************//
+
+#include "common/TracyColor.hpp"
+#define TRACY_COLOR(color) tracy::Color::color
 // (from 3.4.6 of Tracy manual) Tracy doesn't support exiting within a zone.
 // workaround is to throw a custom exception,
 // then catch exception at the end of the function
