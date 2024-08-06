@@ -920,6 +920,11 @@ private:
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
 
+#ifdef TRACY_ENABLE
+	tracy::VkCtx* m_tracyCtx;
+	std::optional<tracy::VkCtxScope> m_gpuZoneHolder;
+#endif
+
 	// Per Use State
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs;
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState;
@@ -934,10 +939,6 @@ private:
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
 
 	uint32_t m_renderBufferOffset = 0;
-#ifdef TRACY_ENABLE
-	tracy::VkCtx* m_tracyCtx;
-	std::optional<tracy::VkCtxScope> m_gpuZoneHolder;
-#endif
 };
 
 uint32_t VulkanFormatToDRM( VkFormat vkFormat );
