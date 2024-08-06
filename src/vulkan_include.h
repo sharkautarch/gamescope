@@ -1,4 +1,8 @@
 #pragma once
+#ifndef __TRACYAPI_H__
+# define __TRACYAPI_H__
+# define TRACY_API
+#endif
 
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan_core.h>
@@ -11,7 +15,10 @@
 # endif
 
 # define tracy_force_inline inline
-# define tracy_no_inline __attribute__((noinline))
+# ifndef tracy_no_inline
+#  define tracy_no_inline __attribute__((noinline))
+# endif
+
 # define __TRACYFORCEINLINE_HPP__
 # include "client/TracyScoped.hpp"
 # undef tracy_force_inline

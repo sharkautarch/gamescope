@@ -5990,7 +5990,7 @@ bool handle_done_commit( steamcompmgr_win_t *w, xwayland_ctx_t *ctx, uint64_t co
 		{
 			gpuvis_trace_printf( "commit %lu done", w->commit_queue[ j ]->commitID );
 			static constinit char msg[12 + sizeof(uint64_t)+1];
-			int msgSz = sprintf(msg, "commit %lu done\n", w->commit_queue[ j ]->commitID);
+			[[maybe_unused]] int msgSz = sprintf(msg, "commit %lu done\n", w->commit_queue[ j ]->commitID);
 			TracyMessageC(msg, msgSz, TRACY_COLOR(LightSteelBlue));
 			w->commit_queue[ j ]->done = true;
 			w->commit_queue[ j ]->earliest_present_time = earliestPresentTime;

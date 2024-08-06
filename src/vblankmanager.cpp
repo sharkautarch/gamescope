@@ -39,13 +39,13 @@ namespace gamescope
 			// Majority of backends fall down this optimal
 			// timerfd path, vs nudge thread.
 			g_VBlankLog.infof( "Using timerfd." );
-			static constexpr char msg[] = "Using timerfd."; 
+			[[maybe_unused]] static constexpr char msg[] = "Using timerfd."; 
 			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 		}
 		else
 		{
 			g_VBlankLog.infof( "Using nudge thread." );
-			static constexpr char msg[] = "Using nudge thread."; 
+			[[maybe_unused]] static constexpr char msg[] = "Using nudge thread."; 
 			TracyAppInfo(const_cast<const char *>(msg), sizeof(msg)); 
 
 			if ( pipe2( m_nNudgePipe, O_CLOEXEC | O_NONBLOCK ) != 0 )
