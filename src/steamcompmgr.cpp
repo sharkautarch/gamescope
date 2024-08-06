@@ -6342,7 +6342,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 				newCommit->Signal();
 			else {
 				ZoneScopedN("g_ImageWaiter.AddWaitable()");
-				ZoneTextF("commit=%lu, win=%lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
+				//ZoneTextF("commit=%lu, win=%lx", newCommit->commitID, w->type == steamcompmgr_win_type_t::XWAYLAND ? w->xwayland().id : 0 );
 				TracyFiberEnter(sl_img_waiter_fiber);
 				TRACY_FIBER_ZONE_START(g_zone_img_waiter, "wait for commit");
 				g_ImageWaiter.AddWaitable( newCommit.get() );
