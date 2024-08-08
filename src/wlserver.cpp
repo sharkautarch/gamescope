@@ -140,7 +140,7 @@ void GamescopeTimelinePoint::Release()
 
 static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
 {
-	if (!oPoint  || !(oPoint->pTimeline) )
+	if (!oPoint || !(oPoint->pTimeline) )
 		return std::nullopt;
 
 	uint64_t uSignalledPoint = 0;
