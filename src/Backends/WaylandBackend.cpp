@@ -337,7 +337,7 @@ namespace gamescope
     class CWaylandFb final : public CBaseBackendFb
     {
     public:
-        CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer, wlr_buffer *pClientBuffer );
+        CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer );
         ~CWaylandFb();
 
         void OnCompositorAcquire();
@@ -743,8 +743,8 @@ namespace gamescope
     // CWaylandFb
     //////////////////
 
-    CWaylandFb::CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer, wlr_buffer *pClientBuffer )
-        : CBaseBackendFb( pClientBuffer )
+    CWaylandFb::CWaylandFb( CWaylandBackend *pBackend, wl_buffer *pHostBuffer )
+        : CBaseBackendFb()
         , m_pBackend     { pBackend }
         , m_pHostBuffer  { pHostBuffer }
     {
@@ -1498,7 +1498,7 @@ namespace gamescope
         if ( m_pSinglePixelBufferManager )
         {
             wl_buffer *pBlackBuffer = wp_single_pixel_buffer_manager_v1_create_u32_rgba_buffer( m_pSinglePixelBufferManager, 0, 0, 0, ~0u );
-            m_pOwnedBlackFb = new CWaylandFb( this, pBlackBuffer, nullptr );
+            m_pOwnedBlackFb = new CWaylandFb( this, pBlackBuffer );
             m_BlackFb = m_pOwnedBlackFb.get();
         }
         else
@@ -1752,7 +1752,7 @@ namespace gamescope
 
         zwp_linux_buffer_params_v1_destroy( pBufferParams );
 
-        return new CWaylandFb{ this, pImportedBuffer, pClientBuffer };
+        return new CWaylandFb{ this, pImportedBuffer };
     }
 
     bool CWaylandBackend::UsesModifiers() const

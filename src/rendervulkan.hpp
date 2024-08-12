@@ -678,6 +678,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CreateSampler) \
 	VK_FUNC(CreateSamplerYcbcrConversion) \
 	VK_FUNC(CreateSemaphore) \
+	VK_FUNC(GetSemaphoreFdKHR) \
+	VK_FUNC(ImportSemaphoreFdKHR) \
 	VK_FUNC(CreateShaderModule) \
 	VK_FUNC(CreateSwapchainKHR) \
 	VK_FUNC(DestroyBuffer) \
@@ -686,6 +688,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(DestroyImage) \
 	VK_FUNC(DestroyImageView) \
 	VK_FUNC(DestroyPipeline) \
+	VK_FUNC(DestroySemaphore) \
 	VK_FUNC(DestroyPipelineLayout) \
 	VK_FUNC(DestroySampler) \
 	VK_FUNC(DestroySwapchainKHR) \
@@ -719,6 +722,18 @@ constexpr T align(T what, U to) {
 return (what + to - 1) & ~(to - 1);
 }
 
+class CVulkanDevice;
+
+struct VulkanTimelineSemaphore_t
+{
+	~VulkanTimelineSemaphore_t();
+
+	CVulkanDevice *pDevice = nullptr;
+	VkSemaphore pVkSemaphore = VK_NULL_HANDLE;
+	int nFd = -1; // Syncobj FD, not renderer fd. Get that from pDevice.
+	uint32_t uHandle = 0;
+};
+
 class CVulkanDevice
 {
 public:
@@ -739,6 +754,9 @@ public:
 		m_currentDescriptorSet = (m_currentDescriptorSet + 1) % m_descriptorSets.size();
 		return ret;
 	}
+
+	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint );
+	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( uint32_t uHandle );
 
 	static constexpr uint32_t upload_buffer_size = 1920 * 1080 * 4;
 

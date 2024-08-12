@@ -18,7 +18,6 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
-	void SetReleasePoint( const std::optional<GamescopeTimelinePoint>& oReleasePoint );
 
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;
@@ -42,5 +41,4 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
 	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
-	std::optional<GamescopeTimelinePoint> m_oReleasePoint;
 };

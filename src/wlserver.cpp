@@ -16,6 +16,10 @@
 #include <X11/extensions/XTest.h>
 #include <xkbcommon/xkbcommon.h>
 
+#include "WaylandServer/WaylandResource.h"
+#include "WaylandServer/WaylandProtocol.h"
+#include "WaylandServer/LinuxDrmSyncobj.h"
+
 #include "wlr_begin.hpp"
 #include <wlr/backend.h>
 #include <wlr/backend/headless.h>
@@ -25,7 +29,6 @@
 #include <wlr/backend/multi.h>
 #include <wlr/interfaces/wlr_keyboard.h>
 #include <wlr/render/wlr_renderer.h>
-#include <wlr/render/drm_syncobj.h>
 #include <wlr/types/wlr_compositor.h>
 #include <wlr/types/wlr_keyboard.h>
 #include <wlr/types/wlr_pointer.h>
@@ -37,7 +40,6 @@
 #include <wlr/types/wlr_xdg_shell.h>
 #include <wlr/types/wlr_relative_pointer_v1.h>
 #include <wlr/types/wlr_pointer_constraints_v1.h>
-#include <wlr/render/drm_syncobj.h>
 #include <wlr/types/wlr_layer_shell_v1.h>
 #include <wlr/util/region.h>
 #include "wlr_end.hpp"
@@ -59,6 +61,8 @@
 #include "refresh_rate.h"
 #include "InputEmulation.h"
 #include "commit.h"
+#include "Timeline.h"
+#include "Utils/NonCopyable.h"
 
 #if HAVE_PIPEWIRE
 #include "pipewire.hpp"
@@ -122,69 +126,6 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 	return commits;
 }
 
-void GamescopeTimelinePoint::Release()
-{
-	assert( wlserver_is_lock_held() );
-
-	//fprintf( stderr, "Release: %lu\n", ulPoint );
-	drmSyncobjTimelineSignal( pTimeline->drm_fd, &pTimeline->handle, &ulPoint, 1 );
-	wlr_drm_syncobj_timeline_unref( pTimeline );
-}
-
-//
-// Fence flags tl;dr
-// 0                                      -> Wait for signal on a materialized fence, -ENOENT if not materialized
-// DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE  -> Wait only for materialization
-// DRM_SYNCOBJ_WAIT_FLAGS_WAIT_FOR_SUBMIT -> Wait for materialization + signal
-//
-
-static std::optional<GamescopeAcquireTimelineState> TimelinePointToEventFd( const std::optional<GamescopeTimelinePoint>& oPoint )
-{
-	if (!oPoint || !(oPoint->pTimeline) )
-		return std::nullopt;
-
-	uint64_t uSignalledPoint = 0;
-	int nRet = drmSyncobjQuery( oPoint->pTimeline->drm_fd, &oPoint->pTimeline->handle, &uSignalledPoint, 1u );
-	if ( nRet != 0 )
-	{
-		wl_log.errorf( "Failed to query syncobj" );
-		return std::nullopt;
-	}
-
-	if ( uSignalledPoint >= oPoint->ulPoint )
-	{
-		return std::optional<GamescopeAcquireTimelineState>{ std::in_place_t{}, -1, true };
-	}
-	else
-	{
-		int32_t nExplicitSyncEventFd = eventfd( 0, EFD_CLOEXEC );
-		if ( nExplicitSyncEventFd < 0 )
-		{
-			wl_log.errorf( "Failed to create eventfd" );
-			return std::nullopt;
-		}
-
-		drm_syncobj_eventfd syncobjEventFd =
-		{
-			.handle = oPoint->pTimeline->handle,
-			// Only valid flags are: DRM_SYNCOBJ_WAIT_FLAGS_WAIT_AVAILABLE
-			// -> Wait for fence materialization rather than signal.
-			.flags  = 0u,
-			.point  = oPoint->ulPoint,
-			.fd     = nExplicitSyncEventFd,
-		};
-
-		if ( drmIoctl( oPoint->pTimeline->drm_fd, DRM_IOCTL_SYNCOBJ_EVENTFD, &syncobjEventFd ) != 0 )
-		{
-			wl_log.errorf_errno( "DRM_IOCTL_SYNCOBJ_EVENTFD failed" );
-			close( nExplicitSyncEventFd );
-			return std::nullopt;
-		}
-
-		return std::optional<GamescopeAcquireTimelineState>{ std::in_place_t{}, nExplicitSyncEventFd, false };
-	}
-}
-
 gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false );
 
 std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
@@ -193,38 +134,20 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 
 	const auto& pFeedback = wlserver_surface_swapchain_feedback(surf);
 
-	wlr_linux_drm_syncobj_surface_v1_state *pSyncState =
-		wlr_linux_drm_syncobj_v1_get_surface_state( surf );
+	bool bExplicitSync = wl_surf->pSyncobjSurface && wl_surf->pSyncobjSurface->HasExplicitSync();
 
-	auto oAcquirePoint = !pSyncState ? std::nullopt : std::optional<GamescopeTimelinePoint> {
-			std::in_place_t{},
-			pSyncState->acquire_timeline,
-			pSyncState->acquire_point
-	};
-
-	if ( pSyncState && cv_drm_debug_syncobj_force_wait_on_commit )
+	std::shared_ptr<gamescope::CAcquireTimelinePoint> pAcquirePoint;
+	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint;
+	if ( bExplicitSync )
 	{
-		int ret = drmSyncobjTimelineWait( pSyncState->acquire_timeline->drm_fd, &pSyncState->acquire_timeline->handle, &pSyncState->acquire_point, 1, INT64_MAX, DRM_SYNCOBJ_WAIT_FLAGS_WAIT_ALL, nullptr );
-		if ( ret )
-		{
-			wl_log.errorf( "drmSyncobjWait failed!" );
-			return std::nullopt;
-		}
-	}
+		pAcquirePoint = wl_surf->pSyncobjSurface->ExtractAcquireTimelinePoint();
+		pReleasePoint = wl_surf->pSyncobjSurface->ExtractReleaseTimelinePoint();
 
-	std::optional<GamescopeAcquireTimelineState> oAcquireState = TimelinePointToEventFd( oAcquirePoint );
-	std::optional<GamescopeTimelinePoint> oReleasePoint;
-	if ( pSyncState )
-	{
-		if ( !oAcquireState )
+		if ( cv_drm_debug_syncobj_force_wait_on_commit )
 		{
-			return std::nullopt;
+			if ( !pAcquirePoint->Wait() )
+				wl_log.errorf( "drmSyncobjWait failed!" );
 		}
-
-		oReleasePoint.emplace(
-			  wlr_drm_syncobj_timeline_ref( pSyncState->release_timeline ),
-			  pSyncState->release_point 
-		);
 	}
 
 	auto oNewEntry = std::optional<ResListEntry_t> {
@@ -237,8 +160,8 @@ std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wl
 		std::move(wl_surf->pending_presentation_feedbacks),
 		wl_surf->present_id,
 		wl_surf->desired_present_time,
-		oAcquireState,
-		oReleasePoint
+		std::move( pAcquirePoint ),
+		std::move( pReleasePoint )
 	};
 	wl_surf->present_id = std::nullopt;
 	wl_surf->desired_present_time = 0;
@@ -1255,6 +1178,12 @@ static void create_gamescope_private( void )
 	wl_global_create( wlserver.display, &gamescope_private_interface, version, NULL, gamescope_private_bind );
 }
 
+static void create_explicit_sync()
+{
+	new gamescope::WaylandServer::CLinuxDrmSyncobj( wlserver.display );
+}
+
+
 ////////////////////////
 // presentation-time
 ////////////////////////
@@ -1833,8 +1762,7 @@ bool wlserver_init( void ) {
 
 	if ( GetBackend()->SupportsExplicitSync() )
 	{
-		int drm_fd = wlr_renderer_get_drm_fd( wlserver.wlr.renderer );
-		wlserver.wlr.drm_syncobj_manager_v1 = wlr_linux_drm_syncobj_manager_v1_create( wlserver.display, 1, drm_fd );
+		create_explicit_sync();
 		wl_log.infof( "Using explicit sync when available" );
 	}
 
@@ -2197,8 +2125,8 @@ static std::pair<int, int> wlserver_get_cursor_bounds()
 static void wlserver_clampcursor()
 {
 	auto [nWidth, nHeight] = wlserver_get_cursor_bounds();
-	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( nWidth - 1 ) );
-	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( nHeight - 1 ) );
+	wlserver.mouse_surface_cursorx = std::clamp( wlserver.mouse_surface_cursorx, 0.0, double( std::max( nWidth - 1, 0 ) ) );
+	wlserver.mouse_surface_cursory = std::clamp( wlserver.mouse_surface_cursory, 0.0, double( std::max( nHeight - 1, 0 ) ) );
 }
 
 void wlserver_mousefocus( struct wlr_surface *wlrsurface, int x /* = 0 */, int y /* = 0 */ )

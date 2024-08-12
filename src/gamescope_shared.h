@@ -64,14 +64,6 @@ enum GamescopePanelOrientation
 	GAMESCOPE_PANEL_ORIENTATION_AUTO,
 };
 
-struct GamescopeTimelinePoint
-{
-	struct wlr_drm_syncobj_timeline *pTimeline = nullptr;
-	uint64_t ulPoint = 0;
-
-	void Release();
-};
-
 // Disable partial composition for now until we get
 // composite priorities working in libliftoff + also
 // use the proper libliftoff composite plane system.

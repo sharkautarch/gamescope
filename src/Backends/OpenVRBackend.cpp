@@ -266,7 +266,7 @@ namespace gamescope
     class COpenVRFb final : public CBaseBackendFb
     {
     public:
-        COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle, wlr_buffer *pClientBuffer );
+        COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle );
         ~COpenVRFb();
 
         vr::SharedTextureHandle_t GetSharedTextureHandle() const { return m_ulHandle; }
@@ -701,11 +701,11 @@ namespace gamescope
                 if ( !m_pIPCResourceManager->RefResource( ulSharedHandle, nullptr ) )
                     return nullptr;
 
-                return new COpenVRFb{ this, ulSharedHandle, pBuffer };
+                return new COpenVRFb{ this, ulSharedHandle };
             }
             else
             {
-                return new COpenVRFb{ this, 0, pBuffer };
+                return new COpenVRFb{ this, 0 };
             }
 		}
 
@@ -1164,8 +1164,8 @@ namespace gamescope
 	// COpenVRFb
 	/////////////////////////
 
-    COpenVRFb::COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle, wlr_buffer *pClientBuffer )
-        : CBaseBackendFb{ pClientBuffer }
+    COpenVRFb::COpenVRFb( COpenVRBackend *pBackend, vr::SharedTextureHandle_t ulHandle )
+        : CBaseBackendFb{}
         , m_pBackend{ pBackend }
         , m_ulHandle{ ulHandle }
     {

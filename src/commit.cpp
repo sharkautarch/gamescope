@@ -29,8 +29,6 @@ commit_t::~commit_t()
         // presentation_feedbacks cleared by wlserver_presentation_feedback_discard
     }
     wlr_buffer_unlock( buf );
-    if ( m_oReleasePoint )
-        m_oReleasePoint->Release();
     wlserver_unlock();
 }
 
@@ -128,7 +126,3 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
-void commit_t::SetReleasePoint( const std::optional<GamescopeTimelinePoint>& oReleasePoint )
-{
-    m_oReleasePoint = oReleasePoint;
-}
