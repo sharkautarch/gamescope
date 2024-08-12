@@ -39,6 +39,33 @@ namespace gamescope::Process
         return chChar >= '0' && chChar <= '9';
     }
 
+    static auto SplitCommaSeparatedList(char* list) {
+      std::vector svSplit = Split(list, ",");
+      std::vector<int32_t> split(svSplit.size());
+      for (size_t i = 0; i < svSplit.size(); i++) {
+          auto oParsed = Parse<int32_t>(svSplit[i]);
+          split[i] = oParsed ? *oParsed : 0;
+      }
+
+      return split;
+    }
+    
+    static auto GetCombinedVector(const std::span<int>& baseArray, std::vector<int> in) noexcept {
+      const auto nOldSize = in.size();
+      const auto nNewSize = baseArray.size() + nOldSize;
+      
+      if (const auto in_max_size = in.max_size(); nNewSize >= in_max_size) {
+          __builtin_unreachable();
+      }
+      std::vector<int> newVec(nNewSize);
+     
+      
+      std::ranges::copy(in,        newVec.begin() + baseArray.size());
+      std::ranges::copy(baseArray, newVec.begin());
+
+      return newVec;
+    }
+
     void BecomeSubreaper()
     {
 #if defined(__linux__)
@@ -251,7 +278,7 @@ namespace gamescope::Process
         }
     }
 
-    void CloseAllFds( std::span<int> nExcludedFds )
+    void CloseAllFds(std::span<int> nExcludedFds)
     {
         DIR *pProcDir = opendir( "/proc/self/fd" );
         if ( !pProcDir )
@@ -281,7 +308,7 @@ namespace gamescope::Process
         }
     }
 
-    pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild, bool bDoubleFork )
+    pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild, bool bDoubleFork, std::vector<int> passThruFds )
     {
         // Create a pipe for the child to return the grandchild's
         // PID into.
@@ -316,7 +343,9 @@ namespace gamescope::Process
                 nPidPipe[0], // -1 if !bDoubleFork, which is fine.
                 nPidPipe[1],
             }};
-            CloseAllFds( nExcludedFds );
+
+            std::vector combinedVector{GetCombinedVector(nExcludedFds, passThruFds)};
+            CloseAllFds( combinedVector );
 
             ProcessPreSpawn();
 
@@ -391,7 +420,7 @@ namespace gamescope::Process
         }
     }
 
-    pid_t SpawnProcessInWatchdog( char **argv, bool bRespawn, std::function<void()> fnPreambleInChild )
+    pid_t SpawnProcessInWatchdog( char **argv, bool bRespawn, std::function<void()> fnPreambleInChild, char* fdPassThruList )
     {
         std::vector<char *> args;
         args.push_back( (char *)"gamescopereaper" );
@@ -404,7 +433,7 @@ namespace gamescope::Process
             argv++;
         }
         args.push_back( NULL );
-        return SpawnProcess( args.data(), fnPreambleInChild );
+        return SpawnProcess( args.data(), fnPreambleInChild, false, (fdPassThruList ? SplitCommaSeparatedList(fdPassThruList) : std::vector<int>{}) );
     }
 
     bool HasCapSysNice()

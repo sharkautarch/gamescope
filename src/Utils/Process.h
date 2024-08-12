@@ -29,10 +29,10 @@ namespace gamescope::Process
     void RestoreFdLimit();
     void ResetSignals();
 
-    void CloseAllFds( std::span<int> nExcludedFds );
+    void CloseAllFds(std::span<int> nExcludedFds);
 
-    pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild = nullptr, bool bDoubleFork = false );
-    pid_t SpawnProcessInWatchdog( char **argv, bool bRespawn = false, std::function<void()> fnPreambleInChild = nullptr );
+    pid_t SpawnProcess( char **argv, std::function<void()> fnPreambleInChild = nullptr, bool bDoubleFork = false, std::vector<int> passThruFds = {} );
+    pid_t SpawnProcessInWatchdog( char **argv, bool bRespawn = false, std::function<void()> fnPreambleInChild = nullptr, char* fdPassThruList = nullptr );
 
     bool HasCapSysNice();
     void SetNice( int nNice );

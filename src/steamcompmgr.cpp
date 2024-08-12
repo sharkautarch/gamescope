@@ -7094,7 +7094,7 @@ static gamescope::ConVar<std::string> cv_mouse_relative_filter_appids( "mouse_re
 	s_uRelativeMouseFilteredAppids = std::move( uFilterAppids );
 }, true);
 
-void LaunchNestedChildren( char **ppPrimaryChildArgv )
+void LaunchNestedChildren( char **ppPrimaryChildArgv, char* fdPassThruList = nullptr )
 {
 	std::string sNewPreload;
 	{
@@ -7157,7 +7157,7 @@ void LaunchNestedChildren( char **ppPrimaryChildArgv )
 
 	if ( ppPrimaryChildArgv && *ppPrimaryChildArgv )
 	{
-		pid_t nPrimaryChildPid = gamescope::Process::SpawnProcessInWatchdog( ppPrimaryChildArgv, false );
+		pid_t nPrimaryChildPid = gamescope::Process::SpawnProcessInWatchdog( ppPrimaryChildArgv, false, nullptr, fdPassThruList );
 
 		std::thread waitThread([ nPrimaryChildPid ]()
 		{
@@ -7190,6 +7190,7 @@ steamcompmgr_main(int argc, char **argv)
 	int o;
 	int opt_index = -1;
 	bool bForceWindowsFullscreen = false;
+	char* passThruFdList = nullptr;
 	while ((o = getopt_long(argc, argv, gamescope_optstring, gamescope_options, &opt_index)) != -1)
 	{
 		const char *opt_name;
@@ -7257,6 +7258,8 @@ steamcompmgr_main(int argc, char **argv)
 					g_reshade_technique_idx = atoi(optarg);
 				} else if (strcmp(opt_name, "mura-map") == 0) {
 					set_mura_overlay(optarg);
+				} else if (strcmp(opt_name, "pass-fds-to-child") == 0) {
+					passThruFdList = optarg;
 				}
 				break;
 			case '?':
@@ -7337,7 +7340,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	update_screenshot_color_mgmt();
 
-	LaunchNestedChildren( subCommandArg >= 0 ? &argv[ subCommandArg ] : nullptr );
+	LaunchNestedChildren( (subCommandArg >= 0 ? &argv[ subCommandArg ] : nullptr), passThruFdList );
 
 	// Transpose to get this 3x3 matrix into the right state for applying as a 3x4
 	// on DRM + the Vulkan side.
