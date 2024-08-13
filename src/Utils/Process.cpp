@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
+#include <string.h>
 
 extern const char *__progname;
 
