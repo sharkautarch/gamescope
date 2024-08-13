@@ -1219,8 +1219,7 @@ import_commit (
 	std::vector<struct wl_resource*> presentation_feedbacks,
 	std::optional<uint32_t> present_id,
 	uint64_t desired_present_time,
-	bool fifo,
-	std::shared_ptr<gamescope::CReleaseTimelinePoint> pReleasePoint )
+	bool fifo )
 {
 	gamescope::Rc<commit_t> commit = new commit_t;
 
@@ -1238,16 +1237,6 @@ import_commit (
 
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
-		gamescope::IBackendFb *pBackendFb = pTexture->GetBackendFb();
-
-		if ( pBackendFb )
-		{
-			if ( pReleasePoint )	
-				pBackendFb->SetReleasePoint( pReleasePoint );
-			else
-				pBackendFb->SetBuffer( buf );
-		}
-
 		// Going from OwningRc -> Rc now.
 		commit->vulkanTex = pTexture;
 		return commit;
@@ -1260,13 +1249,6 @@ import_commit (
 		pBackendFb = GetBackend()->ImportDmabufToBackend( buf, &dmabuf );
 	}
 
-	if ( pBackendFb )
-	{
-		if (pReleasePoint )
-			pBackendFb->SetReleasePoint( pReleasePoint );
-		else
-			pBackendFb->SetBuffer( buf );
-	}
 	gamescope::OwningRc<CVulkanTexture> pOwnedTexture = vulkan_create_texture_from_wlr_buffer( buf, std::move( pBackendFb ) );
 	commit->vulkanTex = pOwnedTexture;
 
@@ -1890,7 +1872,6 @@ namespace PaintWindowFlag
 	static const uint32_t DrawBorders = 1u << 3;
 	static const uint32_t NoScale = 1u << 4;
 	static const uint32_t NoFilter = 1u << 5;
-	static const uint32_t NoExpensiveFilter = 1u << 6;
 }
 using PaintWindowFlags = uint32_t;
 
@@ -1907,39 +1888,15 @@ wlserver_vk_swapchain_feedback* steamcompmgr_get_base_layer_swapchain_feedback()
 
 gamescope::ConVar<bool> cv_paint_debug_pause_base_plane( "paint_debug_pause_base_plane", false, "Pause updates to the base plane." );
 
-static void
-paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
+static FrameInfo_t::Layer_t *
+paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
 	float currentScaleRatio_x = 1.0;
 	float currentScaleRatio_y = 1.0;
-	gamescope::Rc<commit_t> lastCommit;
-	if ( w )
-		get_window_last_done_commit( w, lastCommit );
-
-	if ( flags & PaintWindowFlag::BasePlane )
-	{
-		if ( lastCommit == nullptr || cv_paint_debug_pause_base_plane )
-		{
-			// If we're the base plane and have no valid contents
-			// pick up that buffer we've been holding onto if we have one.
-			if ( g_HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
-			{
-				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
-				return;
-			}
-		}
-		else
-		{
-			if ( g_bPendingFade )
-			{
-				fadeOutStartTime = get_time_in_milliseconds();
-				g_bPendingFade = false;
-			}
-		}
-	}
 
 	// Exit out if we have no window or
 	// no commit.
@@ -1951,7 +1908,7 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 	// to hold on to, so we should not add a layer in that
 	// instance either.
 	if (!w || lastCommit == nullptr)
-		return;
+		return nullptr;
 
 	// Base plane will stay as tex=0 if we don't have contents yet, which will
 	// make us fall back to compositing and use the Vulkan null texture
@@ -1960,7 +1917,15 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 
 	const bool notificationMode = flags & PaintWindowFlag::NotificationMode;
 	if (notificationMode && !mainOverlayWindow)
-		return;
+		return nullptr;
+
+	int curLayer = frameInfo->layerCount++;
+
+	FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
+
+	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
+
+	layer->tex = lastCommit->GetTexture( layer->filter, g_upscaleScaler );
 
 	if (notificationMode)
 	{
@@ -1984,8 +1949,8 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		// are using the bypass layer, we don't get that, so we need to handle
 		// this case explicitly.
 		if (w == scaleW) {
-			sourceWidth = lastCommit->vulkanTex->width();
-			sourceHeight = lastCommit->vulkanTex->height();
+			sourceWidth = layer->tex->width();
+			sourceHeight = layer->tex->height();
 		} else {
 			sourceWidth = scaleW->GetGeometry().nWidth;
 			sourceHeight = scaleW->GetGeometry().nHeight;
@@ -2020,10 +1985,6 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio_y;
 		}
 	}
-
-	int curLayer = frameInfo->layerCount++;
-
-	FrameInfo_t::Layer_t *layer = &frameInfo->layers[ curLayer ];
 
 	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
@@ -2076,19 +2037,10 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 		layer->zpos = g_zposExternalOverlay;
 	}
 
-	layer->tex = lastCommit->vulkanTex;
-
-	layer->filter = ( flags & PaintWindowFlag::NoFilter ) ? GamescopeUpscaleFilter::LINEAR : g_upscaleFilter;
 	layer->colorspace = lastCommit->colorspace();
 	layer->ctm = nullptr;
 	if (layer->colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_SCRGB)
 		layer->ctm = s_scRGB709To2020Matrix;
-
-	if ( ( flags & PaintWindowFlag::NoExpensiveFilter ) &&
-		 ( layer->filter == GamescopeUpscaleFilter::FSR || layer->filter == GamescopeUpscaleFilter::NIS ) )
-	{
-		layer->filter = GamescopeUpscaleFilter::LINEAR;
-	}
 
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
@@ -2097,7 +2049,42 @@ paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 
+	return layer;
+}
+
+static void
+paint_window(steamcompmgr_win_t *w, steamcompmgr_win_t *scaleW, struct FrameInfo_t *frameInfo,
+			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
+{
+	gamescope::Rc<commit_t> lastCommit;
+	if ( w )
+		get_window_last_done_commit( w, lastCommit );
+
 	if ( flags & PaintWindowFlag::BasePlane )
+	{
+		if ( lastCommit == nullptr || cv_paint_debug_pause_base_plane )
+		{
+			// If we're the base plane and have no valid contents
+			// pick up that buffer we've been holding onto if we have one.
+			if ( g_HeldCommits[ HELD_COMMIT_BASE ] != nullptr )
+			{
+				paint_cached_base_layer( g_HeldCommits[ HELD_COMMIT_BASE ], g_CachedPlanes[ HELD_COMMIT_BASE ], frameInfo, flOpacityScale, true );
+				return;
+			}
+		}
+		else
+		{
+			if ( g_bPendingFade )
+			{
+				fadeOutStartTime = get_time_in_milliseconds();
+				g_bPendingFade = false;
+			}
+		}
+	}
+
+	FrameInfo_t::Layer_t *layer = paint_window_commit( lastCommit, w, scaleW, frameInfo, cursor, flags, flOpacityScale, fit );
+
+	if ( layer && ( flags & PaintWindowFlag::BasePlane ) )
 	{
 		BaseLayerInfo_t basePlane = {};
 		basePlane.scale[0] = layer->scale.x;
@@ -2209,7 +2196,7 @@ static void paint_pipewire()
 	s_ulLastOverrideCommitId = ulOverrideCommitId;
 
 	// Paint the windows we have onto the Pipewire stream.
-	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoExpensiveFilter, 1.0f, pFocus->overrideWindow );
+	paint_window( pFocus->focusWindow, pFocus->focusWindow, &frameInfo, nullptr, 0, 1.0f, pFocus->overrideWindow );
 
 	if ( pFocus->overrideWindow && !pFocus->focusWindow->isSteamStreamingClient )
 		paint_window( pFocus->overrideWindow, pFocus->focusWindow, &frameInfo, nullptr, PaintWindowFlag::NoFilter, 1.0f, pFocus->overrideWindow );
@@ -6283,6 +6270,64 @@ void force_repaint( void )
 	nudge_steamcompmgr();
 }
 
+struct TempUpscaleImage_t
+{
+	gamescope::OwningRc<CVulkanTexture> pTexture;
+	// Timeline of upscale -> release, to be used as acquire for the commit.
+	std::shared_ptr<gamescope::CTimeline> pReleaseTimeline;
+	uint64_t ulLastPoint = 0ul;
+};
+
+static std::vector<TempUpscaleImage_t> g_pUpscaleImages;
+void ClearUpscaleImages()
+{
+	g_pUpscaleImages.clear();
+}
+
+static TempUpscaleImage_t *GetTempUpscaleImage( uint32_t uWidth, uint32_t uHeight, uint32_t uDrmFormat )
+{
+	if ( g_pUpscaleImages.size() )
+	{
+		// Mixing and matching sizes to only do the min required would be nice
+		// but massively complicates caching.
+		if ( g_pUpscaleImages[0].pTexture->width() != uWidth ||
+			 g_pUpscaleImages[0].pTexture->height() != uHeight ||
+			 g_pUpscaleImages[0].pTexture->drmFormat() != uDrmFormat )
+		{
+			g_pUpscaleImages.clear();
+		}
+	}
+
+	for ( TempUpscaleImage_t &image : g_pUpscaleImages )
+	{
+		if ( !image.pTexture->IsInUse() )
+			return &image;
+	}
+
+	if ( g_pUpscaleImages.size() > 8 )
+	{
+		xwm_log.warnf( "No upscale images free!\n" );
+		return {};
+	}
+
+	gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
+
+	std::shared_ptr<gamescope::CTimeline> pTimeline = gamescope::CTimeline::Create();
+	if ( !pTimeline )
+		return nullptr;
+
+	CVulkanTexture::createFlags imageFlags;
+	imageFlags.bSampled = true;
+	imageFlags.bStorage = true;
+	imageFlags.bFlippable = true;
+	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
+	TempUpscaleImage_t &image = g_pUpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
+
+	return &image;
+}
+
+
+
 void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
 {
 	struct wlr_buffer *buf = reslistentry.buf;
@@ -6338,8 +6383,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		std::move(reslistentry.presentation_feedbacks),
 		reslistentry.present_id,
 		reslistentry.desired_present_time,
-		reslistentry.fifo,
-		std::move( reslistentry.pReleasePoint ) );
+		reslistentry.fifo );
 
 	int fence = -1;
 	if ( newCommit != nullptr )
@@ -6348,10 +6392,86 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		const bool mango_nudge = ( w == global_focus.focusWindow && !w->isSteamStreamingClient ) ||
 									( global_focus.focusWindow && global_focus.focusWindow->isSteamStreamingClient && w->isSteamStreamingClientVideo );
 
+		bool bValidPreemptiveScale = reslistentry.pAcquirePoint && w == global_focus.focusWindow;
+		bool bPreemptiveUpscale = bValidPreemptiveScale && newCommit->ShouldPreemptivelyUpscale();
+
 		bool bKnownReady = false;
-		if ( reslistentry.pAcquirePoint )
+
+		std::pair<int32_t, bool> eventFd = gamescope::CAcquireTimelinePoint::k_InvalidEvent;
+
+		if ( bPreemptiveUpscale )
 		{
-			std::pair<int32_t, bool> eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+			FrameInfo_t upscaledFrameInfo{};
+			upscaledFrameInfo.applyOutputColorMgmt = true;
+			upscaledFrameInfo.outputEncodingEOTF = ( newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR || newCommit->colorspace() == GAMESCOPE_APP_TEXTURE_COLORSPACE_SRGB )
+				? EOTF_Gamma22
+				: EOTF_PQ;
+
+			if ( newCommit->feedback )
+				newCommit->feedback->vk_colorspace = upscaledFrameInfo.outputEncodingEOTF == EOTF_Gamma22 ? VK_COLOR_SPACE_SRGB_NONLINEAR_KHR : VK_COLOR_SPACE_HDR10_ST2084_EXT;
+
+			paint_window_commit( newCommit, w, w, &upscaledFrameInfo, nullptr );
+			upscaledFrameInfo.useFSRLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::FSR;
+			upscaledFrameInfo.useNISLayer0 = g_upscaleFilter == GamescopeUpscaleFilter::NIS;
+
+			TempUpscaleImage_t *pTempImage = GetTempUpscaleImage( g_nOutputWidth, g_nOutputHeight, newCommit->vulkanTex->drmFormat() );
+			if ( pTempImage )
+			{
+				const uint64_t ulNextReleasePoint = ++pTempImage->ulLastPoint;
+
+				std::unique_ptr<CVulkanCmdBuffer> pCommandBuffer = g_device.commandBuffer();
+				
+				pCommandBuffer->AddDependency( reslistentry.pAcquirePoint->GetTimeline()->ToVkSemaphore(), reslistentry.pAcquirePoint->GetPoint() );
+				pCommandBuffer->AddSignal( pTempImage->pReleaseTimeline->ToVkSemaphore(), ulNextReleasePoint );
+
+				auto seqNo = vulkan_composite( &upscaledFrameInfo, nullptr, false, pTempImage->pTexture, false, std::move( pCommandBuffer ) );
+
+				vulkan_wait( *seqNo, true );
+
+				newCommit->upscaledTexture = std::optional<UpscaledTexture_t>
+				{
+					std::in_place_t{},
+					g_upscaleFilter,
+					g_upscaleScaler,
+					g_nOutputWidth,
+					g_nOutputHeight,
+					pTempImage->pTexture,
+				};
+
+				// Manifest a new acquire timeline point with this inline work.
+				eventFd = gamescope::CAcquireTimelinePoint( pTempImage->pReleaseTimeline, ulNextReleasePoint ).CreateEventFd();
+
+				//xwm_log.infof( "Pre-emptively upscaling!" );
+			}
+			else
+			{
+				bPreemptiveUpscale = false;
+			}
+		}
+		
+		if ( !bPreemptiveUpscale )
+		{
+			if ( bValidPreemptiveScale )
+			{
+				ClearUpscaleImages();
+			}
+
+			if ( reslistentry.pAcquirePoint )
+			{
+				eventFd = reslistentry.pAcquirePoint->CreateEventFd();
+			}
+		}
+
+		if ( gamescope::IBackendFb *pBackendFb = newCommit->vulkanTex->GetBackendFb() )
+		{
+			if ( reslistentry.pReleasePoint )
+				pBackendFb->SetReleasePoint( reslistentry.pReleasePoint );
+			else
+				pBackendFb->SetBuffer( buf );
+		}
+
+		if ( eventFd != gamescope::CAcquireTimelinePoint::k_InvalidEvent )
+		{
 			fence = eventFd.first;
 			bKnownReady = eventFd.second;
 		}

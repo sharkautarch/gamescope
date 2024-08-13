@@ -40,6 +40,13 @@ enum class GamescopeUpscaleFilter : uint32_t
     FROM_VIEW = 0xF, // internal
 };
 
+static constexpr bool DoesHardwareSupportUpscaleFilter( GamescopeUpscaleFilter eFilter )
+{
+    // Could do nearest someday... AMDGPU DC supports custom tap placement to an extent.
+
+    return eFilter == GamescopeUpscaleFilter::LINEAR;
+}
+
 enum class GamescopeUpscaleScaler : uint32_t
 {
     AUTO,

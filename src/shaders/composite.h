@@ -109,8 +109,8 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
         color = colorspace_plane_shaper_tf(color, colorspace);
         color = perform_1dlut(color, s_shaperLut[plane_eotf]);
         color = perform_3dlut(color, s_lut3D[plane_eotf]);
+        color = colorspace_blend_tf(color, c_output_eotf);
     }
-    color = colorspace_blend_tf(color, c_output_eotf);
 
     return color;
 }

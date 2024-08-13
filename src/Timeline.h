@@ -7,6 +7,8 @@
 
 #include "Utils/NonCopyable.h"
 
+struct VulkanTimelineSemaphore_t;
+
 namespace gamescope
 {
     enum class TimelinePointType
@@ -15,11 +17,19 @@ namespace gamescope
         Release,
     };
 
+    struct TimelineCreateDesc_t
+    {
+        uint64_t ulStartingPoint = 0ul;
+    };
+
     class CTimeline : public NonCopyable
     {
     public:
-        CTimeline( int32_t nSyncobjFd );
-        CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle );
+        static std::shared_ptr<CTimeline> Create( const TimelineCreateDesc_t &desc = {} );
+
+        // Inherits nSyncobjFd's ref.
+        CTimeline( int32_t nSyncobjFd, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = nullptr );
+        CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = nullptr );
 
         CTimeline( CTimeline &&other )
             : m_nSyncobjFd{ std::exchange( other.m_nSyncobjFd, -1 ) }
@@ -28,17 +38,20 @@ namespace gamescope
         }
         ~CTimeline();
 
-        static std::shared_ptr<CTimeline> CreateFromSyncobjFd( int32_t nSyncobjFd );
-
         static int32_t GetDrmRenderFD();
 
         bool IsValid() const { return m_uSyncobjHandle != 0; }
 
         int32_t GetSyncobjFd() const { return m_nSyncobjFd; }
         uint32_t GetSyncobjHandle() const { return m_uSyncobjHandle; }
+
+        std::shared_ptr<VulkanTimelineSemaphore_t> ToVkSemaphore();
+        
     private:
         int32_t m_nSyncobjFd = -1;
         uint32_t m_uSyncobjHandle = 0;
+
+        std::shared_ptr<VulkanTimelineSemaphore_t> m_pVkSemaphore;
     };
 
     template <TimelinePointType Type>
@@ -52,6 +65,7 @@ namespace gamescope
         ~CTimelinePoint();
 
         void SetPoint( uint64_t ulPoint ) { m_ulPoint = ulPoint; }
+        uint64_t GetPoint() const { return m_ulPoint; }
 
               std::shared_ptr<CTimeline> &GetTimeline()       { return m_pTimeline; }
         const std::shared_ptr<CTimeline> &GetTimeline() const { return m_pTimeline; }

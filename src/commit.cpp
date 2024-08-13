@@ -126,3 +126,28 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
+void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+
+bool commit_t::ShouldPreemptivelyUpscale()
+{
+    // Don't pre-emptively upscale if we are not a FIFO commit.
+    // Don't want to FSR upscale 1000fps content.
+    if ( !fifo )
+        return false;
+
+    // If we support the upscaling filter in hardware, don't
+    // pre-emptively do it via shaders.
+    if ( DoesHardwareSupportUpscaleFilter( g_upscaleFilter ) )
+        return false;
+
+    if ( !vulkanTex )
+        return false;
+
+    float flScaleX = 1.0f;
+    float flScaleY = 1.0f;
+    // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
+    // It should also return a std::pair or a glm uvec
+    calc_scale_factor( flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+
+    return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
+}

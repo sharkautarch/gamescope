@@ -168,6 +168,8 @@ public:
 	uint32_t IncRef();
 	uint32_t DecRef();
 
+	bool IsInUse();
+
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
 	inline VkImageView srgbView() { return m_srgbView; }
@@ -204,7 +206,7 @@ public:
 
 	int memoryFence();
 
-	inline CVulkanTexture( void ) {}
+	CVulkanTexture( void );
 	~CVulkanTexture( void );
 
 	uint32_t queueFamily = VK_QUEUE_FAMILY_IGNORED;
@@ -394,7 +396,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
@@ -730,8 +732,14 @@ struct VulkanTimelineSemaphore_t
 
 	CVulkanDevice *pDevice = nullptr;
 	VkSemaphore pVkSemaphore = VK_NULL_HANDLE;
-	int nFd = -1; // Syncobj FD, not renderer fd. Get that from pDevice.
-	uint32_t uHandle = 0;
+
+	int GetFd() const;
+};
+
+struct VulkanTimelinePoint_t
+{
+	std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore;
+	uint64_t ulPoint;
 };
 
 class CVulkanDevice
@@ -755,8 +763,8 @@ public:
 		return ret;
 	}
 
-	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint );
-	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( uint32_t uHandle );
+	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
+	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
 
 	static constexpr uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
@@ -1133,12 +1141,18 @@ public:
 	VkQueue queue() { return m_queue; }
 	uint32_t queueFamily() { return m_queueFamily; }
 	
-	inline auto& m_getRefBoundTextures() { return m_textureBlock.boundTextures; };
-	inline auto __attribute__((pure)) m_getBoundTextures() const { return m_textureBlock.boundTextures; };
+	inline void setBoundTexture(uint16_t slot, gamescope::Rc<CVulkanTexture>& texture) {
+		m_textureBlock.boundTextures[slot] = texture.get();
+	}
+	inline void unsetBoundTexture(uint16_t slot) {
+		m_textureBlock.boundTextures[slot] = nullptr;
+	}
+
+	inline auto __attribute__((pure)) m_getBoundTextures() const { return m_textureBlock.boundTextures; }
 	
-	inline auto& m_getTarget() { return m_textureBlock.target; };
-	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; };
-	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; };
+	inline auto& m_getTarget() { return m_textureBlock.target; }
+	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; }
+	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; }
 	
 	CVulkanTexture**__restrict__ __attribute__((pure)) getShaperLut(uint32_t i) {
 		if (i < EOTF_Count) {
@@ -1179,6 +1193,12 @@ public:
 		return VKR_SAMPLER_SLOTS - std::countl_zero(m_boundTextureBits);
 	}
 
+	void AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	void AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+
+	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
+	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
+
 private:
 
 	VkCommandBuffer m_cmdBuffer;
@@ -1186,30 +1206,31 @@ private:
 
 	VkQueue m_queue;
 	uint32_t m_queueFamily;
+
+	bool m_previousCopy = false;
 	
 	// Per Use State
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24 bytes (on gcc)
 	
-	// Draw State
-	std::array<CVulkanTexture *, EOTF_Count> m_shaperLut;
-	std::array<CVulkanTexture *, EOTF_Count> m_lut3D;
-	
-	bool m_previousCopy = false;
-	uint8_t padding[16-4-2-sizeof(m_previousCopy)]; //padding so that the two above arrays are 32-byte aligned  (2 + 24 + 4 + 2 = 32 bytes)
-	// Draw State
-	uint32_t m_renderBufferOffset = 0; // 4 bytes
-	uint16_t m_boundTextureBits = 0; // 2 bytes
-	
+	// Draw State	
 	struct alignas(32) m_textureBlock {			
 			std::bitset<VKR_SAMPLER_SLOTS> useSrgb;
 			CVulkanTexture* target;
 			std::array<SamplerState, VKR_SAMPLER_SLOTS> samplerState;
 			CVulkanTexture* boundTextures[VKR_SAMPLER_SLOTS];
 	} m_textureBlock alignas(32);
+
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
+	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
+
+	std::vector<VulkanTimelinePoint_t> m_ExternalDependencies;
+	std::vector<VulkanTimelinePoint_t> m_ExternalSignals;
+
+	uint32_t m_renderBufferOffset = 0;
 };
 
-uint32_t VulkanFormatToDRM( VkFormat vkFormat );
+uint32_t VulkanFormatToDRM( VkFormat vkFormat, std::optional<bool> obHasAlphaOverride = std::nullopt );
 VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );

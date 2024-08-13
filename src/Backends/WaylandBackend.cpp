@@ -1813,12 +1813,7 @@ namespace gamescope
 
     bool CWaylandBackend::SupportsExplicitSync() const
     {
-        // Not right now, we need guarantee that no implicit
-        // sync is going to happen somehow.
-        //
-        // TODO: Perhaps we can check for host compositor
-        // syncobj stuff here and make that work?
-        return false;
+        return true;
     }
 
     bool CWaylandBackend::IsVisible() const

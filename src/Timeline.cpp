@@ -24,19 +24,31 @@ namespace gamescope
         return uHandle;
     }
 
-    CTimeline::CTimeline( int32_t nSyncobjFd )
-        : CTimeline( nSyncobjFd, SyncobjFdToHandle( nSyncobjFd ) )
+    /*static*/ std::shared_ptr<CTimeline> CTimeline::Create( const TimelineCreateDesc_t &desc )
+    {
+        std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = g_device.CreateTimelineSemaphore( desc.ulStartingPoint, true );
+        if ( !pSemaphore )
+            return nullptr;
+
+        return std::make_shared<CTimeline>( pSemaphore->GetFd(), std::move( pSemaphore ) );
+    }
+
+    CTimeline::CTimeline( int32_t nSyncobjFd, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore )
+        : CTimeline( nSyncobjFd, SyncobjFdToHandle( nSyncobjFd ), std::move( pSemaphore ) )
     {
     }
 
-    CTimeline::CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle )
+    CTimeline::CTimeline( int32_t nSyncobjFd, uint32_t uSyncobjHandle, std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore )
         : m_nSyncobjFd{ nSyncobjFd }
         , m_uSyncobjHandle{ uSyncobjHandle }
+        , m_pVkSemaphore{ std::move( pSemaphore ) }
     {
     }
 
     CTimeline::~CTimeline()
     {
+        m_pVkSemaphore = nullptr;
+
         if ( m_uSyncobjHandle )
             drmSyncobjDestroy( GetDrmRenderFD(), m_uSyncobjHandle );
         if ( m_nSyncobjFd >= 0 )
@@ -46,6 +58,14 @@ namespace gamescope
     int32_t CTimeline::GetDrmRenderFD()
     {
         return g_device.drmRenderFd();
+    }
+
+    std::shared_ptr<VulkanTimelineSemaphore_t> CTimeline::ToVkSemaphore()
+    {
+        if ( !m_pVkSemaphore )
+            m_pVkSemaphore = g_device.ImportTimelineSemaphore( this );
+
+        return m_pVkSemaphore;
     }
 
     // CTimelinePoint
