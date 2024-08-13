@@ -33,6 +33,7 @@ namespace gamescope
             { "label", required_argument, nullptr, 0 },
             { "new-session-id", no_argument, nullptr, 0 },
             { "respawn", no_argument, nullptr, 0 },
+            { "pass-fds-to-child", required_argument, nullptr, 0 },
         };
 
         bool bRespawn = false;
@@ -41,6 +42,8 @@ namespace gamescope
 
         int nOptIndex = -1;
         int nOption = -1;
+
+        char* passThruFdList = nullptr;
         while ( ( nOption = getopt_long(argc, argv, "", k_ReaperOptions, &nOptIndex ) ) != -1 )
         {
             if ( nOption == '?' )
@@ -62,6 +65,10 @@ namespace gamescope
             else if ( !strcmp( pszOptionName, "new-session-id" ) )
             {
                 bNewSession = true;
+            }
+            else if ( !strcmp( pszOptionName, "pass-fds-to-child") )
+            {
+                passThruFdList = optarg;
             }
         }
 
@@ -90,7 +97,11 @@ namespace gamescope
             STDOUT_FILENO,
             STDERR_FILENO,
         }};
-        Process::CloseAllFds( nExcludedFds );
+        {
+            auto passThruFds = (fdPassThruList ? SplitCommaSeparatedList(fdPassThruList) : std::vector<int>{});
+            std::vector combinedVector{ GetCombinedVector(nExcludedFds, passThruFds) };
+            Process::CloseAllFds( combinedVector );
+        }
 
         // We typically don't make a new sid, as we want to keep the same stdin/stdout
         // Don't really care about it for pgroup reasons, as processes can leave those.

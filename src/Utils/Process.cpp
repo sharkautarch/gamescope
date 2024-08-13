@@ -424,6 +424,13 @@ namespace gamescope::Process
     {
         std::vector<char *> args;
         args.push_back( (char *)"gamescopereaper" );
+        if ( fdPassThruList != nullptr ) {
+            args.push_back( "--pass-fds-to-child" );
+            //I was thinking about passing a function that frees this memory to std::atexit, but that will probably cause gamescopereaper to coredump at exit
+            //so just let the memory be 'leaked' instead:
+            char* copiedList = strdup(fdPassThruList);
+            args.push_back(copiedList);
+        }
         if ( bRespawn )
             args.push_back( (char *)"--respawn" );
         args.push_back( (char *)"--" );
