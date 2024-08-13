@@ -1213,7 +1213,8 @@ private:
 	std::unordered_map<CVulkanTexture *, TextureState> m_textureState; //56 
 	std::vector<gamescope::Rc<CVulkanTexture>> m_textureRefs; //24 bytes (on gcc)
 	
-	// Draw State	
+	// Draw State
+	uint16_t m_boundTextureBits;
 	struct alignas(32) m_textureBlock {			
 			std::bitset<VKR_SAMPLER_SLOTS> useSrgb;
 			CVulkanTexture* target;
