@@ -97,11 +97,9 @@ namespace gamescope
             STDOUT_FILENO,
             STDERR_FILENO,
         }};
-        {
-            auto passThruFds = (passThruFdList ? gamescope::Process::SplitCommaSeparatedList(passThruFdList) : std::vector<int>{});
-            std::vector combinedVector{ gamescope::Process::GetCombinedVector(nExcludedFds, passThruFds) };
-            Process::CloseAllFds( combinedVector );
-        }
+        auto passThruFds = (passThruFdList ? gamescope::Process::SplitCommaSeparatedList(passThruFdList) : std::vector<int>{});
+        std::vector combinedVector{ gamescope::Process::GetCombinedVector(nExcludedFds, passThruFds) };
+        Process::CloseAllFds( combinedVector );
 
         // We typically don't make a new sid, as we want to keep the same stdin/stdout
         // Don't really care about it for pgroup reasons, as processes can leave those.
@@ -143,7 +141,7 @@ namespace gamescope
         Process::BecomeSubreaper();
         Process::SetDeathSignal( SIGTERM );
 
-        pid_t nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
+        pid_t nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ], nullptr, false, passThruFds );
         assert( nPrimaryChild != 0 );
 
         if ( nPrimaryChild > 0 )
@@ -158,7 +156,7 @@ namespace gamescope
                 {
                     s_ReaperLog.infof( "\"%s\" process shut down. Restarting.", argv[ nSubCommandArgc ] );
 
-                    nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ] );
+                    nPrimaryChild = Process::SpawnProcess( &argv[ nSubCommandArgc ], nullptr, false, passThruFds );
                     Process::WaitForAllChildren( nPrimaryChild );
                 }
             }
