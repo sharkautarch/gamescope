@@ -3,11 +3,37 @@
 #include <optional>
 #include <functional>
 #include <span>
+#include "../convar.h"
 
 #include <sys/types.h>
 
 namespace gamescope::Process
 {
+   static inline auto SplitCommaSeparatedList(char* list) {
+        std::vector svSplit = Split(list, ",");
+        std::vector<int32_t> split(svSplit.size());
+        for (size_t i = 0; i < svSplit.size(); i++) {
+            auto oParsed = Parse<int32_t>(svSplit[i]);
+            split[i] = oParsed ? *oParsed : 0;
+        }
+
+        return split;
+    }
+
+    static inline auto GetCombinedVector(const std::span<int>& baseArray, std::vector<int> in) noexcept {
+        const auto nOldSize = in.size();
+        const auto nNewSize = baseArray.size() + nOldSize;
+
+        if (const auto in_max_size = in.max_size(); nNewSize >= in_max_size) {
+            __builtin_unreachable();
+        }
+        std::vector<int> newVec(nNewSize);
+
+        std::ranges::copy(in,        newVec.begin() + baseArray.size());
+        std::ranges::copy(baseArray, newVec.begin());
+
+        return newVec;
+    }
     void BecomeSubreaper();
     void SetDeathSignal( int nSignal );
 

@@ -1,6 +1,5 @@
 #include "Process.h"
 #include "../Utils/Algorithm.h"
-#include "../convar.h"
 #include "../log.hpp"
 #include "../Utils/Defer.h"
 
@@ -38,33 +37,6 @@ namespace gamescope::Process
     static bool IsDigit( char chChar )
     {
         return chChar >= '0' && chChar <= '9';
-    }
-
-    static auto SplitCommaSeparatedList(char* list) {
-      std::vector svSplit = Split(list, ",");
-      std::vector<int32_t> split(svSplit.size());
-      for (size_t i = 0; i < svSplit.size(); i++) {
-          auto oParsed = Parse<int32_t>(svSplit[i]);
-          split[i] = oParsed ? *oParsed : 0;
-      }
-
-      return split;
-    }
-    
-    static auto GetCombinedVector(const std::span<int>& baseArray, std::vector<int> in) noexcept {
-      const auto nOldSize = in.size();
-      const auto nNewSize = baseArray.size() + nOldSize;
-      
-      if (const auto in_max_size = in.max_size(); nNewSize >= in_max_size) {
-          __builtin_unreachable();
-      }
-      std::vector<int> newVec(nNewSize);
-     
-      
-      std::ranges::copy(in,        newVec.begin() + baseArray.size());
-      std::ranges::copy(baseArray, newVec.begin());
-
-      return newVec;
     }
 
     void BecomeSubreaper()
@@ -426,7 +398,7 @@ namespace gamescope::Process
         std::vector<char *> args;
         args.push_back( (char *)"gamescopereaper" );
         if ( fdPassThruList != nullptr ) {
-            args.push_back( "--pass-fds-to-child" );
+            args.push_back( (char*)"--pass-fds-to-child" );
             //I was thinking about passing a function that frees this memory to std::atexit, but that will probably cause gamescopereaper to coredump at exit
             //so just let the memory be 'leaked' instead:
             char* copiedList = strdup(fdPassThruList);

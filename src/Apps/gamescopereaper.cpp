@@ -98,8 +98,8 @@ namespace gamescope
             STDERR_FILENO,
         }};
         {
-            auto passThruFds = (fdPassThruList ? SplitCommaSeparatedList(fdPassThruList) : std::vector<int>{});
-            std::vector combinedVector{ GetCombinedVector(nExcludedFds, passThruFds) };
+            auto passThruFds = (passThruFdList ? gamescope::Process::SplitCommaSeparatedList(passThruFdList) : std::vector<int>{});
+            std::vector combinedVector{ gamescope::Process::GetCombinedVector(nExcludedFds, passThruFds) };
             Process::CloseAllFds( combinedVector );
         }
 
