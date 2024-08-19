@@ -1551,53 +1551,34 @@ void CVULKANCMDBUFFER_TARGET_ATTR CVulkanCmdBuffer::clearState()
 			}
 		}
 }
-//#define DEBUG_clearBoundTexturesAboveSlot
+
 void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::clearBoundTexturesAboveSlot(uint16_t slot) {
 	const uint16_t bits = m_boundTextureBits;
 
-#ifdef DEBUG_clearBoundTexturesAboveSlot
-	bits = bits | (bits << 1) | (bits << 2);
-	std::cout << "bits = " << std::bitset<16>(bits) << "\n"; 
-#endif
-
 	const uint16_t bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
-	if (bitsAboveSlot == 0) {
-		return;
-	}
+	const uint16_t slotAboveSlot = slot+1;
+	auto& __restrict__ boundTextures = m_textureBlock.boundTextures;
+	boundTextures[slotAboveSlot] = nullptr;
 	{
 		const uint16_t bitsBelowSlot = u16MaskOutBitsAbovePos(bits, slot);
 		m_boundTextureBits = bitsBelowSlot;
 	}
-	uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
-	const uint16_t slotAboveSlot = slot+1;
-	auto& __restrict__ boundTextures = m_textureBlock.boundTextures;
-	boundTextures[slotAboveSlot] = nullptr;
-
-#ifdef DEBUG_clearBoundTexturesAboveSlot
-	std::cout << "posToClearTo = " << posToClearTo << "\n";
-	std::cout << "slotAboveSlot = " << slotAboveSlot << "\n";
-	std::atomic_signal_fence(std::memory_order_seq_cst);
-#endif
-
-	if (slotAboveSlot > 16 || posToClearTo > 16) {
-		__builtin_unreachable();
-	}
-
-	const uint16_t oneMinusEndIndex = posToClearTo-2;
-	if (	(oneMinusEndIndex > slotAboveSlot) & (oneMinusEndIndex < 16) ) {
-		boundTextures[oneMinusEndIndex] = nullptr;
-		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo-1); //adjust posToClearTo to make sure that the loop below isn't infinite
-	} else {
-		posToClearTo = ( (posToClearTo-(slotAboveSlot))%2==0 ) ? posToClearTo : (posToClearTo+1); //adjust posToClearTo to make sure that the loop below isn't infinite
+	
+	if (bitsAboveSlot == 0 || (uint32_t)slot+1 >= 15u) {
+		return;
 	}
 	
-	#pragma GCC unroll 1 //loop is already partially unrolled, no need to have gcc try to unroll it more
-	//										want to do ; i < posToClear ; but (uint16_t)(i-1) != (uint16_t)(posToClearTo) generates simpler assembly while still being correct
-	for (uint16_t i = slotAboveSlot+1; (uint16_t)(i-1) != (uint16_t)(posToClearTo); i+=2) {
-		auto*__restrict__ texPair = std::assume_aligned<16>(&(boundTextures[i])); //linux/unix abi ensures 16-byte alignment (and I double checked that boundTextures is at a 16-byte aligned address), and yet this is still necessary to coax gcc into generating aligned moves...
-#ifdef DEBUG_clearBoundTexturesAboveSlot
-		std::cout << "texPair = " << texPair << ", texPair % 16 = " << (ptrdiff_t)texPair%16 << ", texPair % 32 = " << (ptrdiff_t)texPair%32 << "\n";
-#endif
+
+	const bool bNeedsAlignup = ( ((slot+1)%2 != 0) );
+
+	const uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	const uint16_t posToClearToAligned = posToClearTo
+																		 + (( (posToClearTo)%2 ) & bNeedsAlignup);
+	const uint16_t slotAboveSlotAligned = bNeedsAlignup ? (slotAboveSlot+1) : slotAboveSlot;
+	
+	// using != instead of < yields more compact codegen
+	for (uint16_t i = slotAboveSlotAligned; i != posToClearToAligned; i+=2) {
+		auto*__restrict__ texPair = std::assume_aligned<16>(&(boundTextures[i]));
 		memset(texPair, 0, sizeof(CVulkanTexture*)*2);
 	}
 }
@@ -1611,6 +1592,58 @@ constexpr uint16_t CVULKANCMDBUFFER_TARGET_ATTR clearBoundTexturesAboveSlotTest(
 	auto posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
 	return posToClearTo;
 }
+
+//#define DEBUG_clearBoundTexturesAboveSlot
+//compile-time testing code below works,
+//but is commented out because it would lengthen build time too much
+#ifdef DEBUG_clearBoundTexturesAboveSlot
+//returns false if input causes aligned vector move loop to be undefined
+static constexpr bool CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) clearBoundTexturesAboveSlotTest2(uint16_t slot, uint16_t bits) {
+	
+	const uint16_t bitsAboveSlot = u16MaskOutBitsBelowPos(bits, slot);
+	const uint16_t slotAboveSlot = slot+1;
+	//auto& __restrict__ boundTextures = m_textureBlock.boundTextures;
+	//boundTextures[slotAboveSlot] = nullptr;
+	{
+		//const uint16_t bitsBelowSlot = u16MaskOutBitsAbovePos(bits, slot);
+		//m_boundTextureBits = bitsBelowSlot;
+	}
+	
+	if (bitsAboveSlot == 0 || (uint32_t)slot+1 >= 15u) {
+		return true;
+	}
+	
+
+	const bool bNeedsAlignup = ( ((slot+1)%2 != 0) );
+
+	const uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
+	const uint16_t posToClearToAligned = posToClearTo
+																		 + (( (posToClearTo)%2 ) & bNeedsAlignup);
+	const uint16_t slotAboveSlotAligned = bNeedsAlignup ? (slotAboveSlot+1) : slotAboveSlot;
+	
+	// using != instead of < yields more compact codegen
+	for (uint16_t i = slotAboveSlotAligned; i != posToClearToAligned; i+=2) {
+		if (i%2 != 0) {
+			return false;
+		}
+	}
+	
+	return true;
+}
+
+static constexpr bool clearBoundTexturesAboveSlotTest2Range(uint16_t slotStart, uint16_t slotEnd, uint16_t bits) {
+	bool ret=true;
+	ITERATION_INDEPENDENT_LOOP
+	for (std::int_fast16_t i = 0; i != static_cast<std::int_fast16_t>(slotEnd); i++) {
+		ret &= clearBoundTexturesAboveSlotTest2(static_cast<uint16_t>(i), bits);
+	}
+	
+	return ret;
+}
+
+static_assert(clearBoundTexturesAboveSlotTest2Range(0, 15, 0b1111'1111'1111'1111));
+static_assert(clearBoundTexturesAboveSlotTest2Range(0, 15, 0b0000'0000'1111'1111));
+#endif
 
 static_assert(clearBoundTexturesAboveSlotTest(0)==16);
 
