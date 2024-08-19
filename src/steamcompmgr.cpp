@@ -7836,7 +7836,7 @@ steamcompmgr_main(int argc, char **argv) TRACY_TRY
 
 		// HACK: Disable tearing if we have an overlay to avoid stutters right now
 		// TODO: Fix properly.
-		static bool bHasOverlay = ( global_focus.overlayWindow && global_focus.overlayWindow->opacity ) ||
+		const bool bHasOverlay = ( global_focus.overlayWindow && global_focus.overlayWindow->opacity ) ||
 								( global_focus.externalOverlayWindow && global_focus.externalOverlayWindow->opacity ) ||
 								( global_focus.overrideWindow  && global_focus.focusWindow && !global_focus.focusWindow->isSteamStreamingClient && global_focus.overrideWindow->opacity );
 
