@@ -3,6 +3,7 @@
 #include "color_helpers.h"
 #include "gamescope_shared.h"
 #include "vulkan_include.h"
+#include "Timeline.h"
 #include "convar.h"
 #include "rc.h"
 
@@ -146,23 +147,25 @@ namespace gamescope
     class IBackendFb : public IRcObject
     {
     public:
-        virtual void SetReleasePoint( const GamescopeTimelinePoint &point ) = 0;
+        virtual void SetBuffer( wlr_buffer *pClientBuffer ) = 0;
+        virtual void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) = 0;
     };
 
     class CBaseBackendFb : public IBackendFb
     {
     public:
-        CBaseBackendFb( wlr_buffer *pClientBuffer );
+        CBaseBackendFb();
         virtual ~CBaseBackendFb();
 
         uint32_t IncRef() override;
         uint32_t DecRef() override;
 
-        void SetReleasePoint( const GamescopeTimelinePoint &point ) override;
+        void SetBuffer( wlr_buffer *pClientBuffer ) override;
+        void SetReleasePoint( std::shared_ptr<CReleaseTimelinePoint> pReleasePoint ) override;
 
     private:
         wlr_buffer *m_pClientBuffer = nullptr;
-        std::optional<GamescopeTimelinePoint> m_oPoint;
+        std::shared_ptr<CReleaseTimelinePoint> m_pReleasePoint;
     };
 
     class IBackend

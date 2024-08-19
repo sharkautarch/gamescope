@@ -415,7 +415,7 @@ namespace gamescope
 	class CDRMFb final : public CBaseBackendFb
 	{
 	public:
-		CDRMFb( uint32_t uFbId, wlr_buffer *pClientBuffer );
+		CDRMFb( uint32_t uFbId );
 		~CDRMFb();
 
 		uint32_t GetFbId() const { return m_uFbId; }
@@ -1473,7 +1473,7 @@ gamescope::OwningRc<gamescope::IBackendFb> drm_fbid_from_dmabuf( struct drm_t *d
 
 	drm_log.debugf("make fbid %u", fb_id);
 
-	pBackendFb = new gamescope::CDRMFb( fb_id, buf );
+	pBackendFb = new gamescope::CDRMFb( fb_id );
 
 out:
 	for ( int i = 0; i < dma_buf->n_planes; i++ ) {
@@ -2334,9 +2334,8 @@ namespace gamescope
 	/////////////////////////
 	// CDRMFb
 	/////////////////////////
-	CDRMFb::CDRMFb( uint32_t uFbId, wlr_buffer *pClientBuffer )
-		: CBaseBackendFb( pClientBuffer )
-		, m_uFbId{ uFbId }
+	CDRMFb::CDRMFb( uint32_t uFbId )
+		: m_uFbId{ uFbId }
 	{
 
 	}
@@ -2952,6 +2951,8 @@ bool drm_update_color_mgmt(struct drm_t *drm)
 	return true;
 }
 
+int g_nDynamicRefreshHz = 0;
+
 static void drm_unset_mode( struct drm_t *drm )
 {
 	drm->pending.mode_id = 0;
@@ -2967,6 +2968,7 @@ static void drm_unset_mode( struct drm_t *drm )
 	g_nOutputRefresh = drm->preferred_refresh;
 	if (g_nOutputRefresh == 0)
 		g_nOutputRefresh = gamescope::ConvertHztomHz( 60 );
+	g_nDynamicRefreshHz = 0;
 
 	g_bRotated = false;
 }
@@ -2982,6 +2984,7 @@ bool drm_set_mode( struct drm_t *drm, const drmModeModeInfo *mode )
 	drm->needs_modeset = true;
 
 	g_nOutputRefresh = gamescope::GetModeRefresh( mode );
+	g_nDynamicRefreshHz = 0;
 
 	update_drm_effective_orientations(drm, mode);
 
@@ -3044,7 +3047,13 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 
 	mode.type = DRM_MODE_TYPE_USERDEF;
 
-	return drm_set_mode(drm, &mode);
+	bool bSuccess = drm_set_mode(drm, &mode);
+	if ( !bSuccess )
+		return false;
+
+	g_nDynamicRefreshHz = refresh;
+
+	return true;
 }
 
 bool drm_set_resolution( struct drm_t *drm, int width, int height )

@@ -218,11 +218,11 @@ struct {
 	{ DRM_FORMAT_INVALID, VK_FORMAT_UNDEFINED, VK_FORMAT_UNDEFINED, false, true },
 };
 
-uint32_t VulkanFormatToDRM( VkFormat vkFormat )
+uint32_t VulkanFormatToDRM( VkFormat vkFormat, std::optional<bool> obHasAlphaOverride )
 {
 	for ( int i = 0; s_DRMVKFormatTable[i].vkFormat != VK_FORMAT_UNDEFINED; i++ )
 	{
-		if ( s_DRMVKFormatTable[i].vkFormat == vkFormat || s_DRMVKFormatTable[i].vkFormatSrgb == vkFormat )
+		if ( ( s_DRMVKFormatTable[i].vkFormat == vkFormat || s_DRMVKFormatTable[i].vkFormatSrgb == vkFormat ) && ( !obHasAlphaOverride || s_DRMVKFormatTable[i].bHasAlpha == *obHasAlphaOverride ) )
 		{
 			return s_DRMVKFormatTable[i].DRMFormat;
 		}
@@ -549,6 +549,8 @@ bool CVulkanDevice::createDevice()
 
 	enabledExtensions.push_back( VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME );
 	enabledExtensions.push_back( VK_EXT_EXTERNAL_MEMORY_DMA_BUF_EXTENSION_NAME );
+
+	enabledExtensions.push_back( VK_KHR_EXTERNAL_SEMAPHORE_FD_EXTENSION_NAME );
 
 	enabledExtensions.push_back( VK_EXT_ROBUSTNESS_2_EXTENSION_NAME );
 #if 0
@@ -1254,13 +1256,36 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 	// This is the seq no of the command buffer we are going to submit.
 	const uint64_t nextSeqNo = lastSubmissionSeqNo + 1;
 
+	std::vector<VkSemaphore> pSignalSemaphores;
+	std::vector<uint64_t> ulSignalPoints;
+
+	std::vector<VkPipelineStageFlags> uWaitStageFlags;
+	std::vector<VkSemaphore> pWaitSemaphores;
+	std::vector<uint64_t> ulWaitPoints;
+
+	pSignalSemaphores.push_back( m_scratchTimelineSemaphore );
+	ulSignalPoints.push_back( nextSeqNo );
+
+	for ( auto &dep : cmdBuffer->GetExternalSignals() )
+	{
+		pSignalSemaphores.push_back( dep.pTimelineSemaphore->pVkSemaphore );
+		ulSignalPoints.push_back( dep.ulPoint );
+	}
+
+	for ( auto &dep : cmdBuffer->GetExternalDependencies() )
+	{
+		pWaitSemaphores.push_back( dep.pTimelineSemaphore->pVkSemaphore );
+		ulWaitPoints.push_back( dep.ulPoint );
+		uWaitStageFlags.push_back( VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT | VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT );
+	}
+
 	VkTimelineSemaphoreSubmitInfo timelineInfo = {
 		.sType = VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO,
 		// no need to ensure order of cmd buffer submission, we only have one queue
-		.waitSemaphoreValueCount = 0,
-		.pWaitSemaphoreValues = nullptr,
-		.signalSemaphoreValueCount = 1,
-		.pSignalSemaphoreValues = &nextSeqNo,
+		.waitSemaphoreValueCount = static_cast<uint32_t>( ulWaitPoints.size() ),
+		.pWaitSemaphoreValues = ulWaitPoints.data(),
+		.signalSemaphoreValueCount = static_cast<uint32_t>( ulSignalPoints.size() ),
+		.pSignalSemaphoreValues = ulSignalPoints.data(),
 	};
 
 	VkCommandBuffer rawCmdBuffer = cmdBuffer->rawBuffer();
@@ -1268,10 +1293,13 @@ uint64_t CVulkanDevice::submitInternal( CVulkanCmdBuffer* cmdBuffer )
 	VkSubmitInfo submitInfo = {
 		.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
 		.pNext = &timelineInfo,
+		.waitSemaphoreCount = static_cast<uint32_t>( pWaitSemaphores.size() ),
+		.pWaitSemaphores = pWaitSemaphores.data(),
+		.pWaitDstStageMask = uWaitStageFlags.data(),
 		.commandBufferCount = 1,
 		.pCommandBuffers = &rawCmdBuffer,
-		.signalSemaphoreCount = 1,
-		.pSignalSemaphores = &m_scratchTimelineSemaphore,
+		.signalSemaphoreCount = static_cast<uint32_t>( pSignalSemaphores.size() ),
+		.pSignalSemaphores = pSignalSemaphores.data(),
 	};
 
 	vk_check( vk.QueueSubmit( cmdBuffer->queue(), 1, &submitInfo, VK_NULL_HANDLE ) );
@@ -1292,6 +1320,130 @@ void CVulkanDevice::garbageCollect( void )
 	vk_check( vk.GetSemaphoreCounterValue(device(), m_scratchTimelineSemaphore, &currentSeqNo) );
 
 	resetCmdBuffers(currentSeqNo);
+}
+
+VulkanTimelineSemaphore_t::~VulkanTimelineSemaphore_t()
+{
+	if ( pVkSemaphore != VK_NULL_HANDLE )
+	{
+		pDevice->vk.DestroySemaphore( pDevice->device(), pVkSemaphore, nullptr );
+		pVkSemaphore = VK_NULL_HANDLE;
+	}
+}
+
+int VulkanTimelineSemaphore_t::GetFd() const
+{
+	const VkSemaphoreGetFdInfoKHR semaphoreGetInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_GET_FD_INFO_KHR,
+		.semaphore = pVkSemaphore,
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+	};
+
+	int32_t nFd = -1;
+	VkResult res = VK_SUCCESS;
+	if ( ( res = pDevice->vk.GetSemaphoreFdKHR( pDevice->device(), &semaphoreGetInfo, &nFd ) ) != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkGetSemaphoreFdKHR failed" );
+		return -1;
+	}
+
+	return nFd;
+}
+
+std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphore( uint64_t ulStartPoint, bool bShared )
+{
+	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	pSemaphore->pDevice = this;
+
+	VkSemaphoreCreateInfo createInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+	};
+
+	VkSemaphoreTypeCreateInfo typeInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.pNext = std::exchange( createInfo.pNext, &typeInfo ),
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+		.initialValue = ulStartPoint,
+	};
+
+	VkExportSemaphoreCreateInfo exportInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_EXPORT_SEMAPHORE_CREATE_INFO,
+		.pNext = bShared ? std::exchange( createInfo.pNext, &exportInfo ) : nullptr,
+		// This is a syncobj fd for any drivers using syncobj.
+		.handleTypes = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+	};
+
+	VkResult res;
+	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &pSemaphore->pVkSemaphore ) ) != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateSemaphore failed" );
+		return nullptr;
+	}
+
+	return pSemaphore;
+}
+
+std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphore( gamescope::CTimeline *pTimeline )
+{
+	std::shared_ptr<VulkanTimelineSemaphore_t> pSemaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	pSemaphore->pDevice = this;
+
+	const VkSemaphoreTypeCreateInfo typeInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO,
+		.semaphoreType = VK_SEMAPHORE_TYPE_TIMELINE,
+	};
+
+	const VkSemaphoreCreateInfo createInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+		.pNext = &typeInfo,
+	};
+
+	VkResult res;
+	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &pSemaphore->pVkSemaphore ) ) != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkCreateSemaphore failed" );
+		return nullptr;
+	}
+
+    // "Importing a semaphore payload from a file descriptor transfers
+    // ownership of the file descriptor from the application to the Vulkan
+    // implementation. The application must not perform any operations on
+    // the file descriptor after a successful import."
+	//
+	// Thus, we must dup.
+
+	VkImportSemaphoreFdInfoKHR importFdInfo =
+	{
+		.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
+		.pNext = nullptr,
+		.semaphore = pSemaphore->pVkSemaphore,
+		.flags = 0, // not temporary
+		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
+		.fd = dup( pTimeline->GetSyncobjFd() ),
+	};
+	if ( ( res = vk.ImportSemaphoreFdKHR( m_device, &importFdInfo ) ) != VK_SUCCESS )
+	{
+		vk_errorf( res, "vkImportSemaphoreFdKHR failed" );
+		return nullptr;
+	}
+
+	return pSemaphore;
+}
+
+void CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+{
+	m_ExternalDependencies.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
+}
+
+void CVulkanCmdBuffer::AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
+{
+	m_ExternalSignals.emplace_back( std::move( pTimelineSemaphore ), ulPoint );
 }
 
 void CVulkanDevice::wait(uint64_t sequence, bool reset)
@@ -1362,6 +1514,9 @@ void CVulkanCmdBuffer::reset()
 	vk_check( m_device->vk.ResetCommandBuffer(m_cmdBuffer, 0) );
 	m_textureRefs.clear();
 	m_textureState.clear();
+
+	m_ExternalDependencies.clear();
+	m_ExternalSignals.clear();
 }
 
 void CVulkanCmdBuffer::begin()
@@ -2476,6 +2631,14 @@ uint32_t CVulkanTexture::DecRef()
 	return uRefCount;
 }
 
+bool CVulkanTexture::IsInUse()
+{
+	if ( m_pBackendFb && m_pBackendFb->GetRefCount() != 0 )
+		return true;
+
+	return GetRefCount() != 0;
+}
+
 CVulkanTexture::CVulkanTexture( void )
 {
 }
@@ -3112,7 +3275,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	VkFormat format = pOutput->outputFormat;
 
 	pOutput->outputImages[0] = new CVulkanTexture();
-	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
+	bool bSuccess = pOutput->outputImages[0]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format, false), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -3120,7 +3283,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	}
 
 	pOutput->outputImages[1] = new CVulkanTexture();
-	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
+	bSuccess = pOutput->outputImages[1]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format, false), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -3128,7 +3291,7 @@ static bool vulkan_make_output_images( VulkanOutput_t *pOutput )
 	}
 
 	pOutput->outputImages[2] = new CVulkanTexture();
-	bSuccess = pOutput->outputImages[2]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format), outputImageflags );
+	bSuccess = pOutput->outputImages[2]->BInit( g_nOutputWidth, g_nOutputHeight, 1u, VulkanFormatToDRM(format, false), outputImageflags );
 	if ( bSuccess != true )
 	{
 		vk_log.errorf( "failed to allocate buffer for KMS" );
@@ -3752,7 +3915,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment )
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
 {
 	ZoneScopedN("vulkan_composite");
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
@@ -3792,7 +3955,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	else
 		compositeImage = partial ? g_output.outputImagesPartialOverlay[ g_output.nOutImage ] : g_output.outputImages[ g_output.nOutImage ];
 
-	auto cmdBuffer = g_device.commandBuffer();
+	auto cmdBuffer = pInCommandBuffer ? std::move( pInCommandBuffer ) : g_device.commandBuffer();
 
 	for (uint32_t i = 0; i < EOTF_Count; i++)
 		cmdBuffer->bindColorMgmtLuts(i, frameInfo->shaperLut[i], frameInfo->lut3D[i]);

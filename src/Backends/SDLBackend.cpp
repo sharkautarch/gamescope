@@ -397,7 +397,7 @@ namespace gamescope
 
 	OwningRc<IBackendFb> CSDLBackend::ImportDmabufToBackend( wlr_buffer *pBuffer, wlr_dmabuf_attributes *pDmaBuf )
 	{
-		return new CBaseBackendFb( pBuffer );
+		return new CBaseBackendFb();
 	}
 
 	bool CSDLBackend::UsesModifiers() const

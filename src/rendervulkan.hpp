@@ -168,6 +168,8 @@ public:
 	uint32_t IncRef();
 	uint32_t DecRef();
 
+	bool IsInUse();
+
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
 	inline VkImageView srgbView() { return m_srgbView; }
@@ -394,7 +396,7 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_dmabuf( struct wl
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t width, uint32_t height, uint32_t contentWidth, uint32_t contentHeight, uint32_t drmFormat, CVulkanTexture::createFlags texCreateFlags, void *bits );
 gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struct wlr_buffer *buf, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb );
 
-std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true );
+std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pScreenshotTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride = nullptr, bool increment = true, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer = nullptr );
 void vulkan_wait( uint64_t ulSeqNo, bool bReset );
 gamescope::Rc<CVulkanTexture> vulkan_get_last_output_image( bool partial, bool defer );
 gamescope::Rc<CVulkanTexture> vulkan_acquire_screenshot_texture(uint32_t width, uint32_t height, bool exportable, uint32_t drmFormat, EStreamColorspace colorspace = k_EStreamColorspace_Unknown);
@@ -678,6 +680,8 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CreateSampler) \
 	VK_FUNC(CreateSamplerYcbcrConversion) \
 	VK_FUNC(CreateSemaphore) \
+	VK_FUNC(GetSemaphoreFdKHR) \
+	VK_FUNC(ImportSemaphoreFdKHR) \
 	VK_FUNC(CreateShaderModule) \
 	VK_FUNC(CreateSwapchainKHR) \
 	VK_FUNC(DestroyBuffer) \
@@ -686,6 +690,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(DestroyImage) \
 	VK_FUNC(DestroyImageView) \
 	VK_FUNC(DestroyPipeline) \
+	VK_FUNC(DestroySemaphore) \
 	VK_FUNC(DestroyPipelineLayout) \
 	VK_FUNC(DestroySampler) \
 	VK_FUNC(DestroySwapchainKHR) \
@@ -719,6 +724,24 @@ constexpr T align(T what, U to) {
 return (what + to - 1) & ~(to - 1);
 }
 
+class CVulkanDevice;
+
+struct VulkanTimelineSemaphore_t
+{
+	~VulkanTimelineSemaphore_t();
+
+	CVulkanDevice *pDevice = nullptr;
+	VkSemaphore pVkSemaphore = VK_NULL_HANDLE;
+
+	int GetFd() const;
+};
+
+struct VulkanTimelinePoint_t
+{
+	std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore;
+	uint64_t ulPoint;
+};
+
 class CVulkanDevice
 {
 public:
@@ -739,6 +762,9 @@ public:
 		m_currentDescriptorSet = (m_currentDescriptorSet + 1) % m_descriptorSets.size();
 		return ret;
 	}
+
+	std::shared_ptr<VulkanTimelineSemaphore_t> CreateTimelineSemaphore( uint64_t ulStartingPoint, bool bShared = false );
+	std::shared_ptr<VulkanTimelineSemaphore_t> ImportTimelineSemaphore( gamescope::CTimeline *pTimeline );
 
 	static const uint32_t upload_buffer_size = 1920 * 1080 * 4;
 
@@ -912,7 +938,13 @@ protected:
 		return std::exchange(m_tracyCtx, nullptr);
 	}
 #endif
-	
+
+	void AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+	void AddSignal( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint );
+
+	const std::vector<VulkanTimelinePoint_t> &GetExternalDependencies() const { return m_ExternalDependencies; }
+	const std::vector<VulkanTimelinePoint_t> &GetExternalSignals() const { return m_ExternalSignals; }
+
 private:
 	VkCommandBuffer m_cmdBuffer;
 	CVulkanDevice *m_device;
@@ -938,10 +970,13 @@ private:
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_shaperLut;
 	std::array<CVulkanTexture *, VKR_LUT3D_COUNT> m_lut3D;
 
+	std::vector<VulkanTimelinePoint_t> m_ExternalDependencies;
+	std::vector<VulkanTimelinePoint_t> m_ExternalSignals;
+
 	uint32_t m_renderBufferOffset = 0;
 };
 
-uint32_t VulkanFormatToDRM( VkFormat vkFormat );
+uint32_t VulkanFormatToDRM( VkFormat vkFormat, std::optional<bool> obHasAlphaOverride = std::nullopt );
 VkFormat DRMFormatToVulkan( uint32_t nDRMFormat, bool bSrgb );
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
 uint32_t DRMFormatGetBPP( uint32_t nDRMFormat );

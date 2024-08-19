@@ -1,6 +1,21 @@
 #include "steamcompmgr_shared.hpp"
+#include "Utils/NonCopyable.h"
 
-struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
+#include <optional>
+#include "main.hpp"
+
+class CVulkanTexture;
+
+struct UpscaledTexture_t
+{
+	GamescopeUpscaleFilter eFilter{};
+	GamescopeUpscaleScaler eScaler{};
+	uint32_t uOutputWidth = 0;
+	uint32_t uOutputHeight = 0;
+	gamescope::Rc<CVulkanTexture> pTexture;
+};
+
+struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable, public gamescope::NonCopyable
 {
 	commit_t();
     ~commit_t();
@@ -18,10 +33,25 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
 	// Returns true if we had a fence that was closed.
 	bool CloseFenceInternal();
 	void SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCommits );
-	void SetReleasePoint( const std::optional<GamescopeTimelinePoint>& oReleasePoint );
+
+	bool ShouldPreemptivelyUpscale();
 
 	struct wlr_buffer *buf = nullptr;
 	gamescope::Rc<CVulkanTexture> vulkanTex;
+	std::optional<UpscaledTexture_t> upscaledTexture;
+
+	gamescope::Rc<CVulkanTexture> GetTexture( GamescopeUpscaleFilter eFilter, GamescopeUpscaleScaler eScaler )
+	{
+		if ( upscaledTexture &&
+			 upscaledTexture->eFilter == eFilter &&
+			 upscaledTexture->eScaler == eScaler &&
+			 upscaledTexture->uOutputWidth == g_nOutputWidth &&
+			 upscaledTexture->uOutputHeight == g_nOutputHeight )
+			return upscaledTexture->pTexture;
+
+		return vulkanTex;
+	}
+
 	uint64_t commitID = 0;
 	bool done = false;
 	bool async = false;
@@ -42,5 +72,4 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable
 	int m_nCommitFence = -1;
 	bool m_bMangoNudge = false;
 	CommitDoneList_t *m_pDoneCommits = nullptr; // I hate this
-	std::optional<GamescopeTimelinePoint> m_oReleasePoint;
 };
