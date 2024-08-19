@@ -23,6 +23,19 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 
 #ifdef TRACY_ENABLE
 #include <pthread.h>
+// MS postfix:   ̶M̶i̶c̶r̶o̶S̶o̶f̶t̶ Maybe collect Stack
+# ifdef TRACY_COLLECT_CALLSTACKS 
+#  define ZoneScopedNMS(...) ZoneScopedNS(__VA_ARGS__)
+#  define ZoneScopedMS(...) ZoneScopedS(__VA_ARGS__) 
+#  define ZoneScopedCMS(...) ZoneScopedCS(__VA_ARGS__)
+#  define ZoneScopedNCMS(...) ZoneScopedNCS(__VA_ARGS__)
+# else
+#  define ZoneScopedNMS(...) ZoneScopedN(__VA_ARGS__)
+#  define ZoneScopedMS(...) ZoneScoped(__VA_ARGS__) 
+#  define ZoneScopedCMS(...) ZoneScopedC(__VA_ARGS__)
+#  define ZoneScopedNCMS(...) ZoneScopedNC(__VA_ARGS__)
+# endif
+
 #	define EXIT(status) throw ETracyExit(status)
 #	define PTHREAD_EXIT(status) throw ETracyExit(status, true)
 #	define MAYBE_NORETURN
@@ -44,6 +57,10 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 #	endif
 
 #else
+# define ZoneScopedNMS(...)
+# define ZoneScopedMS(...)
+# define ZoneScopedCMS(...)
+# define ZoneScopedNCMS(...)
 #	define EXIT(status) exit(status)
 #	define PTHREAD_EXIT(status) pthread_exit(status)
 #	define MAYBE_NORETURN [[noreturn]]

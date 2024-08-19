@@ -961,7 +961,7 @@ namespace gamescope
 
     void CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )
     {
-    		ZoneScopedN("CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )");
+    		ZoneScopedNMS("CWaylandPlane::Present( std::optional<WaylandPlaneState> oState )");
         {
             std::unique_lock lock( m_PlaneStateLock );
             m_oCurrentPlaneState = oState;
@@ -1050,7 +1050,7 @@ namespace gamescope
 
     void CWaylandPlane::Commit()
     {
-    		ZoneScopedN("CWaylandPlane::Commit()");
+    		ZoneScopedNMS("CWaylandPlane::Commit()");
         if ( m_bNeedsDecorCommit )
         {
             CommitLibDecor( nullptr );

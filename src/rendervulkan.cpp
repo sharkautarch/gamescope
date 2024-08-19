@@ -2884,7 +2884,7 @@ bool vulkan_init_formats()
 
 bool acquire_next_image( void )
 {
-	ZoneScopedN("acquire_next_image");
+	ZoneScopedNMS("acquire_next_image");
 	{
 		VkResult res = g_device.vk.AcquireNextImageKHR( g_device.device(), g_output.swapChain, UINT64_MAX, VK_NULL_HANDLE, g_output.acquireFence, &g_output.nOutImage );
 		if ( res != VK_SUCCESS && res != VK_SUBOPTIMAL_KHR )
@@ -2965,7 +2965,7 @@ void vulkan_update_swapchain_hdr_metadata( VulkanOutput_t *pOutput )
 
 void vulkan_present_to_window( void )
 {
-	ZoneScopedN("vulkan_present_to_window");
+	ZoneScopedNMS("vulkan_present_to_window");
 	static uint64_t s_lastPresentId = 0;
 
 	uint64_t presentId = ++s_lastPresentId;
@@ -4148,7 +4148,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 void vulkan_wait( uint64_t ulSeqNo, bool bReset )
 {
-	ZoneScopedN("vulkan_wait");
+	ZoneScopedNMS("vulkan_wait");
 	return g_device.wait( ulSeqNo, bReset );
 }
 

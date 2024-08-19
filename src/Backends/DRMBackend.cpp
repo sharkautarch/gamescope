@@ -3250,7 +3250,7 @@ namespace gamescope
 			bool bDoComposite = true;
 			if ( !bNeedsFullComposite && !bWantsPartialComposite )
 			{
-				ZoneScopedN("CDRMBackend::Present(): drm_prepare()");
+				ZoneScopedNMS("CDRMBackend::Present(): drm_prepare()");
 				int ret = drm_prepare( &g_DRM, bAsync, pFrameInfo );
 				if ( ret == 0 ) {
 					bDoComposite = false;
@@ -3442,7 +3442,7 @@ namespace gamescope
 
 			int ret;
 			{
-				ZoneScopedN("CDRMBackend::Present(): partial/full composition: drm_prepare()");
+				ZoneScopedNMS("CDRMBackend::Present(): partial/full composition: drm_prepare()");
 			 	ret = drm_prepare( &g_DRM, bAsync, &presentCompFrameInfo );
 			}
 			
@@ -3462,7 +3462,7 @@ namespace gamescope
 
 				// Try once again to in case we need to fall back to another mode.
 				{
-					ZoneScopedN("CDRMBackend::Present(): partial/full composition: running drm_prepare() again (previous one failed)");
+					ZoneScopedNMS("CDRMBackend::Present(): partial/full composition: running drm_prepare() again (previous one failed)");
 					ret = drm_prepare( &g_DRM, bAsync, &compositeFrameInfo );
 				}
 				// Happens when we're VT-switched away
