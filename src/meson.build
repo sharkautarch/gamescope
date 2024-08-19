@@ -57,11 +57,11 @@ if get_option('tracy_enable')
 		tracy_public_args += ['-DTRACY_COLLECT_CALLSTACKS']
 	endif
 	
-	if get_option('tracy_no_sampling')
+	if get_option('tracy_no_sampling') and not get_option('tracy_collect_callstacks')
 		tracy_public_args += ['-DTRACY_NO_SAMPLING']
 	endif
 	
-	if get_option('tracy_no_system_tracing')
+	if get_option('tracy_no_system_tracing') and not get_option('tracy_collect_callstacks')
 		tracy_public_args += ['-DTRACY_NO_SYSTEM_TRACING']
 	endif
 	
