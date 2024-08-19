@@ -1577,7 +1577,8 @@ void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::cl
 	const uint16_t slotAboveSlotAligned = bNeedsAlignup ? (slotAboveSlot+1) : slotAboveSlot;
 	
 	// using != instead of < yields more compact codegen
-	for (uint16_t i = slotAboveSlotAligned; i != posToClearToAligned; i+=2) {
+	ITERATION_INDEPENDENT_LOOP
+	for (std::int_fast32_t i = slotAboveSlotAligned; i != (std::int_fast32_t)posToClearToAligned; i+=2) {
 		auto*__restrict__ texPair = std::assume_aligned<16>(&(boundTextures[i]));
 		memset(texPair, 0, sizeof(CVulkanTexture*)*2);
 	}
