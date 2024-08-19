@@ -25,10 +25,10 @@ inline std::optional<tracy::ScopedZone> g_zone_img_waiter;
 #include <pthread.h>
 // MS postfix:   ̶M̶i̶c̶r̶o̶S̶o̶f̶t̶ Maybe collect Stack
 # ifdef TRACY_COLLECT_CALLSTACKS 
-#  define ZoneScopedNMS(...) ZoneScopedNS(__VA_ARGS__)
-#  define ZoneScopedMS(...) ZoneScopedS(__VA_ARGS__) 
-#  define ZoneScopedCMS(...) ZoneScopedCS(__VA_ARGS__)
-#  define ZoneScopedNCMS(...) ZoneScopedNCS(__VA_ARGS__)
+#  define ZoneScopedNMS(...) ZoneScopedNS(__VA_ARGS__ __VA_OPT__(,) TRACY_CALLSTACK_DEPTH)
+#  define ZoneScopedMS(...) ZoneScopedS(__VA_ARGS__ __VA_OPT__(,) TRACY_CALLSTACK_DEPTH)
+#  define ZoneScopedCMS(...) ZoneScopedCS(__VA_ARGS__ __VA_OPT__(,) TRACY_CALLSTACK_DEPTH)
+#  define ZoneScopedNCMS(...) ZoneScopedNCS(__VA_ARGS__ __VA_OPT__(,) TRACY_CALLSTACK_DEPTH)
 # else
 #  define ZoneScopedNMS(...) ZoneScopedN(__VA_ARGS__)
 #  define ZoneScopedMS(...) ZoneScoped(__VA_ARGS__) 
