@@ -1198,7 +1198,7 @@ int32_t CVulkanDevice::findMemoryType( VkMemoryPropertyFlags properties, uint32_
 	return -1;
 }
 
-inline std::unique_ptr<CVulkanCmdBuffer> __attribute__((hot,visibility("internal"))) CVulkanDevice::commandBuffer([[maybe_unused]] const std::source_location& loc)
+std::unique_ptr<CVulkanCmdBuffer> CVulkanDevice::commandBuffer([[maybe_unused]] const std::source_location& loc)
 {
 	auto finalize_buf = [&, this]<bool bIsRecycled>(std::unique_ptr<CVulkanCmdBuffer> cmdBuf) {
 		//using this lambda allows for Return Value Optimization w/o duplicating code
