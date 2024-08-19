@@ -1572,8 +1572,7 @@ void CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) CVulkanCmdBuffer::cl
 	const bool bNeedsAlignup = ( ((slot+1)%2 != 0) );
 
 	const uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
-	const uint16_t posToClearToAligned = posToClearTo
-																		 + (( (posToClearTo)%2 ) & bNeedsAlignup);
+	const uint32_t posToClearToAligned = (uint32_t)posToClearTo + (uint32_t)( (posToClearTo)%2 );
 	const uint16_t slotAboveSlotAligned = bNeedsAlignup ? (slotAboveSlot+1) : slotAboveSlot;
 	
 	// using != instead of < yields more compact codegen
@@ -1618,8 +1617,7 @@ static constexpr bool CVULKANCMDBUFFER_TARGET_ATTR __attribute__((noinline)) cle
 	const bool bNeedsAlignup = ( ((slot+1)%2 != 0) );
 
 	const uint16_t posToClearTo = VKR_SAMPLER_SLOTS - std::countl_zero(bitsAboveSlot);
-	const uint16_t posToClearToAligned = posToClearTo
-																		 + (( (posToClearTo)%2 ) & bNeedsAlignup);
+	const uint32_t posToClearToAligned = (uint32_t)posToClearTo + (uint32_t)( (posToClearTo)%2 );
 	const uint16_t slotAboveSlotAligned = bNeedsAlignup ? (slotAboveSlot+1) : slotAboveSlot;
 	
 	// using != instead of < yields more compact codegen
