@@ -4320,7 +4320,6 @@ static const struct wlr_renderer_impl renderer_impl = {
 
 struct wlr_renderer *vulkan_renderer_create( void )
 {
-	static constexpr uint32_t render_buffer_caps = WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR | WLR_BUFFER_CAP_SHM;
 	VulkanRenderer_t *renderer = new VulkanRenderer_t();
 	wlr_renderer_init(&renderer->base, &renderer_impl, WLR_BUFFER_CAP_DMABUF | WLR_BUFFER_CAP_DATA_PTR);
 	return &renderer->base;
