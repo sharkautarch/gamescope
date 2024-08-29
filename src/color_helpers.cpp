@@ -214,7 +214,7 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
-#ifndef __FAST_MATH__
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
