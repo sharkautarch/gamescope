@@ -2630,10 +2630,11 @@ int drm_prepare( struct drm_t *drm, bool async, const struct FrameInfo_t *frameI
 {
 	drm_update_color_mgmt(drm);
 
-	const bool bVRRCapable = drm->pConnector && drm->pConnector->GetProperties().vrr_capable &&
-							 drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED;
-	const bool bVRREnabled = bVRRCapable && frameInfo->allowVRR;
-	if ( bVRRCapable )
+	const bool bIsVRRCapable = drm->pConnector && drm->pConnector->GetProperties().vrr_capable && !!drm->pConnector->GetProperties().vrr_capable->GetCurrentValue();
+	const bool bHasVRREnable = drm->pCRTC && drm->pCRTC->GetProperties().VRR_ENABLED;
+
+	const bool bVRREnabled = bIsVRRCapable && bHasVRREnable && frameInfo->allowVRR;
+	if ( bIsVRRCapable )
 	{
 		if ( bVRREnabled != !!drm->pCRTC->GetProperties().VRR_ENABLED->GetCurrentValue() )
 			drm->needs_modeset = true;
