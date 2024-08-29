@@ -156,8 +156,8 @@ namespace gamescope
     {
         int32_t nClippedDstWidth  = std::min<int32_t>( g_nOutputWidth,  state.nDstWidth  + state.nDestX ) - state.nDestX;
         int32_t nClippedDstHeight = std::min<int32_t>( g_nOutputHeight, state.nDstHeight + state.nDestY ) - state.nDestY;
-        double flClippedSrcWidth  = state.flSrcWidth  * ( nClippedDstWidth  / double( state.nDstWidth ) );
-        double flClippedSrcHeight = state.flSrcHeight * ( nClippedDstHeight / double( state.nDstHeight ) );
+        double flClippedSrcWidth  = state.flSrcWidth  * __arithmetic_fence( nClippedDstWidth  / double( state.nDstWidth ) );
+        double flClippedSrcHeight = state.flSrcHeight * __arithmetic_fence( nClippedDstHeight / double( state.nDstHeight ) );
 
         WaylandPlaneState outState = state;
         outState.nDstWidth   = nClippedDstWidth;
@@ -1075,18 +1075,36 @@ namespace gamescope
         {
             pWaylandFb->OnCompositorAcquire();
 
+#define TO_INT(expr) noOverlapLoads([=](){ return int32_t( __arithmetic_fence(expr) ); })
+						auto noOverlapLoads = []<typename Callable>(Callable callable) -> int32_t {
+						    std::atomic_signal_fence(std::memory_order_seq_cst);
+						    return callable();
+						    std::atomic_signal_fence(std::memory_order_seq_cst);
+						};
+
+            const auto [nDstWidth, nDstHeight] = [=]() -> const std::array<int32_t, 2>
+            {
+                return
+                {
+                    TO_INT( ceil( __arithmetic_fence(pLayer->tex->width() / double( pLayer->scale.x )) ) ),
+                    TO_INT( ceil( __arithmetic_fence(pLayer->tex->height() / double( pLayer->scale.y ) ) ) )
+                };
+            }();
+#undef TO_INT
+
+						std::atomic_signal_fence(std::memory_order_seq_cst);
             Present(
                 ClipPlane( WaylandPlaneState
                 {
                     .pBuffer     = pBuffer,
-                    .nDestX      = int32_t( -pLayer->offset.x ),
-                    .nDestY      = int32_t( -pLayer->offset.y ),
+                    .nDestX      = int32_t( __arithmetic_fence( -pLayer->offset.x ) ),
+                    .nDestY      = int32_t( __arithmetic_fence( -pLayer->offset.y) ),
                     .flSrcX      = 0.0,
                     .flSrcY      = 0.0,
-                    .flSrcWidth  = double( pLayer->tex->width() ),
-                    .flSrcHeight = double( pLayer->tex->height() ),
-                    .nDstWidth   = int32_t( ceil( pLayer->tex->width() / double( pLayer->scale.x ) ) ),
-                    .nDstHeight  = int32_t( ceil( pLayer->tex->height() / double( pLayer->scale.y ) ) ),
+                    .flSrcWidth  = __arithmetic_fence( double( pLayer->tex->width() ) ),
+                    .flSrcHeight = __arithmetic_fence( double( pLayer->tex->height() ) ),
+                    .nDstWidth   = nDstWidth,
+                    .nDstHeight  = nDstHeight,
                     .eColorspace = pLayer->colorspace,
                     .bOpaque     = pLayer->zpos == g_zposBase,
                     .uFractionalScale = GetScale(),
