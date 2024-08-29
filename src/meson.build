@@ -119,6 +119,10 @@ src = [
 ]
 
 gamescope_cpp_args = []
+faster_math_flags = cppc.get_supported_arguments([
+  '-mdaz-ftz'
+])
+
 if drm_dep.found()
   src += 'Backends/DRMBackend.cpp'
   src += 'modegen.cpp'
@@ -179,7 +183,7 @@ gamescope_version = vcs_tag(
       libdecor_dep, eis_dep,
     ],
     install: true,
-    cpp_args: gamescope_cpp_args,
+    cpp_args: gamescope_cpp_args + faster_math_flags,
   )
 
 gamescope_core_src = [
@@ -196,8 +200,8 @@ endif
 executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
-executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[benchmark_dep, glm_dep])
+executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[benchmark_dep, glm_dep], cpp_args: faster_math_flags)
 
-executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep])
+executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep], cpp_args: faster_math_flags)
 
 executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )

@@ -41,7 +41,7 @@ gcc_math_flags=['-fno-fp-int-builtin-inexact']
 clang_math_flags=['-fdenormal-fp-math=positive-zero']
 
 add_project_arguments(cppc.get_supported_arguments([
-  '-ffinite-math-only', '-fno-math-errno', '-fno-signed-zeros', '-fno-trapping-math'
+  '-fapprox-func', '-fassociative-math', '-ffinite-math-only', '-fno-math-errno', '-fno-signed-zeros', '-fno-trapping-math'
 ] + gcc_math_flags + clang_math_flags), language: 'cpp')
 
 pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
