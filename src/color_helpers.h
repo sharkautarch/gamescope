@@ -155,7 +155,7 @@ struct eetf_2390_t
 	// "Max RGB" approach, as defined in "Color Volume and Hue-Preservation in HDR Tone Mapping"
 	// Digital Object Identifier 10.5594/JMI.2020.2984046
 	// Date of publication: 4 May 2020
-	inline glm::vec3 apply_max_rgb( const glm::vec3 & inputNits ) const
+	inline glm::vec3 apply_max_rgb( const glm::vec3 inputNits ) const
 	{
 		float input_scalar_nits = std::max( inputNits.r, std::max( inputNits.g, inputNits.b ) );
 		float output_scalar_nits = pq_to_nits( apply_pq( nits_to_pq( input_scalar_nits ) ) );
@@ -163,7 +163,7 @@ struct eetf_2390_t
 		return inputNits * gain;
 	}
 
-	inline glm::vec3 apply_luma_rgb( const glm::vec3 & inputNits ) const
+	inline glm::vec3 apply_luma_rgb( const glm::vec3 inputNits ) const
 	{
 		float input_scalar_nits = 0.2627f * inputNits.r + 0.6780f * inputNits.g + 0.0593f * inputNits.b;
 		float output_scalar_nits = pq_to_nits( apply_pq( nits_to_pq( input_scalar_nits ) ) );
@@ -171,7 +171,7 @@ struct eetf_2390_t
 		return inputNits * gain;
 	}
 
-	inline glm::vec3 apply_independent_rgb( const glm::vec3 & inputNits ) const
+	inline glm::vec3 apply_independent_rgb( const glm::vec3 inputNits ) const
 	{
 		glm::vec3 inputPQ = nits_to_pq( inputNits );
 		glm::vec3 outputPQ = { apply_pq( inputPQ.r ), apply_pq( inputPQ.g ), apply_pq( inputPQ.b ) };
@@ -229,7 +229,7 @@ struct primaries_t
 	glm::vec2 b;
 };
 
-enum EOTF
+enum EOTF : int8_t
 {
 	EOTF_Gamma22 = 0,
 	EOTF_PQ = 1,
@@ -271,7 +271,7 @@ colormapping_t lerp( const colormapping_t & a, const colormapping_t & b, float t
 
 // These values are directly exposed to steam
 // Values must be stable over time
-enum ETonemapOperator
+enum ETonemapOperator : int8_t
 {
 	ETonemapOperator_None = 0,
 	ETonemapOperator_EETF2390_Luma = 1,
@@ -281,12 +281,12 @@ enum ETonemapOperator
 
 struct tonemapping_t
 {
-	bool bUseShaper = true;
+  eetf_2390_t eetf2390;
 	float g22_luminance = 1.f; // what luminance should be applied for g22 EOTF conversions?
 	ETonemapOperator eOperator = ETonemapOperator_None;
-	eetf_2390_t eetf2390;
+	bool bUseShaper = true;
 
-	inline glm::vec3 apply( const glm::vec3 & inputNits ) const
+	inline glm::vec3 apply( const glm::vec3 inputNits ) const
 	{
 		switch ( eOperator )
 		{

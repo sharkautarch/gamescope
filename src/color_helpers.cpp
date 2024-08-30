@@ -657,8 +657,9 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
 bool g_bUseSourceEOTFForShaper = false;
 
 template <typename T>
-inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
+inline T applyShaper( const T input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
 {
+		static_assert(sizeof(T) <= 16);
     if ( ( source == dest && flGain == 1.f ) || !tonemapping.bUseShaper )
     {
         return input;
@@ -695,6 +696,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
+        		static_assert(sizeof(glm::vec3) == 12); 
             glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
             glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, sourceEOTF, destEOTF, tonemapping, flGain );
             pShaper->dataR[nVal] = shapedSourceColor.r;
