@@ -224,6 +224,7 @@ static const gamescope_color_mgmt_t k_ScreenshotColorMgmtHDR =
 static void
 create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_color_mgmt_luts outColorMgmtLuts[ EOTF_Count ])
 {
+	SET_FAST_MATH_FLAGS
 	const displaycolorimetry_t& displayColorimetry = newColorMgmt.displayColorimetry;
 	const displaycolorimetry_t& outputEncodingColorimetry = newColorMgmt.outputEncodingColorimetry;
 
@@ -5068,7 +5069,7 @@ steamcompmgr_latch_frame_done( steamcompmgr_win_t *w, uint64_t vblank_idx )
 
 static inline float santitize_float( float f )
 {
-#ifndef __FAST_MATH__
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
 	return ( std::isfinite( f ) ? f : 0.f );
 #else
 	return f;
