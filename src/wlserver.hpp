@@ -156,7 +156,7 @@ struct wlserver_t {
 	}
 
 	std::atomic<uint64_t> ulLastMovedCursorTime = 0;
-	std::atomic<char> bCursorHidden = true;
+	std::atomic<bool> bCursorHidden = true;
 	std::atomic<bool> bCursorHasImage = true;
 	
 	bool button_held[ WLSERVER_BUTTON_COUNT ];

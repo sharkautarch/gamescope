@@ -761,7 +761,7 @@ int main(int argc, char **argv)
 					g_preferVendorID = vendorID;
 					g_preferDeviceID = deviceID;
 				} else if (strcmp(opt_name, "immediate-flips") == 0) {
-					g_nAsyncFlipsEnabled = 1;
+					cv_tearing_enabled = true;
 				} else if (strcmp(opt_name, "force-grab-cursor") == 0) {
 					g_bForceRelativeMouse = true;
 				} else if (strcmp(opt_name, "display-index") == 0) {

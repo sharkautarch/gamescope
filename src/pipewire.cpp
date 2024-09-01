@@ -52,7 +52,14 @@ static void destroy_buffer(struct pipewire_buffer *buffer) {
 		break; // nothing to do
 	default:
 		assert(false); // unreachable
-	}
+	}	
+
+	// If out_buffer == buffer, then set it to nullptr.
+	// We don't care about the result.
+	struct pipewire_buffer *buffer1 = buffer;
+	out_buffer.compare_exchange_strong(buffer1, nullptr);
+	struct pipewire_buffer *buffer2 = buffer;
+	in_buffer.compare_exchange_strong(buffer2, nullptr);
 
 	delete buffer;
 }

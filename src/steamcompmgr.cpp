@@ -194,6 +194,8 @@ static void
 update_runtime_info();
 
 gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
+gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
+gamescope::ConVar<int> cv_adaptive_sync_overlay_cycles( "adaptive_sync_overlay_cycles", 1, "" );
 
 uint64_t g_SteamCompMgrLimitedAppRefreshCycle = 16'666'666;
 uint64_t g_SteamCompMgrAppRefreshCycle = 16'666'666;
@@ -347,7 +349,7 @@ create_color_mgmt_luts(const gamescope_color_mgmt_t& newColorMgmt, gamescope_col
 	}
 }
 
-int g_nAsyncFlipsEnabled = 0;
+gamescope::ConVar<bool> cv_tearing_enabled{ "tearing_enabled", false, "Whether or not tearing is enabled." };
 int g_nSteamMaxHeight = 0;
 bool g_bVRRCapable_CachedValue = false;
 bool g_bVRRInUse_CachedValue = false;
@@ -893,6 +895,10 @@ bool g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive = false;
 
 bool steamcompmgr_window_should_limit_fps( steamcompmgr_win_t *w )
 {
+	// VRR + FPS Limit needs another approach.
+	if ( GetBackend()->IsVRRActive() )
+		return false;
+
 	return w && !window_is_steam( w ) && !w->isOverlay && !w->isExternalOverlay;
 }
 
@@ -914,6 +920,9 @@ steamcompmgr_user_has_any_game_open()
 
 bool steamcompmgr_window_should_refresh_switch( steamcompmgr_win_t *w )
 {
+	if ( GetBackend()->IsVRRActive() )
+		return false;
+
 	if ( g_bChangeDynamicRefreshBasedOnGameOpenRatherThanActive )
 		return steamcompmgr_user_has_any_game_open();
 
@@ -1423,25 +1432,7 @@ void MouseCursor::checkSuspension()
 	if ( ShouldDrawCursor() )
 	{
 		const bool suspended = int64_t( get_time_in_nanos() ) - int64_t( wlserver.ulLastMovedCursorTime ) > int64_t( cursorHideTime );
-		// let A = bCursorHidden,
-		// let B = suspended,
-		// let C = branch condition ( !bCursorHidden & suspended ) (1=enter branch, 0=skip branch)
-		//	A|B|C
-		//	0|0|0
-		//	0|1|1
-		//	1|0|0
-		//	1|1|0
-
-		// if bCursorHidden = 1, bCursorHidden remains 1:
-		//  let A = bCursorHidden(input),
-		//  let B = suspended,
-		//  let C = bCursorHidden (output)
-		//	A|B|C
-		//	0|0|0
-		//	0|1|1
-		//	1|0|1
-		//	1|1|1
-		const bool bCursorWasHidden = wlserver.bCursorHidden.fetch_or(suspended); // truth table corresponds to a bitwise OR
+		const bool bCursorWasHidden = suspended ? wlserver.bCursorHidden.exchange(true) : wlserver.bCursorHidden.load();
 		if (!bCursorWasHidden && suspended) {
 			steamcompmgr_win_t *window = m_ctx->focus.inputFocusWindow;
 			// Rearm warp count
@@ -5043,6 +5034,9 @@ steamcompmgr_flush_frame_done( steamcompmgr_win_t *w )
 
 static bool steamcompmgr_should_vblank_window( bool bShouldLimitFPS, uint64_t vblank_idx )
 {
+	if ( GetBackend()->IsVRRActive() )
+		return true;
+
 	bool bSendCallback = true;
 
 	int nRefreshHz = gamescope::ConvertmHzToHz( g_nNestedRefresh ? g_nNestedRefresh : g_nOutputRefresh );
@@ -5474,7 +5468,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 	if ( ev->atom == ctx->atoms.gamescopeAllowTearing )
 	{
-		g_nAsyncFlipsEnabled = get_prop( ctx, ctx->root, ctx->atoms.gamescopeAllowTearing, 0 );
+		cv_tearing_enabled = !!get_prop( ctx, ctx->root, ctx->atoms.gamescopeAllowTearing, 0 );
 	}
 	if ( ev->atom == ctx->atoms.gamescopeSteamMaxHeight )
 	{
@@ -7464,7 +7458,6 @@ steamcompmgr_main(int argc, char **argv)
 		readyPipeFD = -1;
 	}
 
-	bool vblank = false;
 	g_SteamCompMgrWaiter.AddWaitable( &GetVBlankTimer() );
 	GetVBlankTimer().ArmNextVBlank( true );
 
@@ -7499,8 +7492,6 @@ steamcompmgr_main(int argc, char **argv)
 
 	for (;;)
 	{
-		vblank = false;
-
 		{
 			gamescope_xwayland_server_t *server = NULL;
 			for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
@@ -7513,6 +7504,7 @@ steamcompmgr_main(int argc, char **argv)
 
 		g_SteamCompMgrWaiter.PollEvents();
 
+		bool vblank = false;
 		if ( std::optional<gamescope::VBlankTime> pendingVBlank = GetVBlankTimer().ProcessVBlank() )
 		{
 			g_SteamCompMgrVBlankTime = *pendingVBlank;
@@ -7523,6 +7515,16 @@ steamcompmgr_main(int argc, char **argv)
 		{
 			break;
 		}
+
+		// If this is from the timer or not.
+		// Consider this to also be "is this vblank, the fastest refresh cycle after our last commit?"
+		// as a question.
+		const bool bIsVBlankFromTimer = vblank;
+
+		// We can always vblank if VRR.
+		const bool bVRR = GetBackend()->IsVRRActive();
+		if ( bVRR )
+			vblank = true;
 
 		bool flush_root = false;
 
@@ -7629,7 +7631,7 @@ steamcompmgr_main(int argc, char **argv)
 		// application can commit a new frame that completes before we ever displayed
 		// the current pending commit.
 		static uint64_t vblank_idx = 0;
-		if ( vblank == true )
+		if ( vblank )
 		{
 			{
 				gamescope_xwayland_server_t *server = NULL;
@@ -7815,7 +7817,11 @@ steamcompmgr_main(int argc, char **argv)
 
 		static int nIgnoredOverlayRepaints = 0;
 
-		const bool bVRR = GetBackend()->IsVRRActive();
+		if ( !hasRepaintNonBasePlane )
+			nIgnoredOverlayRepaints = 0;
+
+		if ( cv_adaptive_sync_ignore_overlay )
+			nIgnoredOverlayRepaints = 0;
 
 		// HACK: Disable tearing if we have an overlay to avoid stutters right now
 		// TODO: Fix properly.
@@ -7823,54 +7829,114 @@ steamcompmgr_main(int argc, char **argv)
 								( global_focus.externalOverlayWindow && global_focus.externalOverlayWindow->opacity ) ||
 								( global_focus.overrideWindow  && global_focus.focusWindow && !global_focus.focusWindow->isSteamStreamingClient && global_focus.overrideWindow->opacity );
 
-		const bool bSteamOverlayOpen  = global_focus.overlayWindow && global_focus.overlayWindow->opacity;
 		// If we are running behind, allow tearing.
-		const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
 
 		const bool bForceRepaint = g_bForceRepaint.exchange(false);
 		const bool bForceSyncFlip = bForceRepaint || is_fading_out();
+
 		// If we are compositing, always force sync flips because we currently wait
 		// for composition to finish before submitting.
 		// If we want to do async + composite, we should set up syncfile stuff and have DRM wait on it.
-		const bool bNeedsSyncFlip = bForceSyncFlip || GetVBlankTimer().WasCompositing() || nIgnoredOverlayRepaints;
-		const bool bDoAsyncFlip   = ( ((g_nAsyncFlipsEnabled >= 1) && GetBackend()->SupportsTearing() && bSurfaceWantsAsync && !bHasOverlay) || bVRR ) && !bSteamOverlayOpen && !bNeedsSyncFlip;
+		const bool bSurfaceWantsAsync = (g_HeldCommits[HELD_COMMIT_BASE] != nullptr && g_HeldCommits[HELD_COMMIT_BASE]->async);
+		const bool bTearing = cv_tearing_enabled && GetBackend()->SupportsTearing() && bSurfaceWantsAsync;
+
+		enum class FlipType
+		{
+			Normal,
+			Async,
+			VRR,
+		};
+
+		FlipType eFlipType = FlipType::Normal;
+
+		if ( bForceSyncFlip )
+			eFlipType = FlipType::Normal;
+		else if ( bVRR )
+			eFlipType = FlipType::VRR;
+		else if ( bTearing )
+		{
+			eFlipType = FlipType::Async;
+
+			if ( nIgnoredOverlayRepaints )
+				eFlipType = FlipType::Normal;
+			if ( bHasOverlay ) // Don't tear if the Steam or perf overlay is up atm.
+				eFlipType = FlipType::Normal;
+			if ( GetVBlankTimer().WasCompositing() )
+				eFlipType = FlipType::Normal;
+		}
+		else
+			eFlipType = FlipType::Normal;
 
 		bool bShouldPaint = false;
-		if ( bDoAsyncFlip )
+
+		if ( GetBackend()->IsVisible() )
 		{
-			if ( hasRepaint && !GetVBlankTimer().WasCompositing() )
-				bShouldPaint = true;
+			switch ( eFlipType )
+			{
+				case FlipType::Normal:
+				{
+					bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bForceSyncFlip );
+					break;
+				}
+
+				case FlipType::Async:
+				{
+					bShouldPaint = hasRepaint;
+
+					if ( vblank && !bShouldPaint && hasRepaintNonBasePlane )
+						nIgnoredOverlayRepaints++;
+
+					break;
+				}
+
+				case FlipType::VRR:
+				{
+					bShouldPaint = hasRepaint;
+
+					if ( bIsVBlankFromTimer )
+					{
+						if ( hasRepaintNonBasePlane )
+						{
+							if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
+							{
+								// If we hit vblank and we previously punted on drawing an overlay
+								// we should go ahead and draw now.
+								bShouldPaint = true;
+							}
+							else if ( !bShouldPaint )
+							{
+								// If we hit vblank (ie. fastest refresh cycle since last commit),
+								// and we aren't painting and we have a pending overlay, then:
+								// defer it until the next game update or next true vblank.
+								if ( !cv_adaptive_sync_ignore_overlay )
+									nIgnoredOverlayRepaints++;
+							}
+						}
+					}
+
+					// If we have a pending page flip and doing VRR, lets not do another...
+					if ( GetBackend()->PresentationFeedback().CurrentPresentsInFlight() != 0 )
+						bShouldPaint = false;
+
+					break;
+				}
+			}
 		}
 		else
 		{
-			bShouldPaint = vblank && ( hasRepaint || hasRepaintNonBasePlane || bForceSyncFlip );
+			bShouldPaint = false;
 		}
-
-		// If we have a pending page flip and doing VRR, lets not do another...
-		if ( bVRR && GetBackend()->PresentationFeedback().CurrentPresentsInFlight() != 0 )
-			bShouldPaint = false;
-
-		if ( !bShouldPaint && hasRepaintNonBasePlane && vblank )
-			nIgnoredOverlayRepaints++;
-
-		if ( !GetBackend()->IsVisible() )
-			bShouldPaint = false;
 
 		if ( bShouldPaint )
 		{
-			paint_all( !vblank && !bVRR );
+			paint_all( eFlipType == FlipType::Async );
 
 			hasRepaint = false;
 			hasRepaintNonBasePlane = false;
 			nIgnoredOverlayRepaints = 0;
 		}
 
-#if HAVE_PIPEWIRE
-		if ( vblank && pipewire_is_streaming() )
-			paint_pipewire();
-#endif
-
-		if ( vblank )
+		if ( bIsVBlankFromTimer )
 		{
 			// Pre-emptively re-arm the vblank timer if it
 			// isn't already re-armed.
@@ -7878,6 +7944,11 @@ steamcompmgr_main(int argc, char **argv)
 			// Juuust in case pageflip handler doesn't happen
 			// so we don't stop vblanking forever.
 			GetVBlankTimer().ArmNextVBlank( true );
+
+#if HAVE_PIPEWIRE
+			if ( pipewire_is_streaming() )
+				paint_pipewire();
+#endif
 		}
 
 		update_vrr_atoms(root_ctx, false, &flush_root);

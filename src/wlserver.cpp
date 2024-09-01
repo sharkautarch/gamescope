@@ -2168,9 +2168,8 @@ void wlserver_notify_dropdown( struct wlr_surface *wlrsurface, int nX, int nY )
 void wlserver_mousehide()
 {
 	wlserver.ulLastMovedCursorTime = 0;
-	
-	const bool bCursorWasHidden = wlserver.bCursorHidden.exchange(true); //exchange returns the *old* value of the atomic variable
-	if ( !bCursorWasHidden )
+	const bool bCursorWasHidden = wlserver.bCursorHidden.exchange(true);
+	if ( bCursorWasHidden != true )
 	{
 		hasRepaint = true;
 	}

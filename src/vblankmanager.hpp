@@ -37,7 +37,7 @@ namespace gamescope
         static constexpr uint64_t kDefaultVBlankRateOfDecayPercentage = 980ul; // 98%
         static constexpr uint64_t kVBlankRateOfDecayMax = 1000ul; // 100%
 
-        static constexpr uint64_t kVRRFlushingDrawTime = 1'000'000; // Could possibly be lower, like 300'000 or something.
+        static constexpr uint64_t kVRRFlushingTime = 300'000;
 
         CVBlankTimer();
         ~CVBlankTimer();
