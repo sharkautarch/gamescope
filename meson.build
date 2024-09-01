@@ -37,10 +37,6 @@ add_project_arguments(cppc.get_supported_arguments([
   '-Wno-missing-braces',
 ]), language: 'cpp')
 
-add_project_arguments(cppc.get_supported_arguments([
-  '-ffast-math',
-]), language: 'cpp')
-
 pipewire_dep = dependency('libpipewire-0.3', required: get_option('pipewire'))
 librt_dep = cppc.find_library('rt', required : get_option('pipewire'))
 hwdata_dep = dependency('hwdata', required : false)
