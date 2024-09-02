@@ -7967,33 +7967,7 @@ steamcompmgr_main(int argc, char **argv)
 	steamcompmgr_exit();
 }
 
-void steamcompmgr_send_frame_done_to_focus_window()
-{
-	struct timespec now;
-	clock_gettime(CLOCK_MONOTONIC, &now);
 
-	if ( global_focus.focusWindow && global_focus.focusWindow->xwayland().surface.main_surface )
-	{
-		wlserver_lock();
-		wlserver_send_frame_done( global_focus.focusWindow->xwayland().surface.main_surface , &now );
-		wlserver_unlock();		
-	}
-}
-
-gamescope_xwayland_server_t *steamcompmgr_get_focused_server()
-{
-	if (global_focus.inputFocusWindow != nullptr)
-	{
-		gamescope_xwayland_server_t *server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			if (server->ctx->focus.inputFocusWindow == global_focus.inputFocusWindow)
-				return server;
-		}
-	}
-
-	return wlserver_get_xwayland_server(0);
-}
 
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )
 {
