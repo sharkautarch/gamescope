@@ -5832,13 +5832,6 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 }
 
-static int
-error(Display *dpy, XErrorEvent *ev)
-{
-	// Do nothing. XErrors are usually benign.
-	return 0;
-}
-
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
@@ -6704,10 +6697,6 @@ const char* g_customCursorPath = nullptr;
 int g_customCursorHotspotX = 0;
 int g_customCursorHotspotY = 0;
 
-xwayland_ctx_t g_ctx;
-
-static bool setup_error_handlers = false;
-
 void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_server)
 {
 	assert(!xwayland_server->ctx);
@@ -6725,8 +6714,13 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 		exit(1);
 	}
 
+	static bool setup_error_handlers = false;
 	if (!setup_error_handlers)
 	{
+		auto error = [](Display *dpy, XErrorEvent *ev) -> int {
+			// Do nothing. XErrors are usually benign.
+			return 0;
+		};
 		XSetErrorHandler(error);
 		static auto handle_io_error = [](Display *dpy) -> int {
 			xwm_log.errorf("X11 I/O error");
