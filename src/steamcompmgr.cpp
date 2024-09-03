@@ -1351,7 +1351,12 @@ glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 		return ratios * outputRatio;
 	}
 
-  auto out_scale = glm::vec2{g_upscaleScaler != GamescopeUpscaleScaler::FILL ? glm::min(ratios.x, ratios.y) : glm::max(ratios.x, ratios.y)};
+	glm::vec2 out_scale;
+	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL) {
+		out_scale = glm::vec2{ glm::min(ratios.x, ratios.y) };
+	} else {
+		out_scale = glm::vec2{ glm::max(ratios.x, ratios.y) };
+	}
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
 	{
