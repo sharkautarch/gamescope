@@ -37,7 +37,6 @@
 #include <X11/extensions/XInput2.h>
 #include <memory>
 #include <thread>
-#include <condition_variable>
 #include <mutex>
 #include <atomic>
 #include <vector>
@@ -49,6 +48,7 @@
 #include <filesystem>
 #include <variant>
 #include <unordered_set>
+#include <semaphore>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -1000,46 +1000,18 @@ namespace gamescope
 	});
 }
 
-
 static std::atomic<bool> g_bForceRepaint{false};
 
 extern int g_nCursorScaleHeight;
 
-// poor man's semaphore
-class sem
-{
-public:
-	void wait( void )
-	{
-		std::unique_lock<std::mutex> lock(mtx);
-
-		while(count == 0){
-			cv.wait(lock);
-		}
-		count--;
-	}
-
-	void signal( void )
-	{
-		std::unique_lock<std::mutex> lock(mtx);
-		count++;
-		cv.notify_one();
-	}
-
-private:
-	std::mutex mtx;
-	std::condition_variable cv;
-	int count = 0;
-};
-
-sem statsThreadSem;
+std::counting_semaphore statsThreadSem {0};
 std::mutex statsEventQueueLock;
 std::vector< std::string > statsEventQueue;
 
 std::string statsThreadPath;
 int			statsPipeFD = -1;
 
-bool statsThreadRun;
+std::atomic<bool> statsThreadRun{false}; //semi-protected by statsThreadSem (on x86[_64]), but should use acquire-release or seq_cst ordering to ensure safety (opting for seq_cst default, since we're only doing loads at runtime, & for x86_64 & aarch64, seq_cst loads have the same overhead as acquire loads)
 
 void statsThreadMain( void )
 {
@@ -1057,7 +1029,7 @@ void statsThreadMain( void )
 	}
 
 wait:
-	statsThreadSem.wait();
+	statsThreadSem.acquire();
 
 	if ( statsThreadRun == false )
 	{
@@ -1108,7 +1080,7 @@ static inline void stats_printf( const char* format, ...)
 
 			statsEventQueue.push_back( eventstr );
 
-			statsThreadSem.signal();
+			statsThreadSem.release();
 		}
 	}
 }
@@ -5836,7 +5808,7 @@ steamcompmgr_exit(void)
 	if ( statsThreadRun == true )
 	{
 		statsThreadRun = false;
-		statsThreadSem.signal();
+		statsThreadSem.release();
 	}
 
 	{
