@@ -770,8 +770,6 @@ unsigned long	damageSequence = 0;
 
 uint64_t		cursorHideTime = 10'000ul * 1'000'000ul;
 
-bool			gotXError = false;
-
 unsigned int	fadeOutStartTime = 0;
 
 unsigned int 	g_FadeOutDuration = 0;
@@ -1340,58 +1338,46 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-void calc_scale_factor_scaler(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 {
-	float XOutputRatio = currentOutputWidth / (float)g_nNestedWidth;
-	float YOutputRatio = currentOutputHeight / (float)g_nNestedHeight;
-	float outputScaleRatio = std::min(XOutputRatio, YOutputRatio);
+	glm::vec2 source = glm::vec2 {sourceWidth, sourceHeight};
+	auto outputRatio = glm::vec2 {
+		currentOutputWidth / (float)g_nNestedWidth,
+		currentOutputHeight / (float)g_nNestedHeight
+	};
+	float outputScaleRatio = std::min(outputRatio.x, outputRatio.y);
 
-	float XRatio = (float)g_nNestedWidth / sourceWidth;
-	float YRatio = (float)g_nNestedHeight / sourceHeight;
+	glm::vec2 ratios = glm::vec2 {g_nNestedWidth, g_nNestedHeight} / source;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
-		out_scale_x = XRatio * XOutputRatio;
-		out_scale_y = YRatio * YOutputRatio;
-		return;
+		return ratios * outputRatio;
 	}
 
-	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL)
-	{
-		out_scale_x = std::min(XRatio, YRatio);
-		out_scale_y = std::min(XRatio, YRatio);
-	}
-	else
-	{
-		out_scale_x = std::max(XRatio, YRatio);
-		out_scale_y = std::max(XRatio, YRatio);
-	}
+  auto out_scale = glm::vec2{g_upscaleScaler != GamescopeUpscaleScaler::FILL ? glm::min(ratios.x, ratios.y) : glm::max(ratios.x, ratios.y)};
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
 	{
-		out_scale_x = std::min(g_flMaxWindowScale, out_scale_x);
-		out_scale_y = std::min(g_flMaxWindowScale, out_scale_y);
+		out_scale = glm::min(out_scale, g_flMaxWindowScale);
 	}
 
-	out_scale_x *= outputScaleRatio;
-	out_scale_y *= outputScaleRatio;
+	out_scale *= outputScaleRatio;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::INTEGER)
 	{
-		if (out_scale_x > 1.0f)
+		if (out_scale.x > 1.0f)
 		{
 			// x == y here always.
-			out_scale_x = out_scale_y = floor(out_scale_x);
+			out_scale.x = out_scale.y = floor(out_scale.x);
 		}
 	}
+	
+	return out_scale;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight)
+glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight)
 {
-	calc_scale_factor_scaler(out_scale_x, out_scale_y, sourceWidth, sourceHeight);
-
-	out_scale_x *= globalScaleRatio;
-	out_scale_y *= globalScaleRatio;
+	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScaleRatio;
 }
 
 /**
@@ -1757,23 +1743,21 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	cursor_scale = std::max(cursor_scale, 1.0f);
 
 	float scaledX, scaledY;
-	float currentScaleRatio_x = 1.0;
-	float currentScaleRatio_y = 1.0;
 	int cursorOffsetX, cursorOffsetY;
 
-	calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+	glm::vec2 currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio_x) / 2.0f;
-	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio_y) / 2.0f;
+	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio.x) / 2.0f;
+	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio.y) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio_x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio_y + cursorOffsetY;
+	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio.x + cursorOffsetX;
+	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio.y + cursorOffsetY;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
-		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio_x;
-		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio_y;
+		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio.x;
+		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio.y;
 	}
 
 	// Apply the cursor offset inside the texture using the display scale
@@ -1887,8 +1871,6 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 {
 	uint32_t sourceWidth, sourceHeight;
 	int drawXOffset = 0, drawYOffset = 0;
-	float currentScaleRatio_x = 1.0;
-	float currentScaleRatio_y = 1.0;
 
 	// Exit out if we have no window or
 	// no commit.
@@ -1958,30 +1940,31 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
+  glm::vec2 currentScaleRatio{};
 	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || offset || globalScaleRatio != 1.0f)
 	{
-		calc_scale_factor(currentScaleRatio_x, currentScaleRatio_y, sourceWidth, sourceHeight);
+		currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio_x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio_y) / 2.0f;
+		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio.x) / 2.0f;
+		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio.y) / 2.0f;
 
 		if ( w != scaleW )
 		{
-			drawXOffset += w->GetGeometry().nX * currentScaleRatio_x;
-			drawYOffset += w->GetGeometry().nY * currentScaleRatio_y;
+			drawXOffset += w->GetGeometry().nX * currentScaleRatio.x;
+			drawYOffset += w->GetGeometry().nY * currentScaleRatio.y;
 		}
 
 		if ( zoomScaleRatio != 1.0 )
 		{
-			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio_x;
-			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio_y;
+			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio.x;
+			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio.y;
 		}
 	}
 
 	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
-	layer->scale.x = 1.0 / currentScaleRatio_x;
-	layer->scale.y = 1.0 / currentScaleRatio_y;
+	layer->scale.x = 1.0 / currentScaleRatio.x;
+	layer->scale.y = 1.0 / currentScaleRatio.y;
 
 	if ( w != scaleW )
 	{
@@ -1992,8 +1975,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	{
 		int xOffset = 0, yOffset = 0;
 
-		int width = w->GetGeometry().nWidth * currentScaleRatio_x;
-		int height = w->GetGeometry().nHeight * currentScaleRatio_y;
+		int width = w->GetGeometry().nWidth * currentScaleRatio.x;
+		int height = w->GetGeometry().nHeight * currentScaleRatio.y;
 
 		if (globalScaleRatio != 1.0f)
 		{
@@ -2037,7 +2020,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
 		// Don't bother doing more expensive filtering if we are sharp + integer.
-		if (float_is_integer(currentScaleRatio_x) && float_is_integer(currentScaleRatio_y))
+		if (float_is_integer(currentScaleRatio.x) && float_is_integer(currentScaleRatio.y))
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 
@@ -5899,24 +5882,17 @@ steamcompmgr_exit(void)
 	pthread_exit(NULL);
 }
 
-static int
-handle_io_error(Display *dpy)
-{
-	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
-}
+
 
 static bool
 register_cm(xwayland_ctx_t *ctx)
 {
-	Window w;
-	Atom a;
 	static char net_wm_cm[] = "_NET_WM_CM_Sxx";
 
 	snprintf(net_wm_cm, sizeof(net_wm_cm), "_NET_WM_CM_S%d", ctx->scr);
-	a = XInternAtom(ctx->dpy, net_wm_cm, false);
+	Atom a = XInternAtom(ctx->dpy, net_wm_cm, false);
 
-	w = XGetSelectionOwner(ctx->dpy, a);
+	Window w = XGetSelectionOwner(ctx->dpy, a);
 	if (w != None)
 	{
 		XTextProperty tp;
@@ -6750,6 +6726,10 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	if (!setup_error_handlers)
 	{
 		XSetErrorHandler(error);
+		static auto handle_io_error = [](Display *dpy) -> int {
+			xwm_log.errorf("X11 I/O error");
+			steamcompmgr_exit();
+		};
 		XSetIOErrorHandler(handle_io_error);
 		setup_error_handlers = true;
 	}

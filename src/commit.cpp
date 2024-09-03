@@ -126,7 +126,7 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
-void calc_scale_factor(float &out_scale_x, float &out_scale_y, float sourceWidth, float sourceHeight);
+glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight);
 
 bool commit_t::ShouldPreemptivelyUpscale()
 {
@@ -143,11 +143,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
     if ( !vulkanTex )
         return false;
 
-    float flScaleX = 1.0f;
-    float flScaleY = 1.0f;
-    // I wish this function was more programatic with its inputs, but it does do exactly what we want right now...
-    // It should also return a std::pair or a glm uvec
-    calc_scale_factor( flScaleX, flScaleY, vulkanTex->width(), vulkanTex->height() );
+    glm::vec2 flScale = calc_scale_factor( vulkanTex->width(), vulkanTex->height() );
 
-    return !close_enough( flScaleX, 1.0f ) || !close_enough( flScaleY, 1.0f );
+    return !close_enough( flScale.x, 1.0f ) || !close_enough( flScale.y, 1.0f );
 }
