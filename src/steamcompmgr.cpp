@@ -1976,19 +1976,18 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	}
 	else if (notificationMode)
 	{
-		int xOffset = 0, yOffset = 0;
+		glm::ivec2 offset {0, 0};
 
 		int width = w->GetGeometry().nWidth * currentScaleRatio.x;
 		int height = w->GetGeometry().nHeight * currentScaleRatio.y;
 
 		if (globalScaleRatio != 1.0f)
 		{
-			xOffset = (currentOutputResolution.x - currentOutputResolution.x * globalScaleRatio) / 2.0;
-			yOffset = (currentOutputResolution.y - currentOutputResolution.y * globalScaleRatio) / 2.0;
+			offset = (glm::ivec2) (((glm::vec2)currentOutputResolution - (glm::vec2)currentOutputResolution * globalScaleRatio) / 2.0f);
 		}
 
-		layer->offset.x = (currentOutputResolution.x - xOffset - width) * -1.0f;
-		layer->offset.y = (currentOutputResolution.y - yOffset - height) * -1.0f;
+		layer->offset.x = (currentOutputResolution.x - offset.x - width) * -1.0f;
+		layer->offset.y = (currentOutputResolution.y - offset.y - height) * -1.0f;
 	}
 	else
 	{
