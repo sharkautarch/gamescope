@@ -3824,7 +3824,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 
 	const int pixelsPerGroup = 8;
 
-	cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+	cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 
 	if ( pYUVOutTexture != nullptr )
 	{
@@ -3939,7 +3939,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->bindTarget(compositeImage);
 		cmdBuffer->uploadConstants<RcasPushData_t>(frameInfo, g_upscaleFilterSharpness / 10.0f);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 	}
 	else if ( frameInfo->useNISLayer0 )
 	{
@@ -3984,11 +3984,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
-		update_tmp_images(currentOutputWidth, currentOutputHeight);
+		update_tmp_images(currentOutputResolution.x, currentOutputResolution.y);
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
@@ -4010,7 +4010,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 
 		bool useSrgbView = frameInfo->layers[0].colorspace == GAMESCOPE_APP_TEXTURE_COLORSPACE_LINEAR;
 
@@ -4023,7 +4023,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->setSamplerUnnormalized(VKR_BLUR_EXTRA_SLOT, true);
 		cmdBuffer->setSamplerNearest(VKR_BLUR_EXTRA_SLOT, false);
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 	}
 	else
 	{
@@ -4034,7 +4034,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 		const int pixelsPerGroup = 8;
 
-		cmdBuffer->dispatch(div_roundup(currentOutputWidth, pixelsPerGroup), div_roundup(currentOutputHeight, pixelsPerGroup));
+		cmdBuffer->dispatch(div_roundup(currentOutputResolution.x, pixelsPerGroup), div_roundup(currentOutputResolution.y, pixelsPerGroup));
 	}
 
 	if ( pPipewireTexture != nullptr )

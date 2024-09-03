@@ -735,7 +735,7 @@ struct global_focus_t : public focus_t
 } global_focus;
 
 
-uint32_t		currentOutputWidth, currentOutputHeight;
+glm::uvec2		currentOutputResolution;
 bool			currentHDROutput = false;
 bool			currentHDRForce = false;
 
@@ -1340,14 +1340,11 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 
 glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 {
-	glm::vec2 source = glm::vec2 {sourceWidth, sourceHeight};
-	auto outputRatio = glm::vec2 {
-		currentOutputWidth / (float)g_nNestedWidth,
-		currentOutputHeight / (float)g_nNestedHeight
-	};
-	float outputScaleRatio = std::min(outputRatio.x, outputRatio.y);
+	auto sourceDimensions = glm::vec2 {sourceWidth, sourceHeight};
+	auto nestedResolution = glm::vec2 { (float) g_nNestedWidth, (float) g_nNestedHeight };
+	auto outputRatio = (glm::vec2)currentOutputResolution / nestedResolution;
 
-	glm::vec2 ratios = glm::vec2 {g_nNestedWidth, g_nNestedHeight} / source;
+	glm::vec2 ratios = nestedResolution / sourceDimensions;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
@@ -1361,7 +1358,8 @@ glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 		out_scale = glm::min(out_scale, g_flMaxWindowScale);
 	}
 
-	out_scale *= outputScaleRatio;
+	float flOutputScaleRatio = std::min(outputRatio.x, outputRatio.y);
+	out_scale *= flOutputScaleRatio;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::INTEGER)
 	{
@@ -1729,8 +1727,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
+		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1747,8 +1745,8 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 
 	glm::vec2 currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-	cursorOffsetX = (currentOutputWidth - sourceWidth * currentScaleRatio.x) / 2.0f;
-	cursorOffsetY = (currentOutputHeight - sourceHeight * currentScaleRatio.y) / 2.0f;
+	cursorOffsetX = (currentOutputResolution.x - sourceWidth * currentScaleRatio.x) / 2.0f;
+	cursorOffsetY = (currentOutputResolution.y - sourceHeight * currentScaleRatio.y) / 2.0f;
 
 	// Actual point on scaled screen where the cursor hotspot should be
 	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio.x + cursorOffsetX;
@@ -1908,8 +1906,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
-		sourceWidth = currentOutputWidth;
-		sourceHeight = currentOutputHeight;
+		sourceWidth = currentOutputResolution.x;
+		sourceHeight = currentOutputResolution.y;
 	}
 	else
 	{
@@ -1933,20 +1931,20 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputWidth ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputHeight ) );
+			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
+			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
 		}
 	}
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
   glm::vec2 currentScaleRatio{};
-	if (sourceWidth != currentOutputWidth || sourceHeight != currentOutputHeight || offset || globalScaleRatio != 1.0f)
+	if (sourceWidth != currentOutputResolution.x || sourceHeight != currentOutputResolution.y || offset || globalScaleRatio != 1.0f)
 	{
 		currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
 
-		drawXOffset = ((int)currentOutputWidth - (int)sourceWidth * currentScaleRatio.x) / 2.0f;
-		drawYOffset = ((int)currentOutputHeight - (int)sourceHeight * currentScaleRatio.y) / 2.0f;
+		drawXOffset = ((int)currentOutputResolution.x - (int)sourceWidth * currentScaleRatio.x) / 2.0f;
+		drawYOffset = ((int)currentOutputResolution.y - (int)sourceHeight * currentScaleRatio.y) / 2.0f;
 
 		if ( w != scaleW )
 		{
@@ -1980,12 +1978,12 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 		if (globalScaleRatio != 1.0f)
 		{
-			xOffset = (currentOutputWidth - currentOutputWidth * globalScaleRatio) / 2.0;
-			yOffset = (currentOutputHeight - currentOutputHeight * globalScaleRatio) / 2.0;
+			xOffset = (currentOutputResolution.x - currentOutputResolution.x * globalScaleRatio) / 2.0;
+			yOffset = (currentOutputResolution.y - currentOutputResolution.y * globalScaleRatio) / 2.0;
 		}
 
-		layer->offset.x = (currentOutputWidth - xOffset - width) * -1.0f;
-		layer->offset.y = (currentOutputHeight - yOffset - height) * -1.0f;
+		layer->offset.x = (currentOutputResolution.x - xOffset - width) * -1.0f;
+		layer->offset.y = (currentOutputResolution.y - yOffset - height) * -1.0f;
 	}
 	else
 	{
@@ -2772,12 +2770,12 @@ paint_all(bool async)
 				else if (pScreenshotTexture->format() == VK_FORMAT_B8G8R8A8_UNORM)
 				{
 					// Make our own copy of the image to remove the alpha channel.
-					auto imageData = std::vector<uint8_t>(currentOutputWidth * currentOutputHeight * 4);
+					auto imageData = std::vector<uint8_t>(currentOutputResolution.x * currentOutputResolution.y * 4);
 					const uint32_t comp = 4;
-					const uint32_t pitch = currentOutputWidth * comp;
-					for (uint32_t y = 0; y < currentOutputHeight; y++)
+					const uint32_t pitch = currentOutputResolution.x * comp;
+					for (uint32_t y = 0; y < currentOutputResolution.y; y++)
 					{
-						for (uint32_t x = 0; x < currentOutputWidth; x++)
+						for (uint32_t x = 0; x < currentOutputResolution.x; x++)
 						{
 							// BGR...
 							imageData[y * pitch + x * comp + 0] = mappedData[y * pScreenshotTexture->rowPitch() + x * comp + 2];
@@ -2786,7 +2784,7 @@ paint_all(bool async)
 							imageData[y * pitch + x * comp + 3] = 255;
 						}
 					}
-					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputWidth, currentOutputHeight, 4, imageData.data(), pitch ) )
+					if ( stbi_write_png( oScreenshotInfo->szScreenshotPath.c_str(), currentOutputResolution.x, currentOutputResolution.y, 4, imageData.data(), pitch ) )
 					{
 						xwm_log.infof( "Screenshot saved to %s", oScreenshotInfo->szScreenshotPath.c_str() );
 						bScreenshotSuccess = true;
@@ -5376,8 +5374,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 
 			if ( !allowSuperRes )
 			{
-				width = std::min<int>(width, currentOutputWidth);
-				height = std::min<int>(height, currentOutputHeight);
+				width = std::min<int>(width, currentOutputResolution.x);
+				height = std::min<int>(height, currentOutputResolution.y);
 			}
 
 			gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( server_idx );
@@ -7396,8 +7394,7 @@ steamcompmgr_main(int argc, char **argv)
 	// Enable color mgmt by default.
 	g_ColorMgmt.pending.enabled = true;
 
-	currentOutputWidth = g_nPreferredOutputWidth;
-	currentOutputHeight = g_nPreferredOutputHeight;
+	currentOutputResolution = glm::uvec2 { g_nPreferredOutputWidth, g_nPreferredOutputHeight };
 
 	init_runtime_info();
 
@@ -7536,8 +7533,8 @@ steamcompmgr_main(int argc, char **argv)
 		// Pick our width/height for this potential frame, regardless of how it might change later
 		// At some point we might even add proper locking so we get real updates atomically instead
 		// of whatever jumble of races the below might cause over a couple of frames
-		if ( currentOutputWidth != g_nOutputWidth ||
-			 currentOutputHeight != g_nOutputHeight ||
+		if ( currentOutputResolution.x != g_nOutputWidth ||
+			 currentOutputResolution.y != g_nOutputHeight ||
 			 currentHDROutput != g_bOutputHDREnabled ||
 			 currentHDRForce != g_bForceHDRSupportDebug )
 		{
@@ -7585,8 +7582,7 @@ steamcompmgr_main(int argc, char **argv)
 				}
 			}
 
-			currentOutputWidth = g_nOutputWidth;
-			currentOutputHeight = g_nOutputHeight;
+			currentOutputResolution = glm::uvec2 { g_nOutputWidth, g_nOutputHeight };
 			currentHDROutput = g_bOutputHDREnabled;
 			currentHDRForce = g_bForceHDRSupportDebug;
 
