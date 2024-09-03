@@ -35,7 +35,6 @@
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
 #include <X11/extensions/XInput2.h>
-#include <cstdint>
 #include <memory>
 #include <thread>
 #include <condition_variable>
@@ -47,7 +46,6 @@
 #include <iostream>
 #include <fstream>
 #include <string>
-#include <queue>
 #include <filesystem>
 #include <variant>
 #include <unordered_set>
@@ -57,23 +55,16 @@
 #include <stdio.h>
 #include <string.h>
 #include <fcntl.h>
-#include <sys/poll.h>
-#include <sys/time.h>
-#include <sys/wait.h>
 #include <sys/types.h>
 #if defined(__linux__)
 #include <sys/prctl.h>
 #elif defined(__DragonFly__) || defined(__FreeBSD__)
 #include <sys/procctl.h>
 #endif
-#include <sys/socket.h>
-#include <sys/resource.h>
 #include <time.h>
 #include <unistd.h>
 #include <getopt.h>
-#include <spawn.h>
 #include <signal.h>
-#include <linux/input-event-codes.h>
 #include <X11/Xmu/CurUtil.h>
 #include "waitable.h"
 
@@ -94,9 +85,7 @@
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
 
-#include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
-#include "wlr_end.hpp"
 
 #if HAVE_AVIF
 #include "avif/avif.h"
@@ -2227,22 +2216,16 @@ paint_all(bool async)
 
 	paintID++;
 	gpuvis_trace_begin_ctx_printf( paintID, "paint_all" );
-	steamcompmgr_win_t	*w;
-	steamcompmgr_win_t	*overlay;
-	steamcompmgr_win_t *externalOverlay;
-	steamcompmgr_win_t	*notification;
-	steamcompmgr_win_t	*override;
-	steamcompmgr_win_t *input;
 
 	unsigned int currentTime = get_time_in_milliseconds();
 	bool fadingOut = ( currentTime - fadeOutStartTime < g_FadeOutDuration || g_bPendingFade ) && g_HeldCommits[HELD_COMMIT_FADE] != nullptr;
 
-	w = global_focus.focusWindow;
-	overlay = global_focus.overlayWindow;
-	externalOverlay = global_focus.externalOverlayWindow;
-	notification = global_focus.notificationWindow;
-	override = global_focus.overrideWindow;
-	input = global_focus.inputFocusWindow;
+	auto* w = global_focus.focusWindow;
+	auto* overlay = global_focus.overlayWindow;
+	auto* externalOverlay = global_focus.externalOverlayWindow;
+	auto* notification = global_focus.notificationWindow;
+	auto* override = global_focus.overrideWindow;
+	auto* input = global_focus.inputFocusWindow;
 
 	if (++frameCounter == 300)
 	{
