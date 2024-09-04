@@ -1169,33 +1169,11 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 
 static gamescope::CBufferMemoizer s_BufferMemos;
 
-// This really needs cleanup, this function is so silly...
-static gamescope::Rc<commit_t>
-import_commit (
-	steamcompmgr_win_t *w,
-	struct wlr_surface *surf,
-	struct wlr_buffer *buf,
-	bool async,
-	std::shared_ptr<wlserver_vk_swapchain_feedback> swapchain_feedback,
-	std::vector<struct wl_resource*> presentation_feedbacks,
-	std::optional<uint32_t> present_id,
-	uint64_t desired_present_time,
-	bool fifo )
+static gamescope::Rc<commit_t> import_commit(steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
 {
-	gamescope::Rc<commit_t> commit = new commit_t;
+	gamescope::Rc<commit_t> commit = gamescope::make_rc<commit_t>(reslistentry, window_is_steam( w ), w->seq);
 
-	commit->win_seq = w->seq;
-	commit->surf = surf;
-	commit->buf = buf;
-	commit->async = async;
-	commit->fifo = fifo;
-	commit->is_steam = window_is_steam( w );
-	commit->presentation_feedbacks = std::move(presentation_feedbacks);
-	if (swapchain_feedback)
-		commit->feedback = *swapchain_feedback;
-	commit->present_id = present_id;
-	commit->desired_present_time = desired_present_time;
-
+	auto*& buf = reslistentry.buf;
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
 		// Going from OwningRc -> Rc now.
@@ -5686,6 +5664,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 							win = nullptr;
 			};
 			
+			#pragma GCC unroll 8
 			for (std::reference_wrapper<steamcompmgr_win_t *> win 
 						: (std::reference_wrapper<steamcompmgr_win_t*>[]) 
 					{	
@@ -6245,16 +6224,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	gamescope::Rc<commit_t> newCommit = import_commit(
-		w,
-		reslistentry.surf,
-		buf,
-		reslistentry.async,
-		std::move(reslistentry.feedback),
-		std::move(reslistentry.presentation_feedbacks),
-		reslistentry.present_id,
-		reslistentry.desired_present_time,
-		reslistentry.fifo );
+	gamescope::Rc<commit_t> newCommit = import_commit(w, reslistentry);
 
 	int fence = -1;
 	if ( newCommit != nullptr )
@@ -7047,6 +7017,7 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 				w = nullptr;
 		};
 
+		#pragma GCC unroll 6
 		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
 					: (std::reference_wrapper<steamcompmgr_win_t*>[])
 				{	

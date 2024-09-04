@@ -2,12 +2,23 @@
 
 #include <cstdint>
 #include <atomic>
+#include <utility>
 
 namespace gamescope
 {
+    template <typename T, bool Public>
+    class Rc;
+    #define ENABLE_IN_PLACE_RC using gamescope::RcObject::RcObject; \
+            template <class T, class... Args> \
+            friend gamescope::Rc<T, true> gamescope::make_rc(Args&&... args);
     class RcObject
     {
+        template <class T, class... Args>
+        friend gamescope::Rc<T, true> make_rc(Args&&... args);
+    protected:
+        constexpr RcObject(std::in_place_t) : m_uRefCount{1}, m_uRefPrivate{1} {}
     public:
+        RcObject() = default;
         virtual ~RcObject()
         {
         }
@@ -67,6 +78,7 @@ namespace gamescope
 
     class IRcObject : public RcObject
     {
+        using RcObject::RcObject;
     public:
         virtual uint32_t IncRef()
         {
@@ -93,15 +105,30 @@ namespace gamescope
         static void DecRef( T* pObject ) { pObject->DecRefPrivate(); }
     };
 
+    template <class T, class... Args>
+    Rc<T, true> make_rc(Args&&... args) {
+      T* pObj = new T(std::in_place_t{}, std::forward<Args>(args)...);
+      return Rc<T, true>{std::in_place_t{}, pObj};
+    }
+
     template <typename T, bool Public = true>
     class Rc
     {
         template <typename Tx, bool Publicx>
         friend class Rc;
 
+        template <class Tx, class... Args>
+        friend Rc<Tx, true> gamescope::make_rc(Args&&... args);
+
         using RcRef = RcRef_<T, Public>;
+
+    protected:
+       constexpr Rc( std::in_place_t tag, T* pObject )
+            : m_pObject{ pObject } {} //no IncRef here, because this constructor is used w/ in-place RcObject construction via friend function make_rc()
+                                      //this is locked behind protected access, to avoid any unintended use
+
     public:
-        Rc() { }
+        constexpr Rc() { }
         Rc( std::nullptr_t ) { }
 
         Rc( T* pObject )
