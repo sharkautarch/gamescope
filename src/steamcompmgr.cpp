@@ -179,8 +179,7 @@ timespec nanos_to_timespec( uint64_t ulNanos )
 	return ts;
 }
 
-static void
-update_runtime_info();
+static void update_runtime_info();
 
 gamescope::ConVar<bool> cv_adaptive_sync( "adaptive_sync", false, "Whether or not adaptive sync is enabled if available." );
 gamescope::ConVar<bool> cv_adaptive_sync_ignore_overlay( "adaptive_sync_ignore_overlay", false, "Whether or not to ignore overlay planes for pushing commits with adaptive sync." );
@@ -683,11 +682,6 @@ extern bool g_bForceRelativeMouse;
 
 CommitDoneList_t g_steamcompmgr_xdg_done_commits;
 
-struct ignore {
-	struct ignore	*next;
-	unsigned long	sequence;
-};
-
 gamescope::CAsyncWaiter<gamescope::Rc<commit_t>> g_ImageWaiter{ "gamescope_img" };
 
 gamescope::CWaiter g_SteamCompMgrWaiter;
@@ -732,7 +726,7 @@ std::vector< uint32_t > vecFocuscontrolAppIDs;
 
 bool			gameFocused;
 
-unsigned int 	gamesRunningCount;
+unsigned int 	gamesRunningCount; //this is associated w/ gamesRunningAtom, but isn't used for anything
 
 float			overscanScaleRatio = 1.0;
 float			zoomScaleRatio = 1.0;
@@ -957,7 +951,6 @@ bool g_bPendingFade = false;
 
 unsigned int	frameCounter;
 unsigned int	lastSampledFrameTime;
-float			currentFrameRate;
 
 static bool		debugFocus = false;
 static bool		drawDebugInfo = false;
@@ -2201,6 +2194,7 @@ paint_all(bool async)
 
 	if (++frameCounter == 300)
 	{
+		static float currentFrameRate;
 		currentFrameRate = 300 * 1000.0f / (currentTime - lastSampledFrameTime);
 		lastSampledFrameTime = currentTime;
 		frameCounter = 0;
@@ -3071,12 +3065,12 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 static bool
 pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const std::vector<steamcompmgr_win_t*>& vecPossibleFocusWindows, bool globalFocus, const std::vector<uint32_t>& ctxFocusControlAppIDs)
 {
-	bool localGameFocused = false;
-	steamcompmgr_win_t *focus = NULL, *override_focus = NULL;
 
 	bool controlledFocus = focusControlWindow != None || !ctxFocusControlAppIDs.empty();
-	if ( controlledFocus )
-	{
+	auto selectFocusableWindow = [=]() -> std::optional<steamcompmgr_win_t*> {
+		if ( !controlledFocus )
+			return std::nullopt;
+		
 		if ( focusControlWindow != None )
 		{
 			for ( steamcompmgr_win_t *focusable_window : vecPossibleFocusWindows )
@@ -3086,9 +3080,7 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 
 				if ( focusable_window->xwayland().id == focusControlWindow )
 				{
-					focus = focusable_window;
-					localGameFocused = true;
-					goto found;
+					return focusable_window;
 				}
 			}
 		}
@@ -3099,16 +3091,18 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 			{
 				if ( focusable_window->appID == focusable_appid )
 				{
-					focus = focusable_window;
-					localGameFocused = true;
-					goto found;
+					return focusable_window;
 				}
 			}
 		}
+		
+		return std::nullopt;
+	};
+	
+	auto oFocusWin = selectFocusableWindow();
+	bool localGameFocused = !!oFocusWin;
 
-found:;
-	}
-
+	steamcompmgr_win_t* focus = localGameFocused ? *oFocusWin : nullptr;
 	if ( !focus && ( !globalFocus || !controlledFocus ) )
 	{
 		if ( !vecPossibleFocusWindows.empty() )
@@ -3118,6 +3112,7 @@ found:;
 		}
 	}
 
+	steamcompmgr_win_t* override_focus;
 	auto resolveTransientOverrides = [&](bool maybe)
 	{
 		if ( !focus || focus->type != steamcompmgr_win_type_t::XWAYLAND )
@@ -3222,8 +3217,7 @@ found:;
 			out->focusWindow = focus;
 	}
 
-	if ( !override_focus && focus )
-	{
+	auto getOtherOverrideWindow = [=]() -> steamcompmgr_win_t* {
 		if ( controlledFocus )
 		{
 			for ( auto focusable_appid : ctxFocusControlAppIDs )
@@ -3234,26 +3228,26 @@ found:;
 					{
 						if ( win_maybe_a_dropdown( fake_override ) && is_good_override_candidate( fake_override, focus ) && fake_override->appID == focus->appID )
 						{
-							override_focus = fake_override;
-							goto found2;
+							return fake_override;
 						}
 					}
 				}
 			}
-		}
-		else
-		{
+		} else {
 			for ( steamcompmgr_win_t *fake_override : vecPossibleFocusWindows )
 			{
 				if ( win_maybe_a_dropdown( fake_override ) && is_good_override_candidate( fake_override, focus ) )
 				{
-					override_focus = fake_override;
-					goto found2;
+					return fake_override;
 				}
 			}	
 		}
-		
-		found2:;
+		return nullptr;
+	}; 
+
+	if ( !override_focus && focus )
+	{
+		override_focus = getOtherOverrideWindow();
 		resolveTransientOverrides( true );
 	}
 
@@ -3291,7 +3285,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 {
 	xwayland_ctx_t *ctx = this;
 
-	steamcompmgr_win_t *inputFocus = NULL;
+	steamcompmgr_win_t *inputFocus = nullptr;
 
 	steamcompmgr_win_t *prevFocusWindow = ctx->focus.focusWindow;
 	ctx->focus.overlayWindow = nullptr;
@@ -3333,7 +3327,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 
 	pick_primary_focus_and_override( &ctx->focus, ctx->focusControlWindow, vecPossibleFocusWindows, false, vecFocuscontrolAppIDs );
 
-	if ( inputFocus == NULL )
+	if ( inputFocus == nullptr )
 	{
 		inputFocus = ctx->focus.focusWindow;
 	}
@@ -4504,8 +4498,7 @@ static void circulate_request( xwayland_ctx_t *ctx, XCirculateRequestEvent *circ
 	XCirculateSubwindows( ctx->dpy, circulateRequest->window, circulateRequest->place );
 }
 
-static void
-finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
+static void finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 {
 	steamcompmgr_win_t	**prev, *w;
 
@@ -4539,39 +4532,31 @@ finish_destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 		}
 }
 
-static void
-destroy_win(xwayland_ctx_t *ctx, Window id, bool gone, bool fade)
+static void destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 {
+	auto destroyBaseFocusWindows = [id, gone](auto& focus) {
+		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
+					: (std::reference_wrapper<steamcompmgr_win_t*>[])
+				{	
+					focus.focusWindow, focus.inputFocusWindow, focus.overlayWindow,
+					focus.externalOverlayWindow, focus.notificationWindow, focus.overrideWindow
+				})
+		{
+			if (x11_win(focusWin) == id && gone)
+				focusWin.get() = nullptr;
+		}
+	};
+
 	// Context
-	if (x11_win(ctx->focus.focusWindow) == id && gone)
-		ctx->focus.focusWindow = nullptr;
-	if (x11_win(ctx->focus.inputFocusWindow) == id && gone)
-		ctx->focus.inputFocusWindow = nullptr;
-	if (x11_win(ctx->focus.overlayWindow) == id && gone)
-		ctx->focus.overlayWindow = nullptr;
-	if (x11_win(ctx->focus.externalOverlayWindow) == id && gone)
-		ctx->focus.externalOverlayWindow = nullptr;
-	if (x11_win(ctx->focus.notificationWindow) == id && gone)
-		ctx->focus.notificationWindow = nullptr;
-	if (x11_win(ctx->focus.overrideWindow) == id && gone)
-		ctx->focus.overrideWindow = nullptr;
+	destroyBaseFocusWindows(ctx->focus);
 	if (ctx->currentKeyboardFocusWindow == id && gone)
 		ctx->currentKeyboardFocusWindow = None;
 
 	// Global Focus
-	if (x11_win(global_focus.focusWindow) == id && gone)
-		global_focus.focusWindow = nullptr;
-	if (x11_win(global_focus.inputFocusWindow) == id && gone)
-		global_focus.inputFocusWindow = nullptr;
-	if (x11_win(global_focus.overlayWindow) == id && gone)
-		global_focus.overlayWindow = nullptr;
-	if (x11_win(global_focus.notificationWindow) == id && gone)
-		global_focus.notificationWindow = nullptr;
-	if (x11_win(global_focus.overrideWindow) == id && gone)
-		global_focus.overrideWindow = nullptr;
+	destroyBaseFocusWindows(global_focus);
 	if (x11_win(global_focus.fadeWindow) == id && gone)
 		global_focus.fadeWindow = nullptr;
-		
+
 	MakeFocusDirty();
 
 	finish_destroy_win(ctx, id, gone);
@@ -4615,8 +4600,8 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 static void
 handle_wl_surface_id(xwayland_ctx_t *ctx, steamcompmgr_win_t *w, uint32_t surfaceID)
 {
-	struct wlr_surface *current_surface = NULL;
-	struct wlr_surface *main_surface = NULL;
+	struct wlr_surface *current_surface = nullptr;
+	struct wlr_surface *main_surface = nullptr;
 
 	wlserver_lock();
 
@@ -4695,8 +4680,7 @@ handle_system_tray_opcode(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 {
 	long opcode = ev->data.l[1];
 
-	switch (opcode) {
-		case SYSTEM_TRAY_REQUEST_DOCK: {
+	if (opcode == SYSTEM_TRAY_REQUEST_DOCK) {
 			Window embed_id = ev->data.l[2];
 
 			/* At this point we're supposed to initiate the XEmbed lifecycle by
@@ -4708,9 +4692,7 @@ handle_system_tray_opcode(xwayland_ctx_t *ctx, XClientMessageEvent *ev)
 			if (w) {
 				w->isSysTrayIcon = true;
 			}
-			break;
-		}
-		default:
+	} else {
 			xwm_log.debugf("Unhandled _NET_SYSTEM_TRAY_OPCODE %ld", opcode);
 	}
 }
@@ -4865,9 +4847,8 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 {
 	Atom actual_type;
 	int actual_format;
-	unsigned long nitems;
-	unsigned long bytes_after;
-	unsigned char *data = NULL;
+	unsigned long nitems, bytes_after;
+	unsigned char *data = nullptr;
 
 	XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, 0, False, AnyPropertyType,
 			&actual_type, &actual_format, &nitems, &bytes_after, &data);
@@ -4878,36 +4859,36 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 	if (actual_type == ctx->atoms.utf8StringAtom && actual_format == 8) {
 		XGetWindowProperty(ctx->dpy, ev->requestor, ev->property, 0, bytes_after, False, AnyPropertyType,
 				&actual_type, &actual_format, &nitems, &bytes_after, &data);
-		if (data) {
-			const char *contents = (const char *) data;
-			defer( XFree( data ); );
+		if (!data)
+			return;
+		const char *contents = (const char *) data;
+		defer( XFree( data ); );
 
-			if (ev->selection == ctx->atoms.clipboard)
+		if (ev->selection == ctx->atoms.clipboard)
+		{
+			if ( GetBackend()->GetNestedHints() )
 			{
-				if ( GetBackend()->GetNestedHints() )
-				{
-					//GetBackend()->GetNestedHints()->SetSelection()
-				}
-				else
-				{
-					gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
-				}
-			}
-			else if (ev->selection == ctx->atoms.primarySelection)
-			{
-				if ( GetBackend()->GetNestedHints() )
-				{
-					//GetBackend()->GetNestedHints()->SetSelection()
-				}
-				else
-				{
-					gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
-				}
+				//GetBackend()->GetNestedHints()->SetSelection()
 			}
 			else
 			{
-				xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
+				gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
 			}
+		}
+		else if (ev->selection == ctx->atoms.primarySelection)
+		{
+			if ( GetBackend()->GetNestedHints() )
+			{
+				//GetBackend()->GetNestedHints()->SetSelection()
+			}
+			else
+			{
+				gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
+			}
+		}
+		else
+		{
+			xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
 		}
 	}
 }
@@ -5699,45 +5680,22 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		gamescope_xwayland_server_t *server = wlserver_get_xwayland_server(server_id);
 		if (server)
 		{
-			if (global_focus.focusWindow &&
-				global_focus.focusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.focusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.focusWindow = nullptr;
-
-			if (global_focus.inputFocusWindow &&
-				global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.inputFocusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.inputFocusWindow = nullptr;
-
-			if (global_focus.overlayWindow &&
-				global_focus.overlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.overlayWindow->xwayland().ctx == server->ctx.get())
-				global_focus.overlayWindow = nullptr;
-
-			if (global_focus.externalOverlayWindow &&
-				global_focus.externalOverlayWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.externalOverlayWindow->xwayland().ctx == server->ctx.get())
-				global_focus.externalOverlayWindow = nullptr;
-
-			if (global_focus.notificationWindow &&
-				global_focus.notificationWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.notificationWindow->xwayland().ctx == server->ctx.get())
-				global_focus.notificationWindow = nullptr;
-
-			if (global_focus.overrideWindow &&
-				global_focus.overrideWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.overrideWindow->xwayland().ctx == server->ctx.get())
-				global_focus.overrideWindow = nullptr;
-
-			if (global_focus.keyboardFocusWindow &&
-				global_focus.keyboardFocusWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.keyboardFocusWindow->xwayland().ctx == server->ctx.get())
-				global_focus.keyboardFocusWindow = nullptr;
-
-			if (global_focus.fadeWindow &&
-				global_focus.fadeWindow->type == steamcompmgr_win_type_t::XWAYLAND &&
-				global_focus.fadeWindow->xwayland().ctx == server->ctx.get())
-				global_focus.fadeWindow = nullptr;
+			auto clearXwlWin = [](steamcompmgr_win_t*& win, xwayland_ctx_t* ctx) {
+				if (win && win->type == steamcompmgr_win_type_t::XWAYLAND
+						&& win->xwayland().ctx == ctx)
+							win = nullptr;
+			};
+			
+			for (std::reference_wrapper<steamcompmgr_win_t *> win 
+						: (std::reference_wrapper<steamcompmgr_win_t*>[]) 
+					{	
+						global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+						global_focus.externalOverlayWindow, global_focus.notificationWindow, global_focus.overrideWindow,
+						global_focus.keyboardFocusWindow, global_focus.fadeWindow
+					})
+			{
+				clearXwlWin(win, server->ctx.get());
+			}
 
 			if (global_focus.cursor &&
 				global_focus.cursor->getCtx() == server->ctx.get())
@@ -6491,7 +6449,7 @@ void xwayland_ctx_t::Dispatch()
 				steamcompmgr_win_t * w = find_win(ctx, ev.xdestroywindow.window);
 
 				if (w && w->xwayland().id == ev.xdestroywindow.window)
-					destroy_win(ctx, ev.xdestroywindow.window, true, true);
+					destroy_win(ctx, ev.xdestroywindow.window, true);
 				break;
 			}
 			case MapNotify:
@@ -6550,7 +6508,7 @@ void xwayland_ctx_t::Dispatch()
 
 					if (w && w->xwayland().id == ev.xreparent.window)
 					{
-						destroy_win(ctx, ev.xreparent.window, false, true);
+						destroy_win(ctx, ev.xreparent.window, false);
 					}
 					else
 					{
@@ -6672,7 +6630,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	static bool setup_error_handlers = false;
 	if (!setup_error_handlers)
 	{
-		auto error = [](Display *dpy, XErrorEvent *ev) -> int {
+		static auto error = [](Display *dpy, XErrorEvent *ev) -> int {
 			// Do nothing. XErrors are usually benign.
 			return 0;
 		};
@@ -7024,7 +6982,7 @@ void update_vrr_atoms(xwayland_ctx_t *root_ctx, bool force, bool* needs_flush = 
 	// Keep this as a preference, starting with off.
 	if ( force )
 	{
-        bool wants_vrr = cv_adaptive_sync;
+    bool wants_vrr = cv_adaptive_sync;
 		uint32_t enabled_value = wants_vrr ? 1 : 0;
 		XChangeProperty(root_ctx->dpy, root_ctx->root, root_ctx->atoms.gamescopeVRREnabled, XA_CARDINAL, 32, PropModeReplace,
 			(unsigned char *)&enabled_value, 1 );
@@ -7084,18 +7042,22 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 {
 	if (wlserver_xdg_dirty())
 	{
-		if (global_focus.focusWindow && global_focus.focusWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.focusWindow = nullptr;
-		if (global_focus.inputFocusWindow && global_focus.inputFocusWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.inputFocusWindow = nullptr;
-		if (global_focus.overlayWindow && global_focus.overlayWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.overlayWindow = nullptr;
-		if (global_focus.notificationWindow && global_focus.notificationWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.notificationWindow = nullptr;
-		if (global_focus.overrideWindow && global_focus.overrideWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.overrideWindow = nullptr;
-		if (global_focus.fadeWindow && global_focus.fadeWindow->type == steamcompmgr_win_type_t::XDG)
-			global_focus.fadeWindow = nullptr;
+		auto clearXdgWin = [](steamcompmgr_win_t*& w) {
+			if (w && w->type == steamcompmgr_win_type_t::XDG)
+				w = nullptr;
+		};
+
+		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
+					: (std::reference_wrapper<steamcompmgr_win_t*>[])
+				{	
+					global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+					global_focus.notificationWindow, global_focus.overrideWindow,
+					global_focus.fadeWindow
+				})
+		{
+			clearXdgWin(focusWin);
+		}
+
 		g_steamcompmgr_xdg_wins = wlserver_get_xdg_shell_windows();
 		MakeFocusDirty();
 	}
@@ -7122,7 +7084,7 @@ void update_edid_prop()
 	if (!filename)
 		return;
 
-	gamescope_xwayland_server_t *server = NULL;
+	gamescope_xwayland_server_t *server = nullptr;
 	for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
 	{
 		XTextProperty text_property =
@@ -7812,24 +7774,21 @@ steamcompmgr_main(int argc, char **argv)
 				{
 					bShouldPaint = hasRepaint;
 
-					if ( bIsVBlankFromTimer )
+					if ( bIsVBlankFromTimer && hasRepaintNonBasePlane)
 					{
-						if ( hasRepaintNonBasePlane )
+						if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
 						{
-							if ( nIgnoredOverlayRepaints >= cv_adaptive_sync_overlay_cycles )
-							{
-								// If we hit vblank and we previously punted on drawing an overlay
-								// we should go ahead and draw now.
-								bShouldPaint = true;
-							}
-							else if ( !bShouldPaint )
-							{
-								// If we hit vblank (ie. fastest refresh cycle since last commit),
-								// and we aren't painting and we have a pending overlay, then:
-								// defer it until the next game update or next true vblank.
-								if ( !cv_adaptive_sync_ignore_overlay )
-									nIgnoredOverlayRepaints++;
-							}
+							// If we hit vblank and we previously punted on drawing an overlay
+							// we should go ahead and draw now.
+							bShouldPaint = true;
+						}
+						else if ( !bShouldPaint )
+						{
+							// If we hit vblank (ie. fastest refresh cycle since last commit),
+							// and we aren't painting and we have a pending overlay, then:
+							// defer it until the next game update or next true vblank.
+							if ( !cv_adaptive_sync_ignore_overlay )
+								nIgnoredOverlayRepaints++;
 						}
 					}
 
@@ -7896,8 +7855,6 @@ steamcompmgr_main(int argc, char **argv)
 	steamcompmgr_exit();
 }
 
-
-
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )
 {
 	gamescope_xwayland_server_t *server = wlserver_get_xwayland_server( idx );
@@ -7915,7 +7872,7 @@ struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xw
 		return nullptr;
 
 	// Lookup children too so we can get the window
-	// and go back to it's top-level parent.
+	// and go back to its top-level parent.
 	// The xwayland bypass layer does this as we can have child windows
 	// that cover the whole parent.
 	std::unique_lock lock( xwayland_server->ctx->list_mutex );
