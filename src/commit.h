@@ -19,7 +19,7 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 {
  protected:
 	ENABLE_IN_PLACE_RC
-	commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, bool is_steam, uint64_t seq);
+	commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq);
 	
 	uint64_t getCommitID();
  public:

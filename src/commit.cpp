@@ -18,9 +18,9 @@ commit_t::commit_t()
     commitID = getCommitID();;
 }
 
-commit_t::commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, bool is_steam, uint64_t seq)
+commit_t::commit_t(std::in_place_t tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq)
   : RcObject(tag),
-    buf{reslistentry.buf}, 
+    buf{buf}, 
     async{reslistentry.async}, 
     fifo{reslistentry.fifo},
     is_steam{is_steam}, 

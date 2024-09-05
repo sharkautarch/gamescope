@@ -1169,11 +1169,10 @@ static steamcompmgr_win_t * find_win( xwayland_ctx_t *ctx, struct wlr_surface *s
 
 static gamescope::CBufferMemoizer s_BufferMemos;
 
-static gamescope::Rc<commit_t> import_commit(steamcompmgr_win_t *w, ResListEntry_t& reslistentry)
+static gamescope::Rc<commit_t> import_commit(steamcompmgr_win_t *w, struct wlr_buffer* buf, ResListEntry_t& reslistentry)
 {
-	gamescope::Rc<commit_t> commit = gamescope::make_rc<commit_t>(reslistentry, window_is_steam( w ), w->seq);
+	gamescope::Rc<commit_t> commit = gamescope::make_rc<commit_t>(reslistentry, buf, window_is_steam( w ), w->seq);
 
-	auto*& buf = reslistentry.buf;
 	if ( gamescope::OwningRc<CVulkanTexture> pTexture = s_BufferMemos.LookupVulkanTexture( buf ) )
 	{
 		// Going from OwningRc -> Rc now.
@@ -6218,7 +6217,7 @@ void update_wayland_res(CommitDoneList_t *doneCommits, steamcompmgr_win_t *w, Re
 		return;
 	}
 
-	gamescope::Rc<commit_t> newCommit = import_commit(w, reslistentry);
+	gamescope::Rc<commit_t> newCommit = import_commit(w, buf, reslistentry);
 
 	int fence = -1;
 	if ( newCommit != nullptr )

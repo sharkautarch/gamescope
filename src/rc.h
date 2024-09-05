@@ -16,7 +16,7 @@ namespace gamescope
         template <class T, class... Args>
         friend gamescope::Rc<T, true> make_rc(Args&&... args);
     protected:
-        constexpr RcObject(std::in_place_t) : m_uRefCount{1}, m_uRefPrivate{1} {}
+        explicit constexpr RcObject(std::in_place_t) : m_uRefCount{1}, m_uRefPrivate{1} {}
     public:
         RcObject() = default;
         virtual ~RcObject()
@@ -78,7 +78,6 @@ namespace gamescope
 
     class IRcObject : public RcObject
     {
-        using RcObject::RcObject;
     public:
         virtual uint32_t IncRef()
         {
@@ -123,12 +122,12 @@ namespace gamescope
         using RcRef = RcRef_<T, Public>;
 
     protected:
-       constexpr Rc( std::in_place_t tag, T* pObject )
+       explicit constexpr Rc( std::in_place_t tag, T* pObject )
             : m_pObject{ pObject } {} //no IncRef here, because this constructor is used w/ in-place RcObject construction via friend function make_rc()
                                       //this is locked behind protected access, to avoid any unintended use
 
     public:
-        constexpr Rc() { }
+        Rc() { }
         Rc( std::nullptr_t ) { }
 
         Rc( T* pObject )
