@@ -4514,15 +4514,11 @@ static void destroy_win(xwayland_ctx_t *ctx, Window id, bool gone)
 {
 	auto destroyBaseFocusWindows = [id, gone](auto& focus) {
 		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
-					: (std::reference_wrapper<steamcompmgr_win_t*>[])
-				{	
-					focus.focusWindow, focus.inputFocusWindow, focus.overlayWindow,
-					focus.externalOverlayWindow, focus.notificationWindow, focus.overrideWindow
-				})
-		{
+				 : (std::reference_wrapper<steamcompmgr_win_t*>[])
+				 { focus.focusWindow, focus.inputFocusWindow, focus.overlayWindow,
+					 focus.externalOverlayWindow, focus.notificationWindow, focus.overrideWindow })
 			if (x11_win(focusWin) == id && gone)
 				focusWin.get() = nullptr;
-		}
 	};
 
 	// Context
@@ -5666,12 +5662,10 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 			
 			#pragma GCC unroll 8
 			for (std::reference_wrapper<steamcompmgr_win_t *> win 
-						: (std::reference_wrapper<steamcompmgr_win_t*>[]) 
-					{	
-						global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
-						global_focus.externalOverlayWindow, global_focus.notificationWindow, global_focus.overrideWindow,
-						global_focus.keyboardFocusWindow, global_focus.fadeWindow
-					})
+					 : (std::reference_wrapper<steamcompmgr_win_t*>[])
+					 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+						 global_focus.externalOverlayWindow, global_focus.notificationWindow, global_focus.overrideWindow,
+						 global_focus.keyboardFocusWindow, global_focus.fadeWindow })
 			{
 				clearXwlWin(win, server->ctx.get());
 			}
@@ -7012,22 +7006,14 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 {
 	if (wlserver_xdg_dirty())
 	{
-		auto clearXdgWin = [](steamcompmgr_win_t*& w) {
-			if (w && w->type == steamcompmgr_win_type_t::XDG)
-				w = nullptr;
-		};
-
 		#pragma GCC unroll 6
 		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
-					: (std::reference_wrapper<steamcompmgr_win_t*>[])
-				{	
-					global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
-					global_focus.notificationWindow, global_focus.overrideWindow,
-					global_focus.fadeWindow
-				})
-		{
-			clearXdgWin(focusWin);
-		}
+				 : (std::reference_wrapper<steamcompmgr_win_t*>[]) 
+				 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
+					 global_focus.notificationWindow, global_focus.overrideWindow,
+					 global_focus.fadeWindow })
+			if (auto*& w = focusWin.get(); w && w->type == steamcompmgr_win_type_t::XDG)
+				w = nullptr;
 
 		g_steamcompmgr_xdg_wins = wlserver_get_xdg_shell_windows();
 		MakeFocusDirty();
