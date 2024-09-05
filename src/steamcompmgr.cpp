@@ -3090,7 +3090,7 @@ pick_primary_focus_and_override(focus_t *out, Window focusControlWindow, const s
 		}
 	}
 
-	steamcompmgr_win_t* override_focus;
+	steamcompmgr_win_t* override_focus = nullptr;
 	auto resolveTransientOverrides = [&](bool maybe)
 	{
 		if ( !focus || focus->type != steamcompmgr_win_type_t::XWAYLAND )
