@@ -222,7 +222,7 @@ void xwayland_surface_commit(struct wlr_surface *wlr_surface) {
 				wlr_xdg_surface_schedule_configure( wlserver_xdg_surface_info->xdg_surface );
 
 			if ( wlserver_xdg_surface_info->layer_surface )
-				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_nNestedWidth, g_nNestedHeight );
+				wlr_layer_surface_v1_configure( wlserver_xdg_surface_info->layer_surface, g_ivNestedResolution.x, g_ivNestedResolution.y );
 
 			wlserver_xdg_surface_info->bDoneConfigure = true;
 		}
@@ -1511,7 +1511,7 @@ gamescope_xwayland_server_t::gamescope_xwayland_server_t(wl_display *display)
 	}
 
 	wlr_output_state_set_enabled(output_state, true);
-	wlr_output_state_set_custom_mode(output_state, g_nNestedWidth, g_nNestedHeight, refresh);
+	wlr_output_state_set_custom_mode(output_state, g_ivNestedResolution.x, g_ivNestedResolution.y, refresh);
 	if (!wlr_output_commit_state(output, output_state))
 	{
 		wl_log.errorf("Failed to commit headless output");
@@ -2080,16 +2080,16 @@ struct wlr_surface *wlserver_surface_to_override_surface( struct wlr_surface *pS
 	return pSurface;
 }
 
-std::pair<int, int> wlserver_get_surface_extent( struct wlr_surface *pSurface )
+glm::ivec2 wlserver_get_surface_extent( struct wlr_surface *pSurface )
 {
 	assert( wlserver_is_lock_held() );
 
 	pSurface = wlserver_surface_to_override_surface( pSurface );
 
 	if ( !pSurface )
-		return std::make_pair( g_nNestedWidth, g_nNestedHeight );
+		return g_ivNestedResolution;
 
-	return std::make_pair( pSurface->current.width, pSurface->current.height );
+	return glm::ivec2( pSurface->current.width, pSurface->current.height );
 }
 
 bool ShouldDrawCursor();
