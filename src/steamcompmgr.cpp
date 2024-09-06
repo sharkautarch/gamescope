@@ -1874,7 +1874,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
-  glm::vec2 currentScaleRatio{};
+  glm::vec2 currentScaleRatio{1.0f, 1.0f};
 	if (sourceWidth != currentOutputResolution.x || sourceHeight != currentOutputResolution.y || offset || globalScaleRatio != 1.0f)
 	{
 		currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
