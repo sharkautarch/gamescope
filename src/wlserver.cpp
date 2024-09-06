@@ -1699,6 +1699,7 @@ static std::unique_ptr<gamescope::GamescopeInputServer> g_InputServer;
 bool wlserver_init( void ) {
 	assert( wlserver.display != nullptr );
 
+  wlserver_lock();
 	wl_list_init(&pending_surfaces);
 
 	wlserver.wlr.multi_backend = wlr_multi_backend_create( wlserver.event_loop );
@@ -1861,11 +1862,13 @@ bool wlserver_init( void ) {
 			wl_display_flush_clients(wlserver.display);
 			if (wl_event_loop_dispatch(wlserver.event_loop, -1) < 0) {
 				wl_log.errorf("wl_event_loop_dispatch failed\n");
+				wlserver_unlock();
 				return false;
 			}
 		}
 	}
-
+	
+	wlserver_unlock();
 	return true;
 }
 
