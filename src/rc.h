@@ -8,12 +8,16 @@ namespace gamescope
 {
     template <typename T, bool Public>
     class Rc;
+
+    template <typename A, typename B>
+    concept NotTheSameAs = !std::is_same<std::remove_cvref_t<std::remove_pointer_t<A>>, std::remove_cvref_t<std::remove_pointer_t<B>>>::value;
+
     #define ENABLE_IN_PLACE_RC using gamescope::RcObject::RcObject; \
-            template <class T, class... Args> \
+            template <class T, gamescope::NotTheSameAs<T>... Args> \
             friend gamescope::Rc<T, true> gamescope::make_rc(Args&&... args);
     class RcObject
     {
-        template <class T, class... Args>
+        template <class T, NotTheSameAs<T>... Args>
         friend gamescope::Rc<T, true> make_rc(Args&&... args);
     protected:
         explicit constexpr RcObject(std::in_place_t) : m_uRefCount{1}, m_uRefPrivate{1} {}
@@ -104,7 +108,7 @@ namespace gamescope
         static void DecRef( T* pObject ) { pObject->DecRefPrivate(); }
     };
 
-    template <class T, class... Args>
+    template <class T, NotTheSameAs<T>... Args>
     Rc<T, true> make_rc(Args&&... args) {
       T* pObj = new T(std::in_place_t{}, std::forward<Args>(args)...);
       return Rc<T, true>{std::in_place_t{}, pObj};
@@ -116,7 +120,7 @@ namespace gamescope
         template <typename Tx, bool Publicx>
         friend class Rc;
 
-        template <class Tx, class... Args>
+        template <class Tx, NotTheSameAs<Tx>... Args>
         friend Rc<Tx, true> gamescope::make_rc(Args&&... args);
 
         using RcRef = RcRef_<T, Public>;
