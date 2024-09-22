@@ -6,6 +6,8 @@
 #include "Timeline.h"
 #include "convar.h"
 #include "rc.h"
+#include "drm_include.h"
+#include "Utils/Algorithm.h"
 
 #include <cassert>
 #include <span>
@@ -128,6 +130,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) = 0;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) = 0;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) = 0;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) = 0;
         virtual std::shared_ptr<CursorInfo> GetHostCursor() = 0;
     };
 
@@ -178,7 +181,7 @@ namespace gamescope
         virtual std::span<const char *const> GetInstanceExtensions() const = 0;
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
         virtual VkImageLayout GetPresentLayout() const = 0;
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const = 0;
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const = 0;
         virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const = 0;
 
         virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) = 0;
@@ -203,6 +206,10 @@ namespace gamescope
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+        inline bool SupportsFormat( uint32_t uDrmFormat ) const
+        {
+            return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
+        }
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
