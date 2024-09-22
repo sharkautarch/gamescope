@@ -15,8 +15,10 @@ if not (fallbacks.contains('wlroots') and fallbacks.contains('libliftoff') and f
   error('!!!"force_fallback_for" is missing entries!!!\n\tPlease do not remove entries from force_fallback_for if you are packaging the project.\n\tWe pull in these projects at specific commits/forks/builds for a reason.\n\tIf you are not packaging, remove this line to continue.')
 endif
 
+
 add_project_arguments([
   '-DWLR_USE_UNSTABLE',
+  '-DGLM_SIMD_CONSTEXPR=1',
 ], language: 'cpp')
 
 cppc = meson.get_compiler('cpp')

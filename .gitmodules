@@ -19,3 +19,7 @@
 [submodule "thirdparty/SPIRV-Headers"]
 	path = thirdparty/SPIRV-Headers
 	url = https://github.com/KhronosGroup/SPIRV-Headers/
+[submodule "glm"]
+	path = thirdparty/glm
+	url = https://github.com/sharkautarch/glm.git
+	branch = c++20_constexpr_simd

@@ -92,6 +92,10 @@ reshade_include = include_directories([
 
 required_wlroots_features = ['xwayland']
 
+glm_include = include_directories([
+  '../thirdparty/glm',
+], is_system: true)
+
 src = [
   'Backends/HeadlessBackend.cpp',
   'Backends/WaylandBackend.cpp',
