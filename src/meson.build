@@ -185,7 +185,7 @@ gamescope_version = configure_file(
   executable(
     'gamescope',
     src, reshade_src, gamescope_version,
-    include_directories : [reshade_include],
+    include_directories : [reshade_include, glm_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
@@ -206,14 +206,14 @@ gamescope_core_src = [
 ]
 
 if pipewire_dep.found()
-  executable( 'gamescopestream', ['Apps/gamescopestream.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
+  executable( 'gamescopestream', ['Apps/gamescopestream.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, include_directories : [glm_include], dependencies: [ pipewire_dep, dep_wayland, libdecor_dep ], install: true )
 endif
 
-executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, install:true )
+executable('gamescopereaper', ['Apps/gamescopereaper.cpp', gamescope_core_src], gamescope_version, include_directories : [glm_include], install:true )
 
 benchmark_dep = dependency('benchmark', required: get_option('benchmark'), disabler: true)
-executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[benchmark_dep, glm_dep])
+executable('gamescope_color_microbench', ['color_bench.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, include_directories : [glm_include], dependencies:[benchmark_dep, glm_dep])
 
-executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, dependencies:[glm_dep])
+executable('gamescope_color_tests', ['color_tests.cpp', 'color_helpers.cpp'], gamescope_core_src, gamescope_version, include_directories : [glm_include], dependencies:[glm_dep])
 
-executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, dependencies: [dep_wayland], install:true )
+executable('gamescopectl', ['Apps/gamescopectl.cpp'], gamescope_core_src, gamescope_version, protocols_client_src, include_directories : [glm_include], dependencies: [dep_wayland], install:true )
