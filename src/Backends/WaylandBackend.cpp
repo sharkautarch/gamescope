@@ -578,6 +578,8 @@ namespace gamescope
         void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
         void UpdateFullscreenState();
 
+        bool SupportsFormat( uint32_t uDRMFormat ) const;
+
         bool HostCompositorIsCurrentlyVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
         void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
 
@@ -671,8 +673,8 @@ namespace gamescope
         zwp_locked_pointer_v1 *m_pLockedPointer = nullptr;
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
-        bool m_bCanUseModifiers = false;
         std::unordered_map<uint32_t, std::vector<uint64_t>> m_FormatModifiers;
+        std::unordered_set<uint32_t> m_ModifierlessFormats;
         std::unordered_map<uint32_t, wl_buffer *> m_ImportedFbs;
 
         uint32_t m_uPointerEnterSerial = 0;
@@ -1769,10 +1771,13 @@ namespace gamescope
         if ( !cv_wayland_use_modifiers )
             return false;
 
-        return m_bCanUseModifiers;
+        return !m_FormatModifiers.empty();
     }
     std::span<const uint64_t> CWaylandBackend::GetSupportedModifiers( uint32_t uDrmFormat ) const
     {
+        if ( !UsesModifiers() )
+            return std::span<const uint64_t>{};
+
         auto iter = m_FormatModifiers.find( uDrmFormat );
         if ( iter == m_FormatModifiers.end() )
             return std::span<const uint64_t>{};
@@ -2069,6 +2074,13 @@ namespace gamescope
         }
     }
 
+    bool CWaylandBackend::SupportsFormat( uint32_t uDRMFormat ) const
+    {
+        return UsesModifiers()
+            ? m_FormatModifiers.contains( uDRMFormat )
+            : m_ModifierlessFormats.contains( uDRMFormat );
+    }
+
     /////////////////////
     // Wayland Callbacks
     /////////////////////
@@ -2162,21 +2174,11 @@ namespace gamescope
     void CWaylandBackend::Wayland_Modifier( zwp_linux_dmabuf_v1 *pDmabuf, uint32_t uFormat, uint32_t uModifierHi, uint32_t uModifierLo )
     {
         uint64_t ulModifier = ( uint64_t( uModifierHi ) << 32 ) | uModifierLo;
-
-#if 0
-        const char *pszExtraModifierName = "";
-        if ( ulModifier == DRM_FORMAT_MOD_INVALID )
-            pszExtraModifierName = " (Invalid)";
-        if ( ulModifier == DRM_FORMAT_MOD_LINEAR )
-            pszExtraModifierName = " (Invalid)";
-
-        xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx%s", drmGetFormatName( uFormat ), uFormat, ulModifier, pszExtraModifierName );
-#endif
-
+        //xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx", drmGetFormatName( uFormat ), uFormat, ulModifier );
         if ( ulModifier != DRM_FORMAT_MOD_INVALID )
-            m_bCanUseModifiers = true;
-
-        m_FormatModifiers[uFormat].emplace_back( ulModifier );
+            m_FormatModifiers[uFormat].emplace_back( ulModifier );
+        else
+            m_ModifierlessFormats.emplace( uFormat );
     }
 
     // Output

@@ -13,7 +13,6 @@
 #include <iostream>
 #include <dlfcn.h>
 #include "vulkan_include.h"
-#include "Utils/Algorithm.h"
 
 #if defined(__linux__)
 #include <sys/sysmacros.h>
@@ -124,6 +123,12 @@ VulkanOutput_t g_output;
 
 uint32_t g_uCompositeDebug = 0u;
 gamescope::ConVar<uint32_t> cv_composite_debug{ "composite_debug", 0, "Debug composition flags" };
+
+template <typename T>
+static bool Contains( const std::span<const T> x, T value )
+{
+	return std::ranges::any_of( x, std::bind_front(std::equal_to{}, value) );
+}
 
 static std::map< VkFormat, std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > > DRMModifierProps = {};
 static struct wlr_drm_format_set sampledShmFormats = {};
@@ -2176,7 +2181,7 @@ bool CVulkanTexture::BInit( uint32_t width, uint32_t height, uint32_t depth, uin
 		assert( drmFormat == pDMA->format );
 	}
 
-	if ( GetBackend()->UsesModifiers() && g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
+	if ( g_device.supportsModifiers() && pDMA && pDMA->modifier != DRM_FORMAT_MOD_INVALID )
 	{
 		VkExternalImageFormatProperties externalImageProperties = {
 			.sType = VK_STRUCTURE_TYPE_EXTERNAL_IMAGE_FORMAT_PROPERTIES,
@@ -2868,62 +2873,66 @@ bool vulkan_init_format(VkFormat format, uint32_t drmFormat)
 
 	wlr_drm_format_set_add( &sampledShmFormats, drmFormat, DRM_FORMAT_MOD_LINEAR );
 
-	if ( g_device.supportsModifiers() )
+	if ( !g_device.supportsModifiers() )
 	{
-		// Then, collect the list of modifiers supported for sampled usage
-		VkDrmFormatModifierPropertiesListEXT modifierPropList = {
-			.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
-		};
-		VkFormatProperties2 formatProps = {
-			.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
-			.pNext = &modifierPropList,
-		};
-
-		g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
-
-		if ( modifierPropList.drmFormatModifierCount == 0 )
+		if ( GetBackend()->UsesModifiers() )
 		{
-			vk_errorf( res, "vkGetPhysicalDeviceFormatProperties2 returned zero modifiers for DRM format 0x%" PRIX32, drmFormat );
-			return false;
+			if ( !Contains<uint64_t>( GetBackend()->GetSupportedModifiers( drmFormat ), DRM_FORMAT_MOD_INVALID ) )
+				return false;
 		}
-
-		std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
-		modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
-		g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
-
-		std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > map = {};
-
-		for ( size_t j = 0; j < modifierProps.size(); j++ )
-		{
-			map[ modifierProps[j].drmFormatModifier ] = modifierProps[j];
-
-			uint64_t modifier = modifierProps[j].drmFormatModifier;
-
-			if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
-			continue;
-
-			if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
-			{
-				continue;
-			}
-
-			if ( !gamescope::Algorithm::Contains( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
-				continue;
-
-			wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
-		}
-
-		DRMModifierProps[ format ] = map;
-		return true;
-	}
-	else
-	{
-		if ( !GetBackend()->SupportsFormat( drmFormat ) )
-			return false;
 
 		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, DRM_FORMAT_MOD_INVALID );
 		return false;
 	}
+
+	// Then, collect the list of modifiers supported for sampled usage
+	VkDrmFormatModifierPropertiesListEXT modifierPropList = {
+		.sType = VK_STRUCTURE_TYPE_DRM_FORMAT_MODIFIER_PROPERTIES_LIST_EXT,
+	};
+	VkFormatProperties2 formatProps = {
+		.sType = VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2,
+		.pNext = &modifierPropList,
+	};
+
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	if ( modifierPropList.drmFormatModifierCount == 0 )
+	{
+		vk_errorf( res, "vkGetPhysicalDeviceFormatProperties2 returned zero modifiers for DRM format 0x%" PRIX32, drmFormat );
+		return false;
+	}
+
+	std::vector<VkDrmFormatModifierPropertiesEXT> modifierProps(modifierPropList.drmFormatModifierCount);
+	modifierPropList.pDrmFormatModifierProperties = modifierProps.data();
+	g_device.vk.GetPhysicalDeviceFormatProperties2( g_device.physDev(), format, &formatProps );
+
+	std::map< uint64_t, VkDrmFormatModifierPropertiesEXT > map = {};
+
+	for ( size_t j = 0; j < modifierProps.size(); j++ )
+	{
+		map[ modifierProps[j].drmFormatModifier ] = modifierProps[j];
+
+		uint64_t modifier = modifierProps[j].drmFormatModifier;
+
+		if ( !is_image_format_modifier_supported( format, drmFormat, modifier ) )
+		  continue;
+
+		if ( ( modifierProps[j].drmFormatModifierTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT ) == 0 )
+		{
+			continue;
+		}
+
+		if ( GetBackend()->UsesModifiers() )
+		{
+			if ( !Contains<uint64_t>( GetBackend()->GetSupportedModifiers( drmFormat ), modifier ) )
+				continue;
+		}
+
+		wlr_drm_format_set_add( &sampledDRMFormats, drmFormat, modifier );
+	}
+
+	DRMModifierProps[ format ] = map;
+	return true;
 }
 
 bool vulkan_init_formats()
