@@ -11,6 +11,7 @@
 #include <glm/vec3.hpp> // glm::vec3
 #include <glm/mat3x3.hpp> // glm::mat3
 #include <glm/gtx/component_wise.hpp>
+#include <glm/gtx/fast_exponential.hpp>
 /////////////////////////////////////////////////////////
 //  Stuff for using structured bindings with glm::vec: //
 /////////////////////////////////////////////////////////
@@ -97,21 +98,31 @@ inline float linear_to_srgb( float fVal )
 {
     return ( fVal < 0.0031308f ) ? fVal * 12.92f : std::pow( fVal, 1.0f / 2.4f ) * 1.055f - 0.055f;
 }
-
-template <typename T>
-inline T pq_to_nits( const T& pq )
+template <typename T, typename Tx = std::remove_cvref_t<T>>
+struct PowFn {
+	static constexpr auto powFn = [](auto const& x, auto const& y) -> Tx {
+		if constexpr (std::is_same_v<Tx, float>) {
+		 	return glm::pow(x, y);
+		} else {
+			return glm::fastPow(x, y);
+		}
+	};
+}; 
+template <typename T, typename Tx = std::remove_cvref_t<T>>
+inline Tx pq_to_nits( T pq )
 {
+		static constexpr auto powFn = PowFn<T>::powFn;
     const float c1 = 0.8359375f;
     const float c2 = 18.8515625f;
     const float c3 = 18.6875f;
 
-    const float oo_m1 = 1.0f / 0.1593017578125f;
-    const float oo_m2 = 1.0f / 78.84375f;
+    static constexpr Tx oo_m1 = Tx(1.0f / 0.1593017578125f);
+    static constexpr Tx oo_m2 = Tx(1.0f / 78.84375f);
 
-    T num = glm::max(glm::pow(pq, T(oo_m2)) - c1, T(0.0f));
-    T den = c2 - c3 * glm::pow(pq, T(oo_m2));
+    Tx num = glm::max(powFn(pq, oo_m2) - c1, 0.0f);
+    Tx den = c2 - c3 * powFn(pq, oo_m2);
 
-    return glm::pow(num / den, T(oo_m1)) * 10000.0f;
+    return powFn(num / den, oo_m1) * 10000.0f;
 }
 
 template <typename T>

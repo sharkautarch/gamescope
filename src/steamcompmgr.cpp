@@ -1271,32 +1271,32 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
+glm::vec<2, float, (glm::qualifier)3> calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 {
-	auto sourceDimensions = glm::vec2 {sourceWidth, sourceHeight};
-	auto nestedResolution = glm::vec2 { g_ivNestedResolution };
-	auto outputRatio = (glm::vec2)currentOutputResolution / nestedResolution;
-
-	glm::vec2 ratios = nestedResolution / sourceDimensions;
-
+	using aligned_vec2 = glm::vec<2, float, (glm::qualifier)3>;
+	const auto sourceDimensions = aligned_vec2 {sourceWidth, sourceHeight};
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
-		return ratios * outputRatio;
+		return (aligned_vec2)currentOutputResolution/sourceDimensions;
 	}
+	
+	
+	const auto nestedResolution = aligned_vec2 { g_ivNestedResolution };
+	const auto outputRatio = (aligned_vec2)currentOutputResolution / nestedResolution;
+	const float flOutputScaleRatio = glm::min(outputRatio.x, outputRatio.y);
+	const aligned_vec2 ratios = nestedResolution / sourceDimensions;
 
-	glm::vec2 out_scale;
+	aligned_vec2 out_scale;
 	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL) {
-		out_scale = glm::vec2{ glm::min(ratios.x, ratios.y) };
+		out_scale = aligned_vec2{ glm::min(ratios.x, ratios.x) };
 	} else {
-		out_scale = glm::vec2{ glm::max(ratios.x, ratios.y) };
+		out_scale = aligned_vec2{ glm::max(ratios.x, ratios.y) };
 	}
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
 	{
 		out_scale = glm::min(out_scale, g_flMaxWindowScale);
 	}
-
-	float flOutputScaleRatio = std::min(outputRatio.x, outputRatio.y);
 	out_scale *= flOutputScaleRatio;
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::INTEGER)
@@ -1304,7 +1304,9 @@ glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 		if (out_scale.x > 1.0f)
 		{
 			// x == y here always.
-			out_scale.x = out_scale.y = floor(out_scale.x);
+			if (out_scale.x != out_scale.y)
+				__builtin_unreachable();
+			out_scale = aligned_vec2{ glm::floor(out_scale.x) };
 		}
 	}
 	
@@ -1313,7 +1315,8 @@ glm::vec2 calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 
 glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight)
 {
-	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScaleRatio;
+	const auto globalScale = globalScaleRatio;
+	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScale;
 }
 
 /**
@@ -1658,14 +1661,13 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		return;
 	}
 
-	uint32_t sourceWidth = window->GetGeometry().nWidth;
-	uint32_t sourceHeight = window->GetGeometry().nHeight;
+	auto source = glm::uvec2{ window->GetGeometry().nWidth, window->GetGeometry().nHeight };
 
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
-		sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
+		auto fitVec = glm::uvec2{ fit->GetGeometry().nX + fit->GetGeometry().nWidth, fit->GetGeometry().nY + fit->GetGeometry().nHeight };
+		source = glm::max( source, (glm::uvec2) glm::clamp(fitVec, glm::uvec2{0}, currentOutputResolution ) );
 	}
 
 	float cursor_scale = 1.0f;
@@ -1677,22 +1679,17 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	}
 	cursor_scale = std::max(cursor_scale, 1.0f);
 
-	float scaledX, scaledY;
-	int cursorOffsetX, cursorOffsetY;
+	glm::vec2 currentScaleRatio = calc_scale_factor(source.x, source.y);
 
-	glm::vec2 currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
-
-	cursorOffsetX = (currentOutputResolution.x - sourceWidth * currentScaleRatio.x) / 2.0f;
-	cursorOffsetY = (currentOutputResolution.y - sourceHeight * currentScaleRatio.y) / 2.0f;
+	auto cursorOffset = glm::ivec2{ ((glm::vec2)currentOutputResolution - (glm::vec2)source * currentScaleRatio) / 2.0f };
 
 	// Actual point on scaled screen where the cursor hotspot should be
-	scaledX = (winX - window->GetGeometry().nX) * currentScaleRatio.x + cursorOffsetX;
-	scaledY = (winY - window->GetGeometry().nY) * currentScaleRatio.y + cursorOffsetY;
+	auto [scaledX, scaledY] = glm::vec2{winX-window->GetGeometry().nX, winY-window->GetGeometry().nY} * currentScaleRatio + (glm::vec2)cursorOffset;
 
 	if ( zoomScaleRatio != 1.0 )
 	{
-		scaledX += ((sourceWidth / 2) - winX) * currentScaleRatio.x;
-		scaledY += ((sourceHeight / 2) - winY) * currentScaleRatio.y;
+		scaledX += ((source.x / 2) - winX) * currentScaleRatio.x;
+		scaledY += ((source.y / 2) - winY) * currentScaleRatio.y;
 	}
 
 	// Apply the cursor offset inside the texture using the display scale
