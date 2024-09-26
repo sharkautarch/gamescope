@@ -82,10 +82,10 @@ glm::mat3 chromatic_adaptation_matrix( const glm::vec3 & sourceWhiteXYZ, const g
     EChromaticAdaptationMethod eMethod )
 {
     static const glm::mat3 k_matBradford( 0.8951f,-0.7502f, 0.0389f, 0.2664f,1.7135f,  -0.0685f, -0.1614f,  0.0367f, 1.0296f );
-    glm::mat3 matAdaptation = eMethod == k_EChromaticAdapatationMethod_XYZ ? glm::diagonal3x3( glm::vec3(1,1,1) ) : k_matBradford;
+    glm::mat3 matAdaptation = eMethod == k_EChromaticAdapatationMethod_XYZ ? glm::diagonal3x3( glm::vec3(1) ) : k_matBradford;
     glm::vec3 coneResponseDest = matAdaptation * destWhiteXYZ;
     glm::vec3 coneResponseSource = matAdaptation * sourceWhiteXYZ;
-    glm::vec3 scale = glm::vec3( coneResponseDest.x / coneResponseSource.x, coneResponseDest.y / coneResponseSource.y, coneResponseDest.z / coneResponseSource.z );
+    glm::vec3 scale = coneResponseDest/coneResponseSource;
     return glm::inverse( matAdaptation ) * glm::diagonal3x3( scale ) * matAdaptation;
 }
 
@@ -183,12 +183,22 @@ int GetLut3DIndexRedFastRGB(int indexR, int indexG, int indexB, int dim)
     return (indexR + (int)dim * (indexG + (int)dim * indexB));
 }
 
+int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
+{
+    return (iv[0] + dim * (iv[1] + dim * iv[2]));
+}
+
 // Linear
 inline void lerp_rgb(float* out, const float* a, const float* b, const float* z)
 {
     out[0] = (b[0] - a[0]) * z[0] + a[0];
     out[1] = (b[1] - a[1]) * z[1] + a[1];
     out[2] = (b[2] - a[2]) * z[2] + a[2];
+}
+
+inline glm::vec3 lerp_rgb(glm::vec3 a, glm::vec3 b, glm::vec3 z)
+{
+		return (b-a) * z + a;
 }
 
 // Bilinear
@@ -214,12 +224,13 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
     lerp_rgb(out, v1, v2, x);
 }
 
-inline float ClampAndSanitize( float a, float min, float max )
+inline glm::vec<4, float, (glm::qualifier)3> ClampAndSanitize( glm::vec<3, float, (glm::qualifier)3> a, float min, float max )
 {
+		const auto aa = glm::vec<4, float, (glm::qualifier)3>{a};
 #if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
-    return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
+    return std::isfinite( aa.x ) ? glm::min(glm::max(aa, min), max) : glm::vec3{min};
 #else
-    return std::min(std::max(min, a), max);
+    return glm::min(glm::max(aa, min), max);
 #endif
 }
 
@@ -231,52 +242,38 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
 {
     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
 
-    float idx[3];
-    idx[0] = input.r * dimMinusOne;
-    idx[1] = input.g * dimMinusOne;
-    idx[2] = input.b * dimMinusOne;
+		// NaNs become 0.
+    auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    // NaNs become 0.
-    idx[0] = ClampAndSanitize(idx[0], 0.f, dimMinusOne);
-    idx[1] = ClampAndSanitize(idx[1], 0.f, dimMinusOne);
-    idx[2] = ClampAndSanitize(idx[2], 0.f, dimMinusOne);
+    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx).xyz();
 
-    int indexLow[3];
-    indexLow[0] = static_cast<int>(std::floor(idx[0]));
-    indexLow[1] = static_cast<int>(std::floor(idx[1]));
-    indexLow[2] = static_cast<int>(std::floor(idx[2]));
-
-    int indexHigh[3];
-    // When the idx is exactly equal to an index (e.g. 0,1,2...)
+		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-    indexHigh[0] = static_cast<int>(std::ceil(idx[0]));
-    indexHigh[1] = static_cast<int>(std::ceil(idx[1]));
-    indexHigh[2] = static_cast<int>(std::ceil(idx[2]));
+  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
+  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), indexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-    float delta[3];
-    delta[0] = idx[0] - static_cast<float>(indexLow[0]);
-    delta[1] = idx[1] - static_cast<float>(indexLow[1]);
-    delta[2] = idx[2] - static_cast<float>(indexLow[2]);
+    glm::vec3 delta = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
 
     // Compute index into LUT for surrounding corners
     const int n000 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh.x }, lut3d.lutEdgeSize);
     const int n100 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), lut3d.lutEdgeSize);
     const int n010 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh.x}, lut3d.lutEdgeSize);
     const int n001 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zwx(), lut3d.lutEdgeSize);
     const int n110 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), lut3d.lutEdgeSize);
     const int n101 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexLowHigh.zy(), indexHighLow.x }, lut3d.lutEdgeSize);
     const int n011 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), lut3d.lutEdgeSize);
     const int n111 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow.x}, lut3d.lutEdgeSize);
 
     float x[3], y[3], z[3];
     x[0] = delta[0]; x[1] = delta[0]; x[2] = delta[0];
@@ -294,55 +291,49 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
     return out;
 }
 
-inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 & input )
+inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
 {
-    const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
-
-    float idx[3];
-    idx[0] = input.r * dimMinusOne;
-    idx[1] = input.g * dimMinusOne;
-    idx[2] = input.b * dimMinusOne;
+		const int l3dEdgeSize = lut3d.lutEdgeSize;
+		if (l3dEdgeSize < 0) {
+			__builtin_unreachable();
+		}
+    const float dimMinusOne = float(l3dEdgeSize) - 1.f;
 
     // NaNs become 0.
-    idx[0] = ClampAndSanitize(idx[0], 0.f, dimMinusOne);
-    idx[1] = ClampAndSanitize(idx[1], 0.f, dimMinusOne);
-    idx[2] = ClampAndSanitize(idx[2], 0.f, dimMinusOne);
+    auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    int indexLow[3];
-    indexLow[0] = static_cast<int>(std::floor(idx[0]));
-    indexLow[1] = static_cast<int>(std::floor(idx[1]));
-    indexLow[2] = static_cast<int>(std::floor(idx[2]));
+    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx).xyz();
+    const auto& [fx, fy, fz]   = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
 
-    int indexHigh[3];
-    // When the idx is exactly equal to an index (e.g. 0,1,2...)
+		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-    indexHigh[0] = static_cast<int>(std::ceil(idx[0]));
-    indexHigh[1] = static_cast<int>(std::ceil(idx[1]));
-    indexHigh[2] = static_cast<int>(std::ceil(idx[2]));
+  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
+  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), indexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-    float fx = idx[0] - static_cast<float>(indexLow[0]);
-    float fy = idx[1] - static_cast<float>(indexLow[1]);
-    float fz = idx[2] - static_cast<float>(indexLow[2]);
-
+		using TV = glm::ivec3;
+		indexHigh.TV::~TV();
+		indexLow.TV::~TV();
     // Compute index into LUT for surrounding corners
     const int n000 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh.x }, l3dEdgeSize);
     const int n100 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), l3dEdgeSize);
     const int n010 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh.x}, l3dEdgeSize);
     const int n001 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zwx(), l3dEdgeSize);
     const int n110 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), l3dEdgeSize);
     const int n101 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexLowHigh.zy(), indexHighLow.x }, l3dEdgeSize);
     const int n011 =
-        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), l3dEdgeSize);
     const int n111 =
-        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow.x}, l3dEdgeSize);
+
 
     glm::vec3 out;
     if (fx > fy) {
@@ -405,42 +396,23 @@ inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 
 inline glm::vec3 ApplyLut1D_Linear( const lut1d_t & lut, const glm::vec3 & input )
 {
     const float dimMinusOne = float(lut.lutSize) - 1.f;
-    float idx[3];
-    idx[0] = input.r * dimMinusOne;
-    idx[1] = input.g * dimMinusOne;
-    idx[2] = input.b * dimMinusOne;
-
     // NaNs become 0.
-    idx[0] = ClampAndSanitize(idx[0], 0.f, dimMinusOne);
-    idx[1] = ClampAndSanitize(idx[1], 0.f, dimMinusOne);
-    idx[2] = ClampAndSanitize(idx[2], 0.f, dimMinusOne);
+    auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    int indexLow[3];
-    indexLow[0] = static_cast<int>(std::floor(idx[0]));
-    indexLow[1] = static_cast<int>(std::floor(idx[1]));
-    indexLow[2] = static_cast<int>(std::floor(idx[2]));
-
-    int indexHigh[3];
+    glm::ivec3 indexLow = (glm::ivec3) glm::floor(idx).xyz();
 
     // When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-    indexHigh[0] = static_cast<int>(std::ceil(idx[0]));
-    indexHigh[1] = static_cast<int>(std::ceil(idx[1]));
-    indexHigh[2] = static_cast<int>(std::ceil(idx[2]));
+    glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
 
-    float delta[3];
-    delta[0] = idx[0] - static_cast<float>(indexLow[0]);
-    delta[1] = idx[1] - static_cast<float>(indexLow[1]);
-    delta[2] = idx[2] - static_cast<float>(indexLow[2]);
+    glm::vec3 delta = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
 
-    float vLow[3] = { lut.dataR[indexLow[0]], lut.dataG[indexLow[1]], lut.dataB[indexLow[2]] };
-    float vHigh[3] = { lut.dataR[indexHigh[0]], lut.dataG[indexHigh[1]], lut.dataB[indexHigh[2]] };
+    auto vLow = glm::vec3{ lut.dataR[indexLow[0]], lut.dataG[indexLow[1]], lut.dataB[indexLow[2]] };
+    auto vHigh = glm::vec3{ lut.dataR[indexHigh[0]], lut.dataG[indexHigh[1]], lut.dataB[indexHigh[2]] };
 
-    glm::vec3 out;
-    lerp_rgb( (float *) &out, vLow, vHigh, delta );
-    return out;
+    return lerp_rgb( vLow, vHigh, delta );
 }
 
 // Calculate the inverse of a value resulting from linear interpolation

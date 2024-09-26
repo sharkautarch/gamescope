@@ -3718,11 +3718,14 @@ struct BlitPushData_t
 		u_shaderFilter = 0;
 
 		for (int i = 0; i < frameInfo->layerCount; i++) {
+			if ( i > k_nMaxLayers )
+				__builtin_unreachable();
+
 			const FrameInfo_t::Layer_t *layer = &frameInfo->layers[i];
 			scale[i] = layer->scale;
 			offset[i] = layer->offsetPixelCenter();
 			opacity[i] = layer->opacity;
-            if (layer->isScreenSize() || (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()))
+            if ( (layer->filter == GamescopeUpscaleFilter::LINEAR && layer->viewConvertsToLinearAutomatically()) || layer->isScreenSize() )
                 u_shaderFilter |= ((uint32_t)GamescopeUpscaleFilter::FROM_VIEW) << (i * 4);
             else
                 u_shaderFilter |= ((uint32_t)layer->filter) << (i * 4);

@@ -1801,8 +1801,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 			  MouseCursor *cursor, PaintWindowFlags flags = 0, float flOpacityScale = 1.0f, steamcompmgr_win_t *fit = nullptr )
 
 {
-	uint32_t sourceWidth, sourceHeight;
-	int drawXOffset = 0, drawYOffset = 0;
+	glm::uvec2 source;
+	glm::ivec2 drawOffset = {0,0};
 
 	// Exit out if we have no window or
 	// no commit.
@@ -1835,13 +1835,14 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	if (notificationMode)
 	{
-		sourceWidth = mainOverlayWindow->GetGeometry().nWidth;
-		sourceHeight = mainOverlayWindow->GetGeometry().nHeight;
+		source = {
+			mainOverlayWindow->GetGeometry().nWidth,
+			mainOverlayWindow->GetGeometry().nHeight
+		};
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
-		sourceWidth = currentOutputResolution.x;
-		sourceHeight = currentOutputResolution.y;
+		source = glm::uvec2{currentOutputResolution};
 	}
 	else
 	{
@@ -1855,73 +1856,77 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		// are using the bypass layer, we don't get that, so we need to handle
 		// this case explicitly.
 		if (w == scaleW) {
-			sourceWidth = layer->tex->width();
-			sourceHeight = layer->tex->height();
+			source = {
+				layer->tex->width(),
+				layer->tex->height()
+			};
 		} else {
-			sourceWidth = scaleW->GetGeometry().nWidth;
-			sourceHeight = scaleW->GetGeometry().nHeight;
+			source = {
+				scaleW->GetGeometry().nWidth,
+				scaleW->GetGeometry().nHeight
+			};
 		}
 
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			sourceWidth = std::max<uint32_t>( sourceWidth, clamp<int>( fit->GetGeometry().nX + fit->GetGeometry().nWidth, 0, currentOutputResolution.x ) );
-			sourceHeight = std::max<uint32_t>( sourceHeight, clamp<int>( fit->GetGeometry().nY + fit->GetGeometry().nHeight, 0, currentOutputResolution.y ) );
+			auto fitVec = glm::ivec2{ 
+				fit->GetGeometry().nX + fit->GetGeometry().nWidth,
+				fit->GetGeometry().nY + fit->GetGeometry().nHeight
+			};
+			source = glm::max( source, (glm::uvec2)glm::clamp( fitVec, glm::ivec2{0}, glm::ivec2{currentOutputResolution} ) );
 		}
 	}
 
 	bool offset = ( ( w->GetGeometry().nX || w->GetGeometry().nY ) && w != scaleW );
 
   glm::vec2 currentScaleRatio{1.0f, 1.0f};
-	if (sourceWidth != currentOutputResolution.x || sourceHeight != currentOutputResolution.y || offset || globalScaleRatio != 1.0f)
+	if ( source != currentOutputResolution || offset || globalScaleRatio != 1.0f )
 	{
-		currentScaleRatio = calc_scale_factor(sourceWidth, sourceHeight);
+		currentScaleRatio = calc_scale_factor(source.x, source.y);
 
-		drawXOffset = ((int)currentOutputResolution.x - (int)sourceWidth * currentScaleRatio.x) / 2.0f;
-		drawYOffset = ((int)currentOutputResolution.y - (int)sourceHeight * currentScaleRatio.y) / 2.0f;
-
+		drawOffset = glm::ivec2{ ((glm::vec2)currentOutputResolution - (glm::vec2)source * currentScaleRatio) / 2.0f };
 		if ( w != scaleW )
 		{
-			drawXOffset += w->GetGeometry().nX * currentScaleRatio.x;
-			drawYOffset += w->GetGeometry().nY * currentScaleRatio.y;
+			drawOffset += glm::ivec2{
+				glm::vec2{w->GetGeometry().nX, w->GetGeometry().nY} * currentScaleRatio
+			};
 		}
 
 		if ( cursor && zoomScaleRatio != 1.0 )
 		{
-			drawXOffset += (((int)sourceWidth / 2) - cursor->x()) * currentScaleRatio.x;
-			drawYOffset += (((int)sourceHeight / 2) - cursor->y()) * currentScaleRatio.y;
+			auto cursorVec = glm::ivec2{ cursor->x(), cursor->y() };
+			
+			drawOffset += (glm::ivec2)( (glm::vec2)(((glm::ivec2)source / 2) - cursorVec) 
+										* currentScaleRatio );
 		}
 	}
 
 	layer->opacity = ( (w->isOverlay || w->isExternalOverlay) ? w->opacity / (float)OPAQUE : 1.0f ) * flOpacityScale;
 
-	layer->scale.x = 1.0 / currentScaleRatio.x;
-	layer->scale.y = 1.0 / currentScaleRatio.y;
+	layer->scale = std::bit_cast<vec2_t>(1.0 / currentScaleRatio);
 
 	if ( w != scaleW )
 	{
-		layer->offset.x = -drawXOffset;
-		layer->offset.y = -drawYOffset;
+		layer->offset = std::bit_cast<vec2_t>( (glm::vec2)-drawOffset );
 	}
 	else if (notificationMode)
 	{
 		glm::ivec2 offset {0, 0};
-
-		int width = w->GetGeometry().nWidth * currentScaleRatio.x;
-		int height = w->GetGeometry().nHeight * currentScaleRatio.y;
+		glm::ivec2 ivDim = glm::ivec2 { w->GetGeometry().nWidth, w->GetGeometry().nHeight };
+		ivDim = (glm::ivec2){ (glm::vec2)ivDim * currentScaleRatio };
 
 		if (globalScaleRatio != 1.0f)
 		{
 			offset = (glm::ivec2) (((glm::vec2)currentOutputResolution - (glm::vec2)currentOutputResolution * globalScaleRatio) / 2.0f);
 		}
 
-		layer->offset.x = (currentOutputResolution.x - offset.x - width) * -1.0f;
-		layer->offset.y = (currentOutputResolution.y - offset.y - height) * -1.0f;
+		auto layerOffset = (glm::vec2)((glm::ivec2)currentOutputResolution - offset - ivDim) * -1.0f;
+		layer->offset = std::bit_cast<vec2_t>(layerOffset);
 	}
 	else
 	{
-		layer->offset.x = -drawXOffset;
-		layer->offset.y = -drawYOffset;
+		layer->offset = std::bit_cast<vec2_t>( (glm::vec2)-drawOffset );
 	}
 
 	layer->blackBorder = flags & PaintWindowFlag::DrawBorders;
@@ -1951,7 +1956,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
 		// Don't bother doing more expensive filtering if we are sharp + integer.
-		if (float_is_integer(currentScaleRatio.x) && float_is_integer(currentScaleRatio.y))
+		if ( glm::all(float_is_integer(currentScaleRatio)) )
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 

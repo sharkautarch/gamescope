@@ -1,6 +1,7 @@
 #pragma once
 
 #define GLM_ENABLE_EXPERIMENTAL 1
+#define GLM_FORCE_SWIZZLE 1
 
 #include <algorithm>
 #include <cstdint>

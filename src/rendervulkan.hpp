@@ -258,15 +258,27 @@ struct vec2_t
 {
 	float x, y;
 };
-
+using aligned_vec2 = glm::vec<2, float, (glm::qualifier)3>;
+using aligned_vec4 = glm::vec<4, float, (glm::qualifier)3>;
 static inline bool float_is_integer(float x)
 {
 	return fabsf(ceilf(x) - x) <= 0.001f;
 }
 
+static inline glm::bvec2 float_is_integer(aligned_vec2 x)
+{
+	auto x4 = aligned_vec4{x};
+	return glm::bvec2{lessThanEqual(glm::abs(glm::ceil(x4) - x4), aligned_vec4{0.001f})};
+}
+
 inline bool close_enough(float a, float b, float epsilon = 0.001f)
 {
 	return fabsf(a - b) <= epsilon;
+}
+
+inline glm::bvec2 close_enough(aligned_vec2 a, float b, float epsilon = 0.001f)
+{
+	return lessThanEqual(glm::abs(a - b), aligned_vec2{epsilon});
 }
 
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
@@ -322,11 +334,13 @@ struct FrameInfo_t
 			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
-		bool isScreenSize() const {
-			return close_enough(scale.x, 1.0f) &&
-			       close_enough(scale.y, 1.0f) &&
-				float_is_integer(offset.x) &&
-				float_is_integer(offset.y);
+		bool __attribute__((noinline)) isScreenSize() const {
+			const auto vscale = aligned_vec2 { std::bit_cast<glm::vec2>(scale)  };
+			const auto voffset= aligned_vec2 { std::bit_cast<glm::vec2>(offset) };
+			auto bvNotClose = glm::not_(close_enough(vscale, 1.0f));
+			if (bvNotClose.x || bvNotClose.y ) 
+				return false;
+			return glm::all(float_is_integer(voffset));
 		}
 
 		bool viewConvertsToLinearAutomatically() const {
@@ -339,9 +353,9 @@ struct FrameInfo_t
 		uint32_t integerHeight() const { return tex->height() / scale.y; }
 		vec2_t offsetPixelCenter() const
 		{
-			float x = offset.x + 0.5f / scale.x;
-			float y = offset.y + 0.5f / scale.y;
-			return { x, y };
+			auto voffset = std::bit_cast<glm::vec2>(offset);
+			auto vscale = std::bit_cast<glm::vec2>(scale);
+			return std::bit_cast<vec2_t>(voffset + glm::vec2{.5f}/vscale);
 		}
 	} layers[ k_nMaxLayers ];
 
@@ -1154,7 +1168,7 @@ public:
 	inline auto& m_getSamplerState() { return m_textureBlock.samplerState; }
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; }
 	
-	CVulkanTexture**__restrict__ __attribute__((pure)) getShaperLut(uint32_t i) {
+	CVulkanTexture** __attribute__((pure)) getShaperLut(uint32_t i) {
 		if (i < EOTF_Count) {
 			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_shaperLut.data())[i]);
 			return ptr;
@@ -1163,7 +1177,7 @@ public:
 			return ptr; 
 		}
 	}
-	CVulkanTexture**__restrict__ __attribute__((pure)) getLut3D(uint32_t i) {
+	CVulkanTexture** __attribute__((pure)) getLut3D(uint32_t i) {
 		if (i < EOTF_Count) {
 			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_lut3D.data())[i]);
 			return ptr;
