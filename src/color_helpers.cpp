@@ -593,7 +593,7 @@ inline T calcEOTFToLinear( const T & input, EOTF eotf, const tonemapping_t & ton
 {
     if ( eotf == EOTF_Gamma22 )
     {
-        return glm::pow( input, T( 2.2f ) ) * tonemapping.g22_luminance;
+        return glm::fastPow( input, T( 2.2f ) ) * tonemapping.g22_luminance;
     }
     else if ( eotf == EOTF_PQ )
     {
