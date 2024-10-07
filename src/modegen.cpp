@@ -268,127 +268,13 @@ void generate_cvt_mode(drmModeModeInfo *mode, int hdisplay, int vdisplay,
 	}
 }
 
-// galielo SDC rev B ds.10 spec'd rates
-// fps   45   48  51  55  60  65  72  80 90
-// VFP 1321 1157 993 829 665 501 337 173 9
-
-// galielo BOE spec'd rates
-// fps   45   48  51  55  60  65  72  80 90
-// VFP 1320 1156 992 828 664 500 336 172 8
-
-// SDC VFP values for 45 Hz to 90 Hz
-unsigned int galileo_sdc_vfp[] = 
-{
-	1321,1264,1209,1157,1106,1058,993,967,925,883,829,805,768,732,698, 
-	665,632,601,571,542,501,486,459,433,408,383,360,337,314,292,271,250,230,210,191, 
-	173,154,137,119,102,86,70,54,38,23,9
-};
-
-// BOE VFP values for 45 Hz to 90 Hz
-// BOE Vtotal must be a multiple of 4
-unsigned int galileo_boe_vfp[] = 
-{
-	1320,1272,1216,1156,1112,1064,992,972,928,888,828,808,772,736,700,
-	664,636,604,572,544,500,488,460,436,408,384,360,336,316,292,272,252,228,212,192,
-	172,152,136,120,100,84,68,52,36,20,8
-};
-
-//SD LCD Stock Timings
-#define JUPITER_BOE_PID     0x3001
-#define JUPITER_B_PID       0x3002
-#define JUPITER_HFP         40
-#define JUPITER_HSYNC       4
-#define JUPITER_HBP         40
-#define JUPITER_VFP         30
-#define JUPITER_VSYNC       4
-#define JUPITER_VBP         8
-//SD LCD DeckHD Timings
-#define JUPITER_DHD_PID     0x4001
-#define JUPITER_DHD_HFP     40
-#define JUPITER_DHD_HSYNC   20
-#define JUPITER_DHD_HBP     40
-#define JUPITER_DHD_VFP     18
-#define JUPITER_DHD_VSYNC   2
-#define JUPITER_DHD_VBP     20
-//SD OLED SDC Timings
-#define GALILEO_SDC_PID     0x3003
-#define GALILEO_SDC_VSYNC   1
-#define GALILEO_SDC_VBP     22
-//SD OLED BOE Timings
-#define GALILEO_BOE_PID     0x3004
-#define GALILEO_BOE_VSYNC   2
-#define GALILEO_BOE_VBP     30
-#define GALILEO_MIN_REFRESH 45
-#define ARRAY_SIZE(x) (sizeof(x)/sizeof(x[0]))
-
-unsigned int get_galileo_vfp( int vrefresh, unsigned int * vfp_array, unsigned int num_rates )
-{
-	for ( unsigned int i = 0; i < num_rates; i++ ) {
-		if ( i+GALILEO_MIN_REFRESH == (unsigned int)vrefresh ) {
-			return vfp_array[i];
-		}
-	}
-	return 0;
-}
-
-void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh, gamescope::GamescopeKnownDisplays eKnownDisplay )
+void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base, int vrefresh )
 {
 	*mode = *base;
 	if (!vrefresh)
 		vrefresh = 60;
-	if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC ||
-		 eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ) {
-		unsigned int vfp = 0, vsync = 0, vbp = 0;
-		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
-		{
-			vfp = get_galileo_vfp( vrefresh, galileo_sdc_vfp, ARRAY_SIZE(galileo_sdc_vfp) );
-			// if we did not find a matching rate then we default to 60 Hz
-			if ( !vfp ) {
-				vrefresh = 60;
-				vfp = 665;
-			}
-			vsync = GALILEO_SDC_VSYNC;
-			vbp = GALILEO_SDC_VBP;
-		} else if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE ) { // BOE Panel
-			vfp = get_galileo_vfp( vrefresh, galileo_boe_vfp, ARRAY_SIZE(galileo_boe_vfp) );
-			// if we did not find a matching rate then we default to 60 Hz
-			if ( !vfp ) {
-				vrefresh = 60;
-				vfp = 664;
-			}
-			vsync = GALILEO_BOE_VSYNC;
-			vbp = GALILEO_BOE_VBP;
-		}
-		mode->vsync_start = mode->vdisplay + vfp;
-		mode->vsync_end = mode->vsync_start + vsync;
-		mode->vtotal = mode->vsync_end + vbp;
-	} else {
-		if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD ) {
-			mode->hdisplay = 1200;
-			mode->hsync_start = mode->hdisplay + JUPITER_DHD_HFP;
-			mode->hsync_end = mode->hsync_start + JUPITER_DHD_HSYNC;
-			mode->htotal = mode->hsync_end + JUPITER_DHD_HBP;
 
-			mode->vdisplay = 1920;
-			mode->vsync_start = mode->vdisplay + JUPITER_DHD_VFP;
-			mode->vsync_end = mode->vsync_start + JUPITER_DHD_VSYNC;
-			mode->vtotal = mode->vsync_end + JUPITER_DHD_VBP;
-		}
-		else if ( eKnownDisplay == gamescope::GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
-		{
-			mode->hdisplay = 800;
-			mode->hsync_start = mode->hdisplay + JUPITER_HFP;
-			mode->hsync_end = mode->hsync_start + JUPITER_HSYNC;
-			mode->htotal = mode->hsync_end + JUPITER_HBP;
-
-			mode->vdisplay = 1280;
-			mode->vsync_start = mode->vdisplay + JUPITER_VFP;
-			mode->vsync_end = mode->vsync_start + JUPITER_VSYNC;
-			mode->vtotal = mode->vsync_end + JUPITER_VBP;
-		}
-
-		mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
-	}
+	mode->clock = ( ( mode->htotal * mode->vtotal * vrefresh ) + 999 ) / 1000;
 	mode->vrefresh = (1000 * mode->clock) / (mode->htotal * mode->vtotal);
 
 	snprintf(mode->name, sizeof(mode->name), "%dx%d@%d.00", mode->hdisplay, mode->vdisplay, vrefresh);

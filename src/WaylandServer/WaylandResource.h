@@ -46,15 +46,6 @@ namespace gamescope::WaylandServer
 		{
 		}
 
-		void OnResourceDestroy()
-		{
-			m_pResource = nullptr;
-			m_pClient = nullptr;
-			m_uVersion = 0;
-
-			delete this;
-		}
-
 		template <typename T>
 		static bool CheckAllocation( const T &object, wl_client *pClient )
 		{
@@ -101,7 +92,7 @@ namespace gamescope::WaylandServer
 			[]( wl_resource *pResource )
 			{
 				T *pObject = CWaylandResource::FromWlResource<T>( pResource );
-				pObject->OnResourceDestroy();
+				delete pObject;
 			});
 
 			return pThing;

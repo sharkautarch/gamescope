@@ -4,6 +4,8 @@
 
 namespace gamescope
 {
+    static LogScope memo_log{ "BufferMemo" };
+
     /////////////////
     // CBufferMemo
     /////////////////
@@ -49,6 +51,8 @@ namespace gamescope
 
     void CBufferMemoizer::MemoizeBuffer( wlr_buffer *pBuffer, OwningRc<CVulkanTexture> pTexture )
     {
+        memo_log.debugf( "Memoizing new buffer: wlr_buffer %p -> texture: %p", pBuffer, pTexture.get() );
+
         // Can't hold m_mutBufferMemos while we finalize link from pMemo to buffer
         // as we can't have wlserver_lock held otherwise we can deadlock when
         // adding the wl_signal.
@@ -70,6 +74,8 @@ namespace gamescope
 
     void CBufferMemoizer::UnmemoizeBuffer( wlr_buffer *pBuffer )
     {
+        memo_log.debugf( "Unmemoizing buffer: wlr_buffer %p", pBuffer );
+
         std::scoped_lock lock{ m_mutBufferMemos };
         auto iter = m_BufferMemos.find( pBuffer );
         assert( iter != m_BufferMemos.end() );

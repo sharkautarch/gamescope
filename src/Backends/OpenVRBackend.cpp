@@ -532,10 +532,10 @@ namespace gamescope
 		{
 			return VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
 		}
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override
         {
-			*pPrimaryPlaneFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-			*pOverlayPlaneFormat = VK_FORMAT_B8G8R8A8_UNORM;
+            *pPrimaryPlaneFormat = VulkanFormatToDRM( VK_FORMAT_A2B10G10R10_UNORM_PACK32 );
+            *pOverlayPlaneFormat = VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM );
         }
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
@@ -893,7 +893,11 @@ namespace gamescope
                 vr::VROverlay()->ClearOverlayTexture( GetPrimaryPlane()->GetOverlayThumbnail() );
             }
         }
-		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override
+        {
+            // Do nothing.
+        }
+        virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override
         {
             return nullptr;
         }

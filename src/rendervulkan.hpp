@@ -508,8 +508,8 @@ struct VulkanOutput_t
 	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImagesPartialOverlay;
 	gamescope::OwningRc<CVulkanTexture> temporaryHackyBlankImage;
 
-	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
-	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
+	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
+	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
 	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
 

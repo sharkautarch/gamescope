@@ -12,6 +12,9 @@
 #include <functional>
 #include <cassert>
 
+#include "Script/Script.h"
+#include "Utils/Dict.h"
+
 #include "log.hpp"
 
 extern LogScope console_log;
@@ -62,10 +65,8 @@ namespace gamescope
             return false;
     }
 
-    inline std::vector<std::string_view> Split( std::string_view string, std::string_view delims = " " )
+    inline void Split( std::vector<std::string_view> &tokens, std::string_view string, std::string_view delims = " " )
     {
-        std::vector<std::string_view> tokens;
-        
         size_t end = 0;
         for ( size_t start = 0; start < string.size() && end != std::string_view::npos; start = end + 1 )
         {
@@ -74,44 +75,39 @@ namespace gamescope
             if ( start != end )
                 tokens.emplace_back( string.substr( start, end-start ) );
         }
-
-        return tokens;
     }
 
-    struct StringHash
+    inline std::vector<std::string_view> Split( std::string_view string, std::string_view delims = " " )
     {
-        using is_transparent = void;
-        [[nodiscard]] size_t operator()( const char *string )        const { return std::hash<std::string_view>{}( string ); }
-        [[nodiscard]] size_t operator()( std::string_view string )   const { return std::hash<std::string_view>{}( string ); }
-        [[nodiscard]] size_t operator()( const std::string &string ) const { return std::hash<std::string>{}( string ); }
-    };
-
-    template <typename T>
-    using Dict = std::unordered_map<std::string, T, StringHash, std::equal_to<>>;
+        std::vector<std::string_view> tokens;
+        Split( tokens, string, delims );
+        return tokens;
+    }
 
     class ConCommand
     {
         using ConCommandFunc = std::function<void( std::span<std::string_view> )>;
 
     public:
-        ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func )
-            : m_pszName{ pszName }
-            , m_pszDescription{ pszDescription }
-            , m_Func{ func }
-        {
-            assert( !GetCommands().contains( pszName ) );
-            GetCommands()[ std::string( pszName ) ] = this;
-        }
+        DECLARE_SCRIPTDESC( ConCommand );
 
-        ~ConCommand()
-        {
-            GetCommands().erase( GetCommands().find( m_pszName ) );
-        }
+        ConCommand( std::string_view pszName, std::string_view pszDescription, ConCommandFunc func, bool bRegisterScript = true );
+        ~ConCommand();
 
         void Invoke( std::span<std::string_view> args )
         {
             if ( m_Func )
                 m_Func( args );
+        }
+
+        // Calls it with space separated args.
+        void CallWithArgString( std::string_view args )
+        {
+            std::vector<std::string_view> sArgs;
+            sArgs.push_back( m_pszName );
+            Split( sArgs, args, " " );
+
+            Invoke( sArgs );
         }
 
         static bool Exec( std::span<std::string_view> args );
@@ -126,13 +122,21 @@ namespace gamescope
         ConCommandFunc m_Func;
     };
 
+    START_SCRIPTDESC( ConCommand, "concommand" )
+        SCRIPTDESC( "name", &ConCommand::m_pszName )
+        SCRIPTDESC( "description", &ConCommand::m_pszDescription )
+        SCRIPTDESC( "call", &ConCommand::CallWithArgString )
+    END_SCRIPTDESC()
+
     template <typename T>
     class ConVar : public ConCommand
     {
         using ConVarCallbackFunc = std::function<void(ConVar<T> &)>;
     public:
-        ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr, bool bRunCallbackAtStartup = false )
-            : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); } )
+        DECLARE_SCRIPTDESC( ConVar<T> );
+
+        ConVar( std::string_view pszName, T defaultValue = T{}, std::string_view pszDescription = "", ConVarCallbackFunc func = nullptr, bool bRunCallbackAtStartup = false, bool bRegisterScript = true )
+            : ConCommand( pszName, pszDescription, [this]( std::span<std::string_view> pArgs ){ this->InvokeFunc( pArgs ); }, false )
             , m_Value{ defaultValue }
             , m_Callback{ func }
         {
@@ -140,6 +144,13 @@ namespace gamescope
             {
                 RunCallback();
             }
+
+#if HAVE_SCRIPTING
+            if ( bRegisterScript )
+            {
+                CScriptScopedLock().Manager().Gamescope().Convars.Base[pszName] = this;
+            }
+#endif
         }
 
         const T& Get() const
@@ -176,6 +187,10 @@ namespace gamescope
         template <typename J> bool operator == ( const J &other ) const { return m_Value ==  other; }
         template <typename J> bool operator != ( const J &other ) const { return m_Value !=  other; }
         template <typename J> auto operator <=>( const J &other ) const { return m_Value <=> other; }
+
+        template <typename J>  bool operator == ( const ConVar<J> &other ) const { return *this ==  other.Get(); }
+        template <typename J>  bool operator != ( const ConVar<J> &other ) const { return *this !=  other.Get(); }
+        template <typename J>  auto operator <=>( const ConVar<J> &other ) const { return *this <=> other.Get(); }
 
         T  operator | (T other) { return m_Value | other; }
         T &operator |=(T other) { return m_Value |= other; }
@@ -221,4 +236,14 @@ namespace gamescope
         ConVarCallbackFunc m_Callback;
         bool m_bInCallback;
     };
+
+    SCRIPTDESC_TEMPLATE( T )
+    START_SCRIPTDESC_ANON( ConVar<T> )
+        SCRIPTDESC( "name", &ConVar<T>::m_pszName )
+        SCRIPTDESC( "description", &ConVar<T>::m_pszDescription )
+        SCRIPTDESC( "call", &ConVar<T>::CallWithArgString )
+
+        SCRIPTDESC( "value", &ConVar<T>::m_Value )
+    END_SCRIPTDESC()
+
 }

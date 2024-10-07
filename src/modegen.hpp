@@ -10,4 +10,4 @@
 void generate_cvt_mode(drmModeModeInfo *mode, int hdisplay, int vdisplay,
 	float vrefresh, bool reduced, bool interlaced);
 void generate_fixed_mode(drmModeModeInfo *mode, const drmModeModeInfo *base,
-	int vrefresh, gamescope::GamescopeKnownDisplays eKnownDisplay);
+	int vrefresh );

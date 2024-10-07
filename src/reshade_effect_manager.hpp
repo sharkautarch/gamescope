@@ -94,3 +94,9 @@ private:
 };
 
 extern ReshadeEffectManager g_reshadeManager;
+
+
+void reshade_effect_manager_set_uniform_variable(const char *key, uint8_t* value);
+void reshade_effect_manager_set_effect(const char *path, std::function<void(const char*)> callback);
+void reshade_effect_manager_enable_effect();
+void reshade_effect_manager_disable_effect();
