@@ -617,7 +617,7 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
     }
     else if ( eotf == EOTF_PQ )
     {
-        return T( nits_to_pq(input) );
+        return nits_to_pq(input);
     }
 
     return T(0);
@@ -665,7 +665,6 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
         float flScale = 1.f / ( (float) nLutSize1d - 1.f );
         pShaper->resize( nLutSize1d );
 
-				ITERATION_INDEPENDENT_LOOP
         for ( int nVal=0; nVal<nLutSize1d; ++nVal )
         {
             glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
