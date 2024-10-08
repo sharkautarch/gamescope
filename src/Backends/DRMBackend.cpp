@@ -1,5 +1,7 @@
 // DRM output stuff
 
+#include "Script/Script.h"
+
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <fcntl.h>
@@ -287,7 +289,6 @@ namespace gamescope
 		const char *GetModel() const override { return m_Mutable.szModel; }
 		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
 		std::span<const uint32_t> GetValidDynamicRefreshRates() const override { return m_Mutable.ValidDynamicRefreshRates; }
-		GamescopeKnownDisplays GetKnownDisplayType() const { return m_Mutable.eKnownDisplay; }
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
 
 		std::span<const uint8_t> GetRawEDID() const override { return std::span<const uint8_t>{ m_Mutable.EdidData.begin(), m_Mutable.EdidData.end() }; }
@@ -372,10 +373,14 @@ namespace gamescope
 
 		void UpdateEffectiveOrientation( const drmModeModeInfo *pMode );
 
+		using DRMModeGenerator = std::function<drmModeModeInfo(const drmModeModeInfo *, int)>;
+		const DRMModeGenerator &GetModeGenerator() const
+		{
+			return m_Mutable.fnDynamicModeGenerator;
+		}
+
 	private:
 		void ParseEDID();
-
-		static std::optional<BackendConnectorHDRInfo> GetKnownDisplayHDRInfo( GamescopeKnownDisplays eKnownDisplay );
 
 		CAutoDeletePtr<drmModeConnector> m_pConnector;
 
@@ -388,8 +393,8 @@ namespace gamescope
 			char szMakePNP[4]{};
 			char szModel[16]{};
 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
-			GamescopeKnownDisplays eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_UNKNOWN;
-			std::span<const uint32_t> ValidDynamicRefreshRates{};
+			std::vector<uint32_t> ValidDynamicRefreshRates{};
+			DRMModeGenerator fnDynamicModeGenerator;
 			std::vector<uint8_t> EdidData; // Raw, unmodified.
 			std::vector<BackendMode> BackendModes;
 
@@ -2111,71 +2116,113 @@ namespace gamescope
 
 		drm_log.infof("Connector %s -> %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel );
 
-		const bool bIsDeckHDUnofficial = ( m_Mutable.szMakePNP == "DHD"sv && m_Mutable.szModel == "DeckHD-1200p"sv );
+		bool bHasKnownColorimetry = false;
+		bool bHasKnownHDRInfo = false;
 
-		const bool bSteamDeckDisplay =
-			( m_Mutable.szMakePNP == "WLC"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
-			( m_Mutable.szMakePNP == "ANX"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
-			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "ANX7530 U"sv ) ||
-			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Jupiter"sv ) ||
-			( m_Mutable.szMakePNP == "VLV"sv && m_Mutable.szModel == "Galileo"sv );
-
-		if ( bSteamDeckDisplay )
 		{
-			static constexpr uint32_t kPIDGalileoSDC = 0x3003;
-			static constexpr uint32_t kPIDGalileoBOE = 0x3004;
+			CScriptScopedLock script;
 
-			if ( pProduct->product == kPIDGalileoSDC )
+			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, m_Mutable.szMakePNP, pProduct->product, m_Mutable.szModel );
+			if ( oKnownDisplay )
 			{
-				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
-			}
-			else if ( pProduct->product == kPIDGalileoBOE )
-			{
-				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckOLEDRates );
-			}
-			else
-			{
-				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
+				sol::table tTable = oKnownDisplay->second;
+
+				std::string_view psvPrettyName = tTable.get_or( "pretty_name", std::string_view{ "Untitled Display" } );
+				drm_log.infof( "Got known display: %.*s (%.*s)",
+					(int)oKnownDisplay->first.size(), oKnownDisplay->first.data(),
+					(int)psvPrettyName.size(), psvPrettyName.data() );
+
+				m_Mutable.fnDynamicModeGenerator = nullptr;
+				m_Mutable.ValidDynamicRefreshRates.clear();
+
+				sol::optional<sol::table> otDynamicRefreshRates = tTable["dynamic_refresh_rates"];
+				sol::optional<sol::function> ofnDynamicModegen = tTable["dynamic_modegen"];
+
+				if ( otDynamicRefreshRates && ofnDynamicModegen )
+				{
+					m_Mutable.ValidDynamicRefreshRates = TableToVector<uint32_t>( *otDynamicRefreshRates );
+
+					m_Mutable.fnDynamicModeGenerator = [ fnDynamicModegen = *ofnDynamicModegen ]( const drmModeModeInfo *pBaseMode, int nRefreshHz ) -> drmModeModeInfo
+					{
+						CScriptScopedLock script;
+
+						sol::table tInMode = script->create_table();
+						tInMode["clock"] = pBaseMode->clock;
+
+						tInMode["hdisplay"] = pBaseMode->hdisplay;
+						tInMode["hsync_start"] = pBaseMode->hsync_start;
+						tInMode["hsync_end"] = pBaseMode->hsync_end;
+						tInMode["htotal"] = pBaseMode->htotal;
+
+						tInMode["vdisplay"] = pBaseMode->vdisplay;
+						tInMode["vsync_start"] = pBaseMode->vsync_start;
+						tInMode["vsync_end"] = pBaseMode->vsync_end;
+						tInMode["vtotal"] = pBaseMode->vtotal;
+
+						tInMode["vrefresh"] = pBaseMode->vrefresh;
+
+						sol::function_result ret = fnDynamicModegen(tInMode, nRefreshHz);
+						if ( !ret.valid() || !ret.get<sol::table>() )
+							return *pBaseMode;
+						
+						sol::table tOutMode = ret;
+
+						drmModeModeInfo outMode = *pBaseMode;
+						outMode.clock = tOutMode["clock"];
+
+						outMode.hdisplay = tOutMode["hdisplay"];
+						outMode.hsync_start = tOutMode["hsync_start"];
+						outMode.hsync_end = tOutMode["hsync_end"];
+						outMode.htotal = tOutMode["htotal"];
+
+						outMode.vdisplay = tOutMode["vdisplay"];
+						outMode.vsync_start = tOutMode["vsync_start"];
+						outMode.vsync_end = tOutMode["vsync_end"];
+						outMode.vtotal = tOutMode["vtotal"];
+
+						outMode.vrefresh = tOutMode["vrefresh"];
+
+						snprintf( outMode.name, sizeof( outMode.name ), "%dx%d@%d.00", outMode.hdisplay, outMode.vdisplay, nRefreshHz );
+
+						return outMode;
+					};
+				}
+
+				if ( sol::optional<sol::table> otColorimetry = tTable["colorimetry"] )
+				{
+					sol::table tColorimetry = *otColorimetry;
+
+					// TODO: Add a vec2 + colorimetry type?
+					sol::optional<sol::table> otR = tColorimetry["r"];
+					sol::optional<sol::table> otG = tColorimetry["g"];
+					sol::optional<sol::table> otB = tColorimetry["b"];
+					sol::optional<sol::table> otW = tColorimetry["w"];
+
+					if ( otR && otG && otB && otW )
+					{
+						m_Mutable.DisplayColorimetry.primaries.r = TableToVec<glm::vec2>( *otR );
+						m_Mutable.DisplayColorimetry.primaries.g = TableToVec<glm::vec2>( *otG );
+						m_Mutable.DisplayColorimetry.primaries.b = TableToVec<glm::vec2>( *otB );
+						m_Mutable.DisplayColorimetry.white = TableToVec<glm::vec2>( *otW );
+
+						bHasKnownColorimetry = true;
+					}
+				}
+
+				if ( sol::optional<sol::table> otHDRInfo = tTable["hdr"] )
+				{
+					m_Mutable.HDR.bExposeHDRSupport = otHDRInfo->get_or( "supported", false );
+					m_Mutable.HDR.eOutputEncodingEOTF = otHDRInfo->get_or( "eotf", EOTF_Gamma22 );
+					m_Mutable.HDR.uMaxContentLightLevel = nits_to_u16( otHDRInfo->get_or( "max_content_light_level", 400.0f ) );
+					m_Mutable.HDR.uMaxFrameAverageLuminance = nits_to_u16( otHDRInfo->get_or( "max_frame_average_luminance", 400.0f ) );
+					m_Mutable.HDR.uMinContentLightLevel = nits_to_u16_dark( otHDRInfo->get_or( "min_content_light_level", 0.1f ) );
+
+					bHasKnownHDRInfo = true;
+				}
 			}
 		}
 
-		if ( bIsDeckHDUnofficial )
-		{
-			static constexpr uint32_t kPIDJupiterDHD = 0x4001;
-
-			if ( pProduct->product == kPIDJupiterDHD )
-			{
-				m_Mutable.eKnownDisplay = GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD;
-				m_Mutable.ValidDynamicRefreshRates = std::span( s_kSteamDeckLCDRates );
-			}
-		}
-
-		// Colorimetry
-		const char *pszColorOverride = getenv( "GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE" );
-		if ( pszColorOverride && *pszColorOverride && GetScreenType() == GAMESCOPE_SCREEN_TYPE_INTERNAL )
-		{
-			if ( sscanf( pszColorOverride, "%f %f %f %f %f %f %f %f",
-				&m_Mutable.DisplayColorimetry.primaries.r.x, &m_Mutable.DisplayColorimetry.primaries.r.y,
-				&m_Mutable.DisplayColorimetry.primaries.g.x, &m_Mutable.DisplayColorimetry.primaries.g.y,
-				&m_Mutable.DisplayColorimetry.primaries.b.x, &m_Mutable.DisplayColorimetry.primaries.b.y,
-				&m_Mutable.DisplayColorimetry.white.x, &m_Mutable.DisplayColorimetry.white.y ) == 8 )
-			{
-				drm_log.infof( "[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE detected" );
-			}
-			else
-			{
-				drm_log.errorf( "[colorimetry]: GAMESCOPE_INTERNAL_COLORIMETRY_OVERRIDE specified, but could not parse \"rx ry gx gy bx by wx wy\"" );
-			}
-		}
-		else if ( m_Mutable.eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD )
-		{
-			drm_log.infof( "[colorimetry]: Steam Deck LCD detected. Using known colorimetry" );
-			m_Mutable.DisplayColorimetry = displaycolorimetry_steamdeck_measured;
-		}
-		else
+		if ( !bHasKnownColorimetry )
 		{
 			// Steam Deck OLED has calibrated chromaticity coordinates in the EDID
 			// for each unit.
@@ -2191,6 +2238,11 @@ namespace gamescope
 					.white = { pChroma->white_x, pChroma->white_y },
 				};
 			}
+			else
+			{
+				// Assume 709 if we have no data at all.
+				m_Mutable.DisplayColorimetry = displaycolorimetry_709;
+			}
 		}
 
 		drm_log.infof( "[colorimetry]: r %f %f", m_Mutable.DisplayColorimetry.primaries.r.x, m_Mutable.DisplayColorimetry.primaries.r.y );
@@ -2201,12 +2253,7 @@ namespace gamescope
 		/////////////////////
 		// Parse HDR stuff.
 		/////////////////////
-		std::optional<BackendConnectorHDRInfo> oKnownHDRInfo = GetKnownDisplayHDRInfo( m_Mutable.eKnownDisplay );
-		if ( oKnownHDRInfo )
-		{
-			m_Mutable.HDR = *oKnownHDRInfo;
-		}
-		else
+		if ( !bHasKnownHDRInfo )
 		{
 			const di_cta_hdr_static_metadata_block *pHDRStaticMetadata = nullptr;
 			const di_cta_colorimetry_block *pColorimetry = nullptr;
@@ -2287,38 +2334,6 @@ namespace gamescope
 				m_Mutable.HDR.bExposeHDRSupport = false;
 			}
 		}
-	}
-
-	/*static*/ std::optional<BackendConnectorHDRInfo> CDRMConnector::GetKnownDisplayHDRInfo( GamescopeKnownDisplays eKnownDisplay )
-	{
-		if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_BOE || eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_OLED_SDC )
-		{
-			// The stuff in the EDID for the HDR metadata does not fully
-			// reflect what we can achieve on the display by poking at more
-			// things out-of-band.
-			return BackendConnectorHDRInfo
-			{
-				.bExposeHDRSupport = true,
-				.eOutputEncodingEOTF = EOTF_Gamma22,
-				.uMaxContentLightLevel = nits_to_u16( 1000.0f ),
-				.uMaxFrameAverageLuminance = nits_to_u16( 800.0f ), // Full-frame sustained.
-				.uMinContentLightLevel = nits_to_u16_dark( 0 ),
-			};
-		}
-		else if ( eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD || eKnownDisplay == GAMESCOPE_KNOWN_DISPLAY_STEAM_DECK_LCD_DHD )
-		{
-			// Set up some HDR fallbacks for undocking
-			return BackendConnectorHDRInfo
-			{
-				.bExposeHDRSupport = false,
-				.eOutputEncodingEOTF = EOTF_Gamma22,
-				.uMaxContentLightLevel = nits_to_u16( 500.0f ),
-				.uMaxFrameAverageLuminance = nits_to_u16( 500.0f ),
-				.uMinContentLightLevel = nits_to_u16_dark( 0.5f ),
-			};
-		}
-
-		return std::nullopt;
 	}
 
 	/////////////////////////
@@ -3015,17 +3030,25 @@ bool drm_set_refresh( struct drm_t *drm, int refresh )
 	}
 	else
 	{
-		/* TODO: check refresh is within the EDID limits */
-		switch ( g_eGamescopeModeGeneration )
+		if ( g_DRM.pConnector && g_DRM.pConnector->GetModeGenerator() )
 		{
-		case gamescope::GAMESCOPE_MODE_GENERATE_CVT:
-			generate_cvt_mode( &mode, width, height, refresh, true, false );
-			break;
-		case gamescope::GAMESCOPE_MODE_GENERATE_FIXED:
+			const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
+			mode = g_DRM.pConnector->GetModeGenerator()( preferred_mode, refresh );
+		}
+		else
+		{
+			/* TODO: check refresh is within the EDID limits */
+			switch ( g_eGamescopeModeGeneration )
 			{
-				const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
-				generate_fixed_mode( &mode, preferred_mode, refresh, drm->pConnector->GetKnownDisplayType() );
+			case gamescope::GAMESCOPE_MODE_GENERATE_CVT:
+				generate_cvt_mode( &mode, width, height, refresh, true, false );
 				break;
+			case gamescope::GAMESCOPE_MODE_GENERATE_FIXED:
+				{
+					const drmModeModeInfo *preferred_mode = find_mode(connector, 0, 0, 0);
+					generate_fixed_mode( &mode, preferred_mode, refresh );
+					break;
+				}
 			}
 		}
 	}

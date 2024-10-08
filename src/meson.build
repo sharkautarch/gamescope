@@ -90,6 +90,8 @@ reshade_include = include_directories([
   '../thirdparty/SPIRV-Headers/include/spirv/unified1'
 ])
 
+sol2_include = include_directories(['../thirdparty'])
+
 required_wlroots_features = ['xwayland']
 
 glm_include = include_directories([
@@ -102,6 +104,7 @@ src = [
   'Utils/TempFiles.cpp',
   'Utils/Version.cpp',
   'Utils/Process.cpp',
+  'Script/Script.cpp',
   'BufferMemo.cpp',
   'steamcompmgr.cpp',
   'convar.cpp',
@@ -121,6 +124,8 @@ src = [
   'x11cursor.cpp',
   'InputEmulation.cpp',
 ]
+
+luajit_dep = dependency( 'luajit' )
 
 gamescope_cpp_args = []
 if drm_dep.found()
@@ -146,6 +151,7 @@ gamescope_cpp_args += '-DHAVE_SDL2=@0@'.format(sdl2_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_AVIF=@0@'.format(avif_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBCAP=@0@'.format(cap_dep.found().to_int())
 gamescope_cpp_args += '-DHAVE_LIBEIS=@0@'.format(eis_dep.found().to_int())
+gamescope_cpp_args += '-DHAVE_SCRIPTING=1'
 
 src += spirv_shaders
 src += protocols_server_src
@@ -185,14 +191,14 @@ gamescope_version = configure_file(
   executable(
     'gamescope',
     src, reshade_src, gamescope_version,
-    include_directories : [reshade_include, glm_include],
+    include_directories : [reshade_include, sol2_include, glm_include],
     dependencies: [
       dep_wayland, dep_x11, dep_xdamage, dep_xcomposite, dep_xrender, dep_xext, dep_xfixes,
       dep_xxf86vm, dep_xres, glm_dep, drm_dep, wayland_server,
       xkbcommon, thread_dep, sdl2_dep, wlroots_dep,
       vulkan_dep, liftoff_dep, dep_xtst, dep_xmu, cap_dep, epoll_dep, pipewire_dep, librt_dep,
       stb_dep, displayinfo_dep, openvr_dep, dep_xcursor, avif_dep, dep_xi,
-      libdecor_dep, eis_dep,
+      libdecor_dep, eis_dep, luajit_dep
     ],
     install: true,
     cpp_args: gamescope_cpp_args,

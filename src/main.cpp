@@ -1,3 +1,5 @@
+#include "Script/Script.h"
+
 #include <X11/Xlib.h>
 
 #include <cstdio>
@@ -807,6 +809,11 @@ int main(int argc, char **argv)
 	if ( gpuvis_trace_init() != -1 )
 	{
 		fprintf( stderr, "Tracing is enabled\n");
+	}
+
+	{
+		gamescope::CScriptScopedLock script;
+		script.Manager().RunDefaultScripts();
 	}
 
 	XInitThreads();

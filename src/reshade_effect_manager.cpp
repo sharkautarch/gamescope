@@ -36,14 +36,22 @@ static std::mutex g_runtimeUniformsMutex;
 
 const char *homedir;
 
+std::string_view GetHomeDir()
+{
+    static std::string s_sHomeDir = []() -> std::string
+    {
+        const char *pszHomeDir = getenv( "HOME" );
+        if ( pszHomeDir )
+            return pszHomeDir;
+
+        return getpwuid( getuid() )->pw_dir;
+    }();
+    return s_sHomeDir;
+}
+
 static std::string GetLocalUsrDir()
 {
-    const char *homedir = nullptr;
-
-    if ((homedir = getenv("HOME")) == nullptr)
-        homedir = getpwuid(getuid())->pw_dir;
-
-    return std::string(homedir) + "/.local";
+    return std::string{ GetHomeDir() } + "/.local";
 }
 
 static std::string GetUsrDir()

@@ -104,18 +104,27 @@ void LogScope::vlogf(enum LogPriority priority, const char *fmt, va_list args)
 		return;
 	defer( free(buf); );
 
+	std::string_view svBuf = buf;
+	log(priority, svBuf);
+}
+
+void LogScope::log(enum LogPriority priority, std::string_view psvText)
+{
+	if ( !Enabled( priority ) )
+		return;
+
 	for (auto& listener : m_LoggingListeners)
-		listener.second( priority, m_psvPrefix, buf );
+		listener.second( priority, m_psvPrefix, psvText );
 
 	std::string_view psvLogName = GetLogPriorityText( priority );
 	if ( bPrefixEnabled )
-		fprintf(stderr, "[%s] %.*s \e[0;37m%.*s:\e[0m %s\n",
+		fprintf(stderr, "[%s] %.*s \e[0;37m%.*s:\e[0m %.*s\n",
 		gamescope::Process::GetProcessName(),
 		(int)psvLogName.size(), psvLogName.data(),
 		(int)this->m_psvPrefix.size(), this->m_psvPrefix.data(),
-		buf);
+		(int)psvText.size(), psvText.data());
 	else
-	 	fprintf(stderr, "%s\n", buf);
+	 	fprintf(stderr, "%.*s\n", (int)psvText.size(), psvText.data());
 }
 
 void LogScope::logf(enum LogPriority priority, const char *fmt, ...) {
