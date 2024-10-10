@@ -101,7 +101,7 @@ inline float linear_to_srgb( float fVal )
 }
 template <typename T, typename Tx = std::remove_cvref_t<T>>
 struct PowFn {
-	static constexpr auto powFn = [](auto const& x, auto const& y) -> Tx {
+	static constexpr auto powFn = [](auto const x, auto const y) -> Tx {
 		if constexpr (std::is_same_v<Tx, float>) {
 		 	return glm::pow(x, y);
 		} else {
@@ -110,7 +110,7 @@ struct PowFn {
 	};
 }; 
 template <typename T, typename Tx = std::remove_cvref_t<T>>
-inline Tx pq_to_nits( T pq )
+inline Tx __attribute__((no_stack_protector)) pq_to_nits( T pq )
 {
 		static constexpr auto powFn = PowFn<T>::powFn;
     const float c1 = 0.8359375f;
@@ -126,18 +126,21 @@ inline Tx pq_to_nits( T pq )
     return powFn(num / den, oo_m1) * 10000.0f;
 }
 
-template <typename T>
-inline T nits_to_pq( const T& nits )
+template <typename T, typename Tx = std::remove_cvref_t<T>>
+inline Tx __attribute__((no_stack_protector)) nits_to_pq( T nits )
 {
-    T y = glm::clamp(nits / 10000.0f, T(0.0f), T(1.0f));
-    const float c1 = 0.8359375f;
-    const float c2 = 18.8515625f;
-    const float c3 = 18.6875f;
-    const float m1 = 0.1593017578125f;
-    const float m2 = 78.84375f;
-    T num = c1 + c2 * glm::pow(y, T(m1));
-    T den = T(1.0) + c3 * glm::pow(y, T(m1));
-    T n = glm::pow(num / den, T(m2));
+		static constexpr auto powFn = PowFn<T>::powFn;
+		static constexpr Tx c_zero = Tx(0.0f);
+		static constexpr Tx c_one = Tx(1.0f);
+    Tx y = glm::clamp(nits / 10000.0f, c_zero, c_one);
+    static constexpr float c1 = 0.8359375f;
+    static constexpr float c2 = 18.8515625f;
+    static constexpr float c3 = 18.6875f;
+    static constexpr Tx oo_m1 = Tx(0.1593017578125f);
+    static constexpr Tx oo_m2 = Tx(78.84375f);
+    Tx num = c1 + c2 * powFn(y, oo_m1);
+    Tx den = c_one + c3 * powFn(y, oo_m1);
+    Tx n = powFn(num / den, oo_m2);
     return n;
 }
 

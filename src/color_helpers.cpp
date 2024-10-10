@@ -188,6 +188,24 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
     return (iv[0] + dim * (iv[1] + dim * iv[2]));
 }
 
+int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
+{
+    glm::ivec3 compMultiplied = iv*ivDim; //{iv0, iv1*dim, iv2*dim*dim}
+    using TV = glm::ivec3;
+    iv.TV::~TV();
+    ivDim.TV::~TV();
+    
+    //when doing a horizontal add, we only extract out the final scalar value from the vector
+    //at the end, so that we don't end up extracting scalars from vector registers multiple times 
+    return (glm::ivec2(compMultiplied + compMultiplied.zyx()) + compMultiplied.yx())[0];
+}
+
+
+glm::ivec3 GetDimAsPowSeries(int dim) 
+{
+	return glm::ivec3{1, dim, dim*dim};
+}
+
 // Linear
 inline void lerp_rgb(float* out, const float* a, const float* b, const float* z)
 {
@@ -224,7 +242,7 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
     lerp_rgb(out, v1, v2, x);
 }
 
-inline glm::vec<4, float, (glm::qualifier)3> ClampAndSanitize( glm::vec<3, float, (glm::qualifier)3> a, float min, float max )
+inline glm::vec<4, float, (glm::qualifier)3> ClampAndSanitize( glm::vec3 a, float min, float max )
 {
 		const auto aa = glm::vec<4, float, (glm::qualifier)3>{a};
 #if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
@@ -245,17 +263,17 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
 		// NaNs become 0.
     auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx).xyz();
+    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx);
 
 		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
+  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx);
   	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), indexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
   	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-    glm::vec3 delta = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
+    glm::vec3 delta = (glm::vec3)idx - (glm::vec3)indexLow;
 
     // Compute index into LUT for surrounding corners
     const int n000 =
@@ -275,10 +293,7 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
     const int n111 =
         GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow.x}, lut3d.lutEdgeSize);
 
-    float x[3], y[3], z[3];
-    x[0] = delta[0]; x[1] = delta[0]; x[2] = delta[0];
-    y[0] = delta[1]; y[1] = delta[1]; y[2] = delta[1];
-    z[0] = delta[2]; z[1] = delta[2]; z[2] = delta[2];
+    glm::vec3 x {delta[0]}, y{delta[1]}, z{delta[2]};
 
     glm::vec3 out;
     lerp_rgb((float *) &out,
@@ -286,12 +301,12 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
         (float *) &lut3d.data[n010].r, (float *) &lut3d.data[n011].r,
         (float *) &lut3d.data[n100].r, (float *) &lut3d.data[n101].r,
         (float *) &lut3d.data[n110].r, (float *) &lut3d.data[n111].r,
-        x, y, z);
+        std::bit_cast<float*>(&x), std::bit_cast<float*>(&y), std::bit_cast<float*>(&z));
 
     return out;
 }
 
-inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
+inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
 {
 		const int l3dEdgeSize = lut3d.lutEdgeSize;
 		if (l3dEdgeSize < 0) {
@@ -302,37 +317,38 @@ inline glm::vec3 ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 
     // NaNs become 0.
     auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx).xyz();
-    const auto& [fx, fy, fz]   = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
+    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx);
+    const auto& [fx, fy, fz]   = (glm::vec3)idx - (glm::vec3)indexLow;
 
 		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
-  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), indexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
-  	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
+  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx);
+  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), glm::ivec2{indexLow} }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), glm::ivec2{indexHigh} }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
 		using TV = glm::ivec3;
 		indexHigh.TV::~TV();
 		indexLow.TV::~TV();
     // Compute index into LUT for surrounding corners
+    glm::ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
     const int n000 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh.x }, l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh[0] }, edgeSizeSeries);
     const int n100 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
     const int n010 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh.x}, l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh[0]}, edgeSizeSeries);
     const int n001 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zwx(), l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zwx(), edgeSizeSeries);
     const int n110 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), edgeSizeSeries);
     const int n101 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{ indexLowHigh.zy(), indexHighLow.x }, l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{ indexLowHigh.zy(), indexHighLow[0] }, edgeSizeSeries);
     const int n011 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), edgeSizeSeries);
     const int n111 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow.x}, l3dEdgeSize);
+        GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow[0]}, edgeSizeSeries);
 
 
     glm::vec3 out;
@@ -399,15 +415,15 @@ inline glm::vec3 ApplyLut1D_Linear( const lut1d_t & lut, const glm::vec3 & input
     // NaNs become 0.
     auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 
-    glm::ivec3 indexLow = (glm::ivec3) glm::floor(idx).xyz();
+    glm::ivec3 indexLow = (glm::ivec3) glm::floor(idx);
 
     // When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-    glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx).xyz();
+    glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx);
 
-    glm::vec3 delta = (glm::vec3)idx.xyz() - (glm::vec3)indexLow;
+    glm::vec3 delta = (glm::vec3)idx - (glm::vec3)indexLow;
 
     auto vLow = glm::vec3{ lut.dataR[indexLow[0]], lut.dataG[indexLow[1]], lut.dataB[indexLow[2]] };
     auto vHigh = glm::vec3{ lut.dataR[indexHigh[0]], lut.dataG[indexHigh[1]], lut.dataB[indexHigh[2]] };
@@ -588,9 +604,12 @@ bool BOutOfGamut( const glm::vec3 & color )
     return ( color.x<0.f || color.x > 1.f || color.y<0.f || color.y > 1.f || color.z<0.f || color.z > 1.f );
 }
 
-template <typename T>
+template <typename T, EOTF c_eotf = EOTF_Count>
 inline T calcEOTFToLinear( const T & input, EOTF eotf, const tonemapping_t & tonemapping )
 {
+		if constexpr (c_eotf == EOTF_PQ) {
+			return pq_to_nits( input );
+		}
     if ( eotf == EOTF_Gamma22 )
     {
         return glm::fastPow( input, T( 2.2f ) ) * tonemapping.g22_luminance;
@@ -598,14 +617,16 @@ inline T calcEOTFToLinear( const T & input, EOTF eotf, const tonemapping_t & ton
     else if ( eotf == EOTF_PQ )
     {
         return pq_to_nits( input );
-    }
-
-    return T(0);
+    } else { __builtin_unreachable(); }
 }
 
-template <typename T>
+template <typename T, EOTF c_eotf = EOTF_Count>
 inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & tonemapping )
 {
+		if constexpr (c_eotf == EOTF_PQ) {
+			return nits_to_pq( input );
+		}
+		
     if ( eotf == EOTF_Gamma22 )
     {
         T val = input;
@@ -618,25 +639,43 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
     else if ( eotf == EOTF_PQ )
     {
         return nits_to_pq(input);
-    }
-
-    return T(0);
+    } else { __builtin_unreachable(); }
 }
 
 // input is from 0->1
 // TODO: use tone-mapping for white, black, contrast ratio
 
 bool g_bUseSourceEOTFForShaper = false;
+using avec3 = glm::vec<3, float, (glm::qualifier)3>;
 
+//applyShaper seems to be a pretty hot function from testing w/ gamescope_color_microbenchmark
+//from testing, it seems that by marking this function w flatten attribute,
+//we get way better results compared to baseline, and compared to trying to mark this or other functions w/ always_inline.
+//It is likely that by only promoting aggressive inlining into applyShaper, w/o inlining more things outside of it,
+//that we hit the sweetspot in balancing instruction cache usage vs function call overhead.  
 template <typename T>
-inline T applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
+inline T __attribute__((flatten, no_stack_protector)) applyShaper( const T & input, EOTF source, EOTF dest, const tonemapping_t & tonemapping, float flGain )
 {
     if ( ( source == dest && flGain == 1.f ) || !tonemapping.bUseShaper )
     {
         return input;
     }
 
-    T flLinear = flGain * calcEOTFToLinear( input, source, tonemapping );
+		if (source == EOTF_PQ && dest == EOTF_PQ) {
+			//this funky branch here helps reduce the amount of intermediate branching when source == dest == EOTF_PQ (not doing the same for EOTF_Gamma22 because it's already significantly faster than EOTF_PQ),
+			//and from measurements from gamescope_color_microbench,
+			//this, along with adding the flatten attrib to this function,
+			//reduces BenchmarkCalcColorTransforms ns per iteration from ~913.986ns -> ~740.109ns
+			//reduces BenchmarkCalcColorTransforms_PQ ns per iteration from ~564.575ns -> ~407.889ns
+			//		^(note those two above stats are from compiling w/ c/cpp flags: "-fno-plt -march=native" & w/ meson flags: -Db_ndebug=true -Db_lto=true on an intel alderlake cpu)
+			//		(compiling without -march=native [which limits simd stuff to sse2], BenchmarkCalcColorTransforms improves from ~2.058 micros per iteration -> ~1.638 micros per iteration, BenchmarkCalcColorTransforms_PQ improves from ~1.125 micros per iteration -> 899.500ns per iteration)
+    	T flLinear = flGain * calcEOTFToLinear<T, EOTF_PQ>( input, EOTF_PQ, tonemapping );
+    	flLinear = tonemapping.apply( flLinear );
+
+    	return calcLinearToEOTF<T, EOTF_PQ>( flLinear, EOTF_PQ, tonemapping );
+  	}
+
+  	T flLinear = flGain * calcEOTFToLinear( input, source, tonemapping );
     flLinear = tonemapping.apply( flLinear );
 
     return calcLinearToEOTF( flLinear, g_bUseSourceEOTFForShaper ? source : dest, tonemapping );
@@ -660,6 +699,7 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
     // when applying both.  I.e., you can put ANY transform in here, and it should work.
 
     static constexpr int32_t nLutEdgeSize3d = static_cast<int32_t>(lutEdgeSize3d);
+    assert( (sourceEOTF==EOTF_Gamma22 || sourceEOTF==EOTF_PQ) && (destEOTF==EOTF_Gamma22 || destEOTF==EOTF_PQ) );
     if ( pShaper )
     {
         float flScale = 1.f / ( (float) nLutSize1d - 1.f );
