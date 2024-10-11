@@ -197,7 +197,7 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
     //at the end, so that we don't end up extracting scalars from vector registers multiple times 
-    return (glm::ivec2(compMultiplied + compMultiplied.zyx()) + compMultiplied.yx())[0];
+    return (glm::ivec2(compMultiplied) + compMultiplied.zy() + compMultiplied.yx())[0];
 }
 
 
@@ -230,6 +230,19 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
     lerp_rgb(out, v1, v2, y);
 }
 
+inline glm::vec3 lerp_rgb(
+	glm::vec3 const& __restrict__ a, 
+	glm::vec3 const& __restrict__ b,
+	glm::vec3 const& __restrict__ c,
+  glm::vec3 const& __restrict__ d,
+  glm::vec3 const& __restrict__ y,
+  glm::vec3 const& __restrict__ z)
+{
+    glm::vec3 v1 = lerp_rgb(a, b, z);
+    glm::vec3 v2 = lerp_rgb(c, d, z);
+    return lerp_rgb(v1, v2, y);
+}
+
 // Trilinear
 inline void lerp_rgb(float* out, const float* a, const float* b, const float* c, const float* d,
                      const float* e, const float* f, const float* g, const float* h,
@@ -242,9 +255,35 @@ inline void lerp_rgb(float* out, const float* a, const float* b, const float* c,
     lerp_rgb(out, v1, v2, x);
 }
 
-inline glm::vec<4, float, (glm::qualifier)3> ClampAndSanitize( glm::vec3 a, float min, float max )
+inline glm::vec3 lerp_rgb(
+	glm::vec3 const& __restrict__ a, 
+	glm::vec3 const& __restrict__ b,
+	glm::vec3 const& __restrict__ c,
+	glm::vec3 const& __restrict__ d,
+  glm::vec3 const& __restrict__ e,
+  glm::vec3 const& __restrict__ f,
+  glm::vec3 const& __restrict__ g,
+  glm::vec3 const& __restrict__ h,
+  glm::vec3 const& __restrict__ x,
+  glm::vec3 const& __restrict__ y,
+  glm::vec3 const& __restrict__ z)
 {
-		const auto aa = glm::vec<4, float, (glm::qualifier)3>{a};
+    glm::vec3 v1 = lerp_rgb(a,b,c,d,y,z);
+    glm::vec3 v2 = lerp_rgb(e,f,g,h,y,z);
+    return lerp_rgb(v1, v2, x);
+}
+using avec4 = glm::vec<4, float, (glm::qualifier)3>;
+inline avec4 ClampAndSanitize( avec4 a, float min, float max )
+{
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
+    return std::isfinite( a.x ) ? glm::min(glm::max(a, min), max) : glm::vec3{min};
+#else
+    return glm::min(glm::max(a, min), max);
+#endif
+}
+inline avec4 ClampAndSanitize( glm::vec3 a, float min, float max )
+{
+		avec4 aa = avec4{a};
 #if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
     return std::isfinite( aa.x ) ? glm::min(glm::max(aa, min), max) : glm::vec3{min};
 #else
@@ -305,7 +344,7 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
 
     return out;
 }
-
+using avec3 = glm::vec<3, float, (glm::qualifier)3>;
 inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
 {
 		const int l3dEdgeSize = lut3d.lutEdgeSize;
@@ -315,22 +354,33 @@ inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t 
     const float dimMinusOne = float(l3dEdgeSize) - 1.f;
 
     // NaNs become 0.
-    auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
+    auto idx = ClampAndSanitize(avec4{ avec3(input * dimMinusOne), 0.f}, 0.f, dimMinusOne);
 
-    glm::ivec3 indexLow = (glm::ivec3)glm::floor(idx);
-    const auto& [fx, fy, fz]   = (glm::vec3)idx - (glm::vec3)indexLow;
-
+		avec4 indexLow = glm::floor(idx);
+    glm::ivec3 ivIndexLow = (glm::ivec3)glm::floor(idx);
+    auto _delta   = idx - indexLow;
+		const auto yzxMinusXyz = glm::vec3(_delta.yzxw() - _delta);
+		const auto delta = glm::vec4(_delta);
+		_delta.avec4::~avec4();
+		// {y>x, z>y, x>z}
+		// if x > y && y > z -> yzxMinusXyz : {-,-,>0} lessThan(yzxMinusXyz, 0) = {true, true, false}
+		// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
+		// if x > y && z >= x -> yzxMinusXyz : {-,>=0,<=0} lessThan(yzxMinusXyz, 0) = {true, false, ?} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, false}
+		// if y >= x && z > y -> yzxMinusXyz : {>=0,>0,>0} {true, false, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
+		// if y >= x && z <= y && z > x -> yzxMinusXyz : {>=0,<=0,<0} lessThan(yzxMinusXyz, 0) | {true, true, false} == {true, true, true}
+		// if y >= x && z <= x -> yzxMinusXyz : {>=0,<=0,>=0} lessThan(yzxMinusXyz, 0) | {true, true, false} == {true, true, false}
 		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
   	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx);
-  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), glm::ivec2{indexLow} }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
-  	glm::ivec4 indexLowHigh = glm::ivec4{ indexLow.zy(), glm::ivec2{indexHigh} }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
+  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), glm::ivec2{ivIndexLow} }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	glm::ivec4 indexLowHigh = glm::ivec4{ ivIndexLow.zy(), glm::ivec2{indexHigh} }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
 		using TV = glm::ivec3;
 		indexHigh.TV::~TV();
-		indexLow.TV::~TV();
+		ivIndexLow.TV::~TV();
+		indexLow.avec4::~avec4();
     // Compute index into LUT for surrounding corners
     glm::ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
     const int n000 =
@@ -351,7 +401,63 @@ inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t 
         GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow[0]}, edgeSizeSeries);
 
 
-    glm::vec3 out;
+    using mat4x3 = glm::mat<4,3,float,(glm::qualifier)0>;
+    glm::vec3 ldzero = lut3d.data[n000];
+    constexpr auto bvecToByte = [](glm::bvec3 bv) -> uint8_t {
+    	return bv[0] | (bv[1] <<1) | (bv[2] << 2);
+    };
+    auto comp = bvecToByte(glm::lessThan(yzxMinusXyz, glm::vec3(0.f)));
+    if ( constexpr auto check = bvecToByte(glm::bvec3{true, true, false}); comp == check  ) 
+    {
+    	//x > y && y > z
+    	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n110], lut3d.data[n111]};
+    	auto v1 = delta.wxyz();
+    	return glm::operator*(ldata,glm::vec4(v1 - delta)) + ldzero;
+    } else if ( constexpr auto orWith = bvecToByte(glm::bvec3{false, true, true}),
+    	 					check = bvecToByte(glm::bvec3{true});
+    	 					 (comp | orWith) == check ) {
+    	// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
+		// if x > y && z >= x -> yzxMinusXyz : {-,>=0,<=0} lessThan(yzxMinusXyz, 0) = {true, false, ?} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, false}
+    	if ( constexpr auto orWith = bvecToByte(glm::bvec3{false, true, false}),
+    			 check = bvecToByte(glm::bvec3(true));
+    				(comp | orWith | bvecToByte(glm::greaterThan(yzxMinusXyz, glm::vec3(0.f)))) == check ) {
+    		// x > y && y <= z && x > z
+    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n101],  lut3d.data[n111]};
+    		auto v1 = delta.wxzy();
+    		return glm::operator*(ldata,(v1 - delta)) + ldzero;
+    	} else {
+    		//x > y && z >= x
+    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n101], lut3d.data[n111]};
+    		auto v1 = delta.wzxy();
+    		return glm::operator*(ldata,(v1 - delta)) + ldzero;
+    	}
+    		
+    } else {
+    	static constexpr auto gtOrWith = bvecToByte(glm::bvec3{true, false, false});
+    	auto compGt = bvecToByte(glm::greaterThan(yzxMinusXyz, glm::vec3(0.f))) | gtOrWith;
+    	if ( constexpr auto check = bvecToByte(glm::bvec3{true}); compGt == check ) {
+    		//y >= x && z > y
+    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n011], lut3d.data[n111]};
+    		auto v1 = delta.wzyx();
+    		return glm::operator*(ldata,(v1 - delta)) + ldzero;
+    	
+    	} else if ( constexpr auto orWith = bvecToByte(glm::bvec3{true, true, false}),
+    							check = bvecToByte(glm::bvec3{true});
+    							(comp | orWith) == check ) {
+    		//y >= x && z <= y && z > x
+    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n011], lut3d.data[n111]};
+    		auto v1 = delta.wyzx();
+    		return glm::operator*(ldata,(v1 - delta)) + ldzero;
+    	} else {
+    		//y >= x && z <= x
+    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n110], lut3d.data[n111]};
+    		auto v1 = delta.wyxz();
+    		return glm::operator*(ldata,(v1 - delta)) + ldzero;
+    	}
+    	
+    }
+
+#if 0
     if (fx > fy) {
         if (fy > fz) {
             out =
@@ -404,8 +510,8 @@ inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t 
                 (fz)      * lut3d.data[n111];
         }
     }
+#endif
 
-    return out;
 }
 
 
@@ -646,7 +752,6 @@ inline T calcLinearToEOTF( const T & input, EOTF eotf, const tonemapping_t & ton
 // TODO: use tone-mapping for white, black, contrast ratio
 
 bool g_bUseSourceEOTFForShaper = false;
-using avec3 = glm::vec<3, float, (glm::qualifier)3>;
 
 //applyShaper seems to be a pretty hot function from testing w/ gamescope_color_microbenchmark
 //from testing, it seems that by marking this function w flatten attribute,
