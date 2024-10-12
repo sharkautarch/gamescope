@@ -187,12 +187,13 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
 {
     return (iv[0] + dim * (iv[1] + dim * iv[2]));
 }
-
-int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
+using aligned_ivec3 = glm::vec<3, int, (glm::qualifier)3>;
+using aligned_ivec2 = glm::vec<3, int, (glm::qualifier)3>;
+int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, glm::ivec3 ivDim)
 {
-    glm::ivec3 compMultiplied = iv*ivDim; //{iv0, iv1*dim, iv2*dim*dim}
+    glm::ivec3 compMultiplied = iv*aligned_ivec3(ivDim); //{iv0, iv1*dim, iv2*dim*dim}
+    iv.aligned_ivec3::~aligned_ivec3();
     using TV = glm::ivec3;
-    iv.TV::~TV();
     ivDim.TV::~TV();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
@@ -201,9 +202,22 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
 }
 
 
-glm::ivec3 GetDimAsPowSeries(int dim) 
+int GetLut3DIndexRedFastRGB(aligned_ivec2 iv, int iv3, glm::ivec3 ivDim)
 {
-	return glm::ivec3{1, dim, dim*dim};
+    glm::ivec2 compMultiplied = iv*aligned_ivec2{ivDim}; //{iv0, iv1*dim, iv2*dim*dim}
+    iv.aligned_ivec2::~aligned_ivec2();
+    using TV = glm::ivec3;
+    ivDim.TV::~TV();
+    
+    //when doing a horizontal add, we only extract out the final scalar value from the vector
+    //at the end, so that we don't end up extracting scalars from vector registers multiple times 
+    return (glm::ivec1(compMultiplied) + compMultiplied.y)[0] + iv3*ivDim[2];
+}
+
+
+aligned_ivec3 GetDimAsPowSeries(int dim) 
+{
+	return aligned_ivec3{1, dim, dim*dim};
 }
 
 // Linear
@@ -316,11 +330,11 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
 
     // Compute index into LUT for surrounding corners
     const int n000 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh.x }, lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zw(), indexLowHigh.x, lut3d.lutEdgeSize);
     const int n100 =
         GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), lut3d.lutEdgeSize);
     const int n010 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh.x}, lut3d.lutEdgeSize);
+        GetLut3DIndexRedFastRGB(indexHighLow.zy(), indexLowHigh.x, lut3d.lutEdgeSize);
     const int n001 =
         GetLut3DIndexRedFastRGB(indexHighLow.zwx(), lut3d.lutEdgeSize);
     const int n110 =
@@ -355,13 +369,9 @@ inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t 
 
     // NaNs become 0.
     auto idx = ClampAndSanitize(avec4{ avec3(input * dimMinusOne), 0.f}, 0.f, dimMinusOne);
-
-		avec4 indexLow = glm::floor(idx);
     glm::ivec3 ivIndexLow = (glm::ivec3)glm::floor(idx);
-    auto _delta   = idx - indexLow;
-		const auto yzxMinusXyz = glm::vec3(_delta.yzxw() - _delta);
-		const auto delta = glm::vec4(_delta);
-		_delta.avec4::~avec4();
+		const auto yzxMinusXyz = glm::vec3((idx - glm::floor(idx)).yzxw() - (idx - glm::floor(idx)));
+		const auto delta = glm::vec4(idx - glm::floor(idx));
 		// {y>x, z>y, x>z}
 		// if x > y && y > z -> yzxMinusXyz : {-,-,>0} lessThan(yzxMinusXyz, 0) = {true, true, false}
 		// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
@@ -380,25 +390,24 @@ inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t 
 		using TV = glm::ivec3;
 		indexHigh.TV::~TV();
 		ivIndexLow.TV::~TV();
-		indexLow.avec4::~avec4();
     // Compute index into LUT for surrounding corners
     glm::ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
     const int n000 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{ indexHighLow.zw(), indexLowHigh[0] }, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHighLow.zw(), indexLowHigh[0], edgeSizeSeries);
     const int n100 =
         GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
     const int n010 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{indexHighLow.zy(), indexLowHigh[0]}, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHighLow.zy(), indexLowHigh[0], edgeSizeSeries);
     const int n001 =
         GetLut3DIndexRedFastRGB(indexHighLow.zwx(), edgeSizeSeries);
     const int n110 =
         GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), edgeSizeSeries);
     const int n101 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{ indexLowHigh.zy(), indexHighLow[0] }, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zy(), indexHighLow[0], edgeSizeSeries);
     const int n011 =
         GetLut3DIndexRedFastRGB(indexHighLow.zyx(), edgeSizeSeries);
     const int n111 =
-        GetLut3DIndexRedFastRGB(glm::ivec3{indexLowHigh.zw(), indexHighLow[0]}, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexLowHigh.zw(), indexHighLow[0], edgeSizeSeries);
 
 
     using mat4x3 = glm::mat<4,3,float,(glm::qualifier)0>;
