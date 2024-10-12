@@ -188,37 +188,34 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
     return (iv[0] + dim * (iv[1] + dim * iv[2]));
 }
 using aligned_ivec3 = glm::vec<3, int, (glm::qualifier)3>;
-using aligned_ivec2 = glm::vec<3, int, (glm::qualifier)3>;
-int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
+using aligned_ivec2 = glm::vec<2, int, (glm::qualifier)3>;
+int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, aligned_ivec3 ivDim)
 {
-    glm::ivec3 compMultiplied = aligned_ivec3(iv)*aligned_ivec3(ivDim); //{iv0, iv1*dim, iv2*dim*dim}
-    using TV = glm::ivec3;
-    iv.TV::~TV();
-    ivDim.TV::~TV();
+		aligned_ivec3 compMultiplied = iv*ivDim; //{iv0, iv1*dim, iv2*dim*dim}
+    iv.aligned_ivec3::~aligned_ivec3();
+    ivDim.aligned_ivec3::~aligned_ivec3();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
     //at the end, so that we don't end up extracting scalars from vector registers multiple times 
-    return (glm::ivec2(compMultiplied) + compMultiplied.zy() + compMultiplied.yx())[0];
+    return (compMultiplied.xy() + compMultiplied.zy() + compMultiplied.yx())[0];
 }
 
 
-int GetLut3DIndexRedFastRGB(glm::ivec2 iv, int iv3, glm::ivec3 ivDim)
+int GetLut3DIndexRedFastRGB(aligned_ivec2 iv, int iv3, aligned_ivec3 ivDim)
 {
-    glm::ivec2 compMultiplied = iv*glm::ivec2{ivDim}; //{iv0, iv1*dim, iv2*dim*dim}
-    using TV = glm::ivec3;
-    using TV2 = glm::ivec2;
-    iv.TV2::~TV2();
-    ivDim.TV::~TV();
+    aligned_ivec2 compMultiplied = iv*(ivDim.xy()); //{iv0, iv1*dim, iv2*dim*dim}
+    iv.aligned_ivec2::~aligned_ivec2();
+    ivDim.aligned_ivec3::~aligned_ivec3();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
     //at the end, so that we don't end up extracting scalars from vector registers multiple times 
-    return (glm::ivec1(compMultiplied) + compMultiplied.y)[0] + iv3*ivDim[2];
+    return (compMultiplied.x + compMultiplied.y) + iv3*ivDim[2];
 }
 
 
-glm::ivec3 GetDimAsPowSeries(int dim) 
+aligned_ivec3 GetDimAsPowSeries(int dim) 
 {
-	return glm::ivec3{1, dim, dim*dim};
+	return aligned_ivec3{1, dim, dim*dim};
 }
 
 // Linear
@@ -309,7 +306,6 @@ inline avec4 ClampAndSanitize( glm::vec3 a, float min, float max )
 // Adapted from:
 // https://github.com/AcademySoftwareFoundation/OpenColorIO/ops/lut3d/Lut3DOpCPU.cpp
 // License available in their repo and in our LICENSE file.
-
 inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & input )
 {
     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
@@ -360,7 +356,8 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
     return out;
 }
 using avec3 = glm::vec<3, float, (glm::qualifier)3>;
-inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
+using aligned_ivec4 = glm::vec<4, int, (glm::qualifier)3>;
+static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
 {
 		const int l3dEdgeSize = lut3d.lutEdgeSize;
 		if (l3dEdgeSize < 0) {
@@ -370,9 +367,9 @@ inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahe
 
     // NaNs become 0.
     auto idx = ClampAndSanitize(avec4{ avec3(input * dimMinusOne), 0.f}, 0.f, dimMinusOne);
-    glm::ivec3 ivIndexLow = (glm::ivec3)glm::floor(idx);
-		const auto yzxMinusXyz = glm::vec3((idx - glm::floor(idx)).yzxw() - (idx - glm::floor(idx)));
-		const auto delta = glm::vec4(idx - glm::floor(idx));
+    aligned_ivec3 ivIndexLow = glm::floor(idx).xyz();
+		const auto yzxMinusXyz = ((idx - glm::floor(idx)).yzxw() - (idx - glm::floor(idx))).xyz();
+		const auto delta = avec4(idx - glm::floor(idx));
 		// {y>x, z>y, x>z}
 		// if x > y && y > z -> yzxMinusXyz : {-,-,>0} lessThan(yzxMinusXyz, 0) = {true, true, false}
 		// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
@@ -384,53 +381,50 @@ inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahe
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-  	glm::ivec3 indexHigh = (glm::ivec3)glm::ceil(idx);
-  	glm::ivec4 indexHighLow = glm::ivec4{ indexHigh.zy(), glm::ivec2{ivIndexLow} }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
-  	glm::ivec4 indexLowHigh = glm::ivec4{ ivIndexLow.zy(), glm::ivec2{indexHigh} }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
+  	aligned_ivec3 indexHigh = glm::ceil(idx).xyz();
+  	aligned_ivec4 indexHighLow = aligned_ivec4{ indexHigh.zy(), ivIndexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	aligned_ivec4 indexLowHigh = aligned_ivec4{ ivIndexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-		using TV = glm::ivec3;
-		indexHigh.TV::~TV();
-		ivIndexLow.TV::~TV();
+		idx.avec4::~avec4();
+		indexHigh.aligned_ivec3::~aligned_ivec3();
+		ivIndexLow.aligned_ivec3::~aligned_ivec3();
     // Compute index into LUT for surrounding corners
-    glm::ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
+    aligned_ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
+    const int n111 =
+        GetLut3DIndexRedFastRGB(indexLowHigh.zw(), indexHighLow.x, edgeSizeSeries);
     const int n000 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zw(), indexLowHigh[0], edgeSizeSeries);
-    const int n100 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
-    const int n010 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zy(), indexLowHigh[0], edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHighLow.zw(), indexLowHigh.x, edgeSizeSeries);
     const int n001 =
         GetLut3DIndexRedFastRGB(indexHighLow.zwx(), edgeSizeSeries);
     const int n110 =
         GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), edgeSizeSeries);
-    const int n101 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zy(), indexHighLow[0], edgeSizeSeries);
-    const int n011 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), edgeSizeSeries);
-    const int n111 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zw(), indexHighLow[0], edgeSizeSeries);
 
 
     using mat4x3 = glm::mat<4,3,float,(glm::qualifier)0>;
     glm::vec3 ldzero = lut3d.data[n000];
-    constexpr auto bvecToByte = [](glm::bvec3 bv) -> uint8_t {
-    	return bv[0] | (bv[1] <<1) | (bv[2] << 2);
-    };
-    auto comp = bvecToByte(glm::lessThan(yzxMinusXyz, glm::vec3(0.f)));
-    if ( constexpr auto check = bvecToByte(glm::bvec3{true, true, false}); comp == check  ) 
+    using aligned_bvec3 = glm::vec<3, bool, (glm::qualifier)3>;
+    static constexpr auto zero = avec3(0.f);
+    auto comp = glm::lessThan(yzxMinusXyz, zero);
+    if ( constexpr auto check = (aligned_bvec3{true, true, false}); comp == check  ) 
     {
+    	const int n100 =
+        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
     	//x > y && y > z
     	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n110], lut3d.data[n111]};
     	auto v1 = delta.wxyz();
     	return glm::operator*(ldata,glm::vec4(v1 - delta)) + ldzero;
-    } else if ( constexpr auto orWith = bvecToByte(glm::bvec3{false, true, true}),
-    	 					check = bvecToByte(glm::bvec3{true});
+    } else if ( constexpr auto orWith = (aligned_bvec3{false, true, true}),
+    	 					check = (aligned_bvec3{true});
     	 					 (comp | orWith) == check ) {
+    	const int n100 =
+        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
+      const int n101 =
+        GetLut3DIndexRedFastRGB(indexLowHigh.zy(), indexHighLow.x, edgeSizeSeries);
     	// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
 		// if x > y && z >= x -> yzxMinusXyz : {-,>=0,<=0} lessThan(yzxMinusXyz, 0) = {true, false, ?} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, false}
-    	if ( constexpr auto orWith = bvecToByte(glm::bvec3{false, true, false}),
-    			 check = bvecToByte(glm::bvec3(true));
-    				(comp | orWith | bvecToByte(glm::greaterThan(yzxMinusXyz, glm::vec3(0.f)))) == check ) {
+    	if ( constexpr auto orWith = (aligned_bvec3{false, true, false}),
+    			 check = (aligned_bvec3(true));
+    				(comp | orWith | (glm::greaterThan(yzxMinusXyz, zero))) == check ) {
     		// x > y && y <= z && x > z
     		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n101],  lut3d.data[n111]};
     		auto v1 = delta.wxzy();
@@ -443,16 +437,20 @@ inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahe
     	}
     		
     } else {
-    	static constexpr auto gtOrWith = bvecToByte(glm::bvec3{true, false, false});
-    	auto compGt = bvecToByte(glm::greaterThan(yzxMinusXyz, glm::vec3(0.f))) | gtOrWith;
-    	if ( constexpr auto check = bvecToByte(glm::bvec3{true}); compGt == check ) {
+    	const int n010 =
+        GetLut3DIndexRedFastRGB(indexHighLow.zy(), indexLowHigh.x, edgeSizeSeries);
+      const int n011 =
+        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), edgeSizeSeries);
+    	static constexpr auto gtOrWith = (aligned_bvec3{true, false, false});
+    	auto compGt = (glm::greaterThan(yzxMinusXyz, zero)) | gtOrWith;
+    	if ( constexpr auto check = (aligned_bvec3{true}); compGt == check ) {
     		//y >= x && z > y
     		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n011], lut3d.data[n111]};
     		auto v1 = delta.wzyx();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	
-    	} else if ( constexpr auto orWith = bvecToByte(glm::bvec3{true, true, false}),
-    							check = bvecToByte(glm::bvec3{true});
+    	} else if ( constexpr auto orWith = (aligned_bvec3{true, true, false}),
+    							check = (aligned_bvec3{true});
     							(comp | orWith) == check ) {
     		//y >= x && z <= y && z > x
     		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n011], lut3d.data[n111]};
