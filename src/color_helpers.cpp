@@ -189,11 +189,11 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
 }
 using aligned_ivec3 = glm::vec<3, int, (glm::qualifier)3>;
 using aligned_ivec2 = glm::vec<3, int, (glm::qualifier)3>;
-int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, glm::ivec3 ivDim)
+int GetLut3DIndexRedFastRGB(glm::ivec3 iv, glm::ivec3 ivDim)
 {
-    glm::ivec3 compMultiplied = iv*aligned_ivec3(ivDim); //{iv0, iv1*dim, iv2*dim*dim}
-    iv.aligned_ivec3::~aligned_ivec3();
+    glm::ivec3 compMultiplied = aligned_ivec3(iv)*aligned_ivec3(ivDim); //{iv0, iv1*dim, iv2*dim*dim}
     using TV = glm::ivec3;
+    iv.TV::~TV();
     ivDim.TV::~TV();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
@@ -202,11 +202,12 @@ int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, glm::ivec3 ivDim)
 }
 
 
-int GetLut3DIndexRedFastRGB(aligned_ivec2 iv, int iv3, glm::ivec3 ivDim)
+int GetLut3DIndexRedFastRGB(glm::ivec2 iv, int iv3, glm::ivec3 ivDim)
 {
-    glm::ivec2 compMultiplied = iv*aligned_ivec2{ivDim}; //{iv0, iv1*dim, iv2*dim*dim}
-    iv.aligned_ivec2::~aligned_ivec2();
+    glm::ivec2 compMultiplied = iv*glm::ivec2{ivDim}; //{iv0, iv1*dim, iv2*dim*dim}
     using TV = glm::ivec3;
+    using TV2 = glm::ivec2;
+    iv.TV2::~TV2();
     ivDim.TV::~TV();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
@@ -215,9 +216,9 @@ int GetLut3DIndexRedFastRGB(aligned_ivec2 iv, int iv3, glm::ivec3 ivDim)
 }
 
 
-aligned_ivec3 GetDimAsPowSeries(int dim) 
+glm::ivec3 GetDimAsPowSeries(int dim) 
 {
-	return aligned_ivec3{1, dim, dim*dim};
+	return glm::ivec3{1, dim, dim*dim};
 }
 
 // Linear
@@ -359,7 +360,7 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
     return out;
 }
 using avec3 = glm::vec<3, float, (glm::qualifier)3>;
-inline glm::vec3 __attribute__((flatten)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
+inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
 {
 		const int l3dEdgeSize = lut3d.lutEdgeSize;
 		if (l3dEdgeSize < 0) {
