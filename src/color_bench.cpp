@@ -2,6 +2,7 @@
 #include <benchmark/benchmark.h>
 
 #include <algorithm>
+#include <stdio.h>
 #include "Utils/Algorithm.h"
 
 #include "color_helpers_impl.h"
@@ -14,6 +15,15 @@ uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
 
 lut1d_t lut1d_float;
 lut3d_t lut3d_float;
+
+static lut3d_t lut3dLook;
+void __attribute__((constructor)) loadLook() {
+	std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
+	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
+		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
+		abort();
+	}
+}
 
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
@@ -60,6 +70,96 @@ static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
     }
 }
 
+static void BenchmarkCalcColorTransform_pLook(EOTF inputEOTF, benchmark::State &state)
+{
+    SET_FAST_MATH_FLAGS
+    const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } };
+    const glm::vec2 white = { 0.3070f, 0.3220f };
+    const glm::vec2 destVirtualWhite = { 0.f, 0.f };
+
+    displaycolorimetry_t inputColorimetry{};
+    inputColorimetry.primaries = primaries;
+    inputColorimetry.white = white;
+
+    displaycolorimetry_t outputEncodingColorimetry{};
+    outputEncodingColorimetry.primaries = primaries;
+    outputEncodingColorimetry.white = white;
+
+    colormapping_t colorMapping{};
+
+    tonemapping_t tonemapping{};
+    tonemapping.bUseShaper = true;
+
+    nightmode_t nightmode{};
+    float flGain = 1.0f;
+
+    for (auto _ : state) {
+        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
+            outputEncodingColorimetry, EOTF_Gamma22,
+            destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
+            colorMapping, nightmode, tonemapping, &lut3dLook, flGain );
+        for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
+        {
+            lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
+            lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
+            lut1d[4*i+2] = quantize_lut_value_16bit( lut1d_float.dataB[i] );
+            lut1d[4*i+3] = 0;
+        }
+        for ( size_t i=0, end = lut3d_float.data.size(); i<end; ++i )
+        {
+            lut3d[4*i+0] = quantize_lut_value_16bit( lut3d_float.data[i].r );
+            lut3d[4*i+1] = quantize_lut_value_16bit( lut3d_float.data[i].g );
+            lut3d[4*i+2] = quantize_lut_value_16bit( lut3d_float.data[i].b );
+            lut3d[4*i+3] = 0;
+        }
+    }
+}
+
+static void BenchmarkCalcColorTransform_pLookOriginal(EOTF inputEOTF, benchmark::State &state)
+{
+    SET_FAST_MATH_FLAGS
+    const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } };
+    const glm::vec2 white = { 0.3070f, 0.3220f };
+    const glm::vec2 destVirtualWhite = { 0.f, 0.f };
+
+    displaycolorimetry_t inputColorimetry{};
+    inputColorimetry.primaries = primaries;
+    inputColorimetry.white = white;
+
+    displaycolorimetry_t outputEncodingColorimetry{};
+    outputEncodingColorimetry.primaries = primaries;
+    outputEncodingColorimetry.white = white;
+
+    colormapping_t colorMapping{};
+
+    tonemapping_t tonemapping{};
+    tonemapping.bUseShaper = true;
+
+    nightmode_t nightmode{};
+    float flGain = 1.0f;
+
+    for (auto _ : state) {
+        calcColorTransform_Original_pLook<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
+            outputEncodingColorimetry, EOTF_Gamma22,
+            destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
+            colorMapping, nightmode, tonemapping, &lut3dLook, flGain );
+        for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
+        {
+            lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
+            lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
+            lut1d[4*i+2] = quantize_lut_value_16bit( lut1d_float.dataB[i] );
+            lut1d[4*i+3] = 0;
+        }
+        for ( size_t i=0, end = lut3d_float.data.size(); i<end; ++i )
+        {
+            lut3d[4*i+0] = quantize_lut_value_16bit( lut3d_float.data[i].r );
+            lut3d[4*i+1] = quantize_lut_value_16bit( lut3d_float.data[i].g );
+            lut3d[4*i+2] = quantize_lut_value_16bit( lut3d_float.data[i].b );
+            lut3d[4*i+3] = 0;
+        }
+    }
+}
+
 static void BenchmarkCalcColorTransforms_G22(benchmark::State &state)
 {
     BenchmarkCalcColorTransform(EOTF_Gamma22, state);
@@ -78,6 +178,44 @@ static void BenchmarkCalcColorTransforms(benchmark::State &state)
         BenchmarkCalcColorTransform((EOTF)nInputEOTF, state);
 }
 BENCHMARK(BenchmarkCalcColorTransforms);
+
+static void BenchmarkCalcColorTransforms_pLook_G22(benchmark::State &state)
+{
+    BenchmarkCalcColorTransform_pLook(EOTF_Gamma22, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLook_G22);
+
+static void BenchmarkCalcColorTransforms_pLook_PQ(benchmark::State &state)
+{
+    BenchmarkCalcColorTransform_pLook(EOTF_PQ, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLook_PQ);
+
+static void BenchmarkCalcColorTransforms_pLook(benchmark::State &state)
+{
+    for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+        BenchmarkCalcColorTransform_pLook((EOTF)nInputEOTF, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLook);
+
+static void BenchmarkCalcColorTransforms_pLookOriginal_G22(benchmark::State &state)
+{
+    BenchmarkCalcColorTransform_pLookOriginal(EOTF_Gamma22, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLookOriginal_G22);
+
+static void BenchmarkCalcColorTransforms_pLookOriginal_PQ(benchmark::State &state)
+{
+    BenchmarkCalcColorTransform_pLookOriginal(EOTF_PQ, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLookOriginal_PQ);
+
+static void BenchmarkCalcColorTransforms_pLookOriginal(benchmark::State &state)
+{
+    for ( uint32_t nInputEOTF = 0; nInputEOTF < EOTF_Count; nInputEOTF++ )
+        BenchmarkCalcColorTransform_pLookOriginal((EOTF)nInputEOTF, state);
+}
+BENCHMARK(BenchmarkCalcColorTransforms_pLookOriginal);
 
 static constexpr uint32_t k_uFindTestValueCountLarge = 524288;
 static constexpr uint32_t k_uFindTestValueCountMedium = 16;

@@ -143,9 +143,10 @@ bool LoadCubeLut( lut3d_t * lut3d, const char * filename )
     lut3d->data.clear();
 
     std::ifstream lutfile( filename );
-    if ( !lutfile.is_open() || lutfile.bad() )
+    if ( !lutfile.is_open() || lutfile.bad() ) {
+    		abort();
         return false;
-
+		}
     std::string line;
     while ( std::getline( lutfile, line ) )
     {
@@ -187,6 +188,11 @@ int GetLut3DIndexRedFastRGB(glm::ivec3 iv, int dim)
 {
     return (iv[0] + dim * (iv[1] + dim * iv[2]));
 }
+
+int GetLut3DIndexRedFastRGB(glm::ivec2 iv, int ivLast, int dim)
+{
+    return (iv[0] + dim * (iv[1] + dim * ivLast));
+}
 using aligned_ivec3 = glm::vec<3, int, (glm::qualifier)3>;
 using aligned_ivec2 = glm::vec<2, int, (glm::qualifier)3>;
 int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, aligned_ivec3 ivDim)
@@ -205,11 +211,12 @@ int GetLut3DIndexRedFastRGB(aligned_ivec2 iv, int iv3, aligned_ivec3 ivDim)
 {
     aligned_ivec2 compMultiplied = iv*(ivDim.xy()); //{iv0, iv1*dim, iv2*dim*dim}
     iv.aligned_ivec2::~aligned_ivec2();
+    int ivDimLast = ivDim[2];
     ivDim.aligned_ivec3::~aligned_ivec3();
     
     //when doing a horizontal add, we only extract out the final scalar value from the vector
     //at the end, so that we don't end up extracting scalars from vector registers multiple times 
-    return (compMultiplied.x + compMultiplied.y) + iv3*ivDim[2];
+    return (compMultiplied.x + compMultiplied.y) + iv3*ivDimLast;
 }
 
 
@@ -293,13 +300,14 @@ inline avec4 ClampAndSanitize( avec4 a, float min, float max )
     return glm::min(glm::max(a, min), max);
 #endif
 }
-inline avec4 ClampAndSanitize( glm::vec3 a, float min, float max )
+
+
+inline float ClampAndSanitize( float a, float min, float max )
 {
-		avec4 aa = avec4{a};
-#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
-    return std::isfinite( aa.x ) ? glm::min(glm::max(aa, min), max) : glm::vec3{min};
+#ifndef __FAST_MATH__
+    return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
-    return glm::min(glm::max(aa, min), max);
+    return std::min(std::max(min, a), max);
 #endif
 }
 
@@ -355,21 +363,125 @@ inline glm::vec3 ApplyLut3D_Trilinear( const lut3d_t & lut3d, const glm::vec3 & 
 
     return out;
 }
-using avec3 = glm::vec<3, float, (glm::qualifier)3>;
-using aligned_ivec4 = glm::vec<4, int, (glm::qualifier)3>;
-static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
+
+inline glm::vec3 ApplyLut3D_Tetrahedral_Original( const lut3d_t & lut3d, const glm::vec3 & input )
 {
-		const int l3dEdgeSize = lut3d.lutEdgeSize;
-		if (l3dEdgeSize < 0) {
-			__builtin_unreachable();
-		}
-    const float dimMinusOne = float(l3dEdgeSize) - 1.f;
+    const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
+
+    float idx[3];
+    idx[0] = input.r * dimMinusOne;
+    idx[1] = input.g * dimMinusOne;
+    idx[2] = input.b * dimMinusOne;
 
     // NaNs become 0.
-    auto idx = ClampAndSanitize(avec4{ avec3(input * dimMinusOne), 0.f}, 0.f, dimMinusOne);
-    aligned_ivec3 ivIndexLow = glm::floor(idx).xyz();
-		const auto yzxMinusXyz = ((idx - glm::floor(idx)).yzxw() - (idx - glm::floor(idx))).xyz();
+    idx[0] = ClampAndSanitize(idx[0], 0.f, dimMinusOne);
+    idx[1] = ClampAndSanitize(idx[1], 0.f, dimMinusOne);
+    idx[2] = ClampAndSanitize(idx[2], 0.f, dimMinusOne);
+
+    int indexLow[3];
+    indexLow[0] = static_cast<int>(std::floor(idx[0]));
+    indexLow[1] = static_cast<int>(std::floor(idx[1]));
+    indexLow[2] = static_cast<int>(std::floor(idx[2]));
+
+    int indexHigh[3];
+    // When the idx is exactly equal to an index (e.g. 0,1,2...)
+    // then the computation of highIdx is wrong. However,
+    // the delta is then equal to zero (e.g. idx-lowIdx),
+    // so the highIdx has no impact.
+    indexHigh[0] = static_cast<int>(std::ceil(idx[0]));
+    indexHigh[1] = static_cast<int>(std::ceil(idx[1]));
+    indexHigh[2] = static_cast<int>(std::ceil(idx[2]));
+
+    float fx = idx[0] - static_cast<float>(indexLow[0]);
+    float fy = idx[1] - static_cast<float>(indexLow[1]);
+    float fz = idx[2] - static_cast<float>(indexLow[2]);
+
+    // Compute index into LUT for surrounding corners
+    const int n000 =
+        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+    const int n100 =
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+    const int n010 =
+        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+    const int n001 =
+        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+    const int n110 =
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
+    const int n101 =
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
+    const int n011 =
+        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+    const int n111 =
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+
+    glm::vec3 out;
+    if (fx > fy) {
+        if (fy > fz) {
+            out =
+                (1 - fx)  * lut3d.data[n000] +
+                (fx - fy) * lut3d.data[n100] +
+                (fy - fz) * lut3d.data[n110] +
+                (fz)      * lut3d.data[n111];
+        }
+        else if (fx > fz)
+        {
+            out =
+                (1 - fx)  * lut3d.data[n000] +
+                (fx - fz) * lut3d.data[n100] +
+                (fz - fy) * lut3d.data[n101] +
+                (fy)      * lut3d.data[n111];
+        }
+        else
+        {
+            out =
+                (1 - fz)  * lut3d.data[n000] +
+                (fz - fx) * lut3d.data[n001] +
+                (fx - fy) * lut3d.data[n101] +
+                (fy)      * lut3d.data[n111];
+        }
+    }
+    else
+    {
+        if (fz > fy)
+        {
+            out =
+                (1 - fz)  * lut3d.data[n000] +
+                (fz - fy) * lut3d.data[n001] +
+                (fy - fx) * lut3d.data[n011] +
+                (fx)      * lut3d.data[n111];
+        }
+        else if (fz > fx)
+        {
+            out =
+                (1 - fy)  * lut3d.data[n000] +
+                (fy - fz) * lut3d.data[n010] +
+                (fz - fx) * lut3d.data[n011] +
+                (fx)      * lut3d.data[n111];
+        }
+        else
+        {
+            out =
+                (1 - fy)  * lut3d.data[n000] +
+                (fy - fx) * lut3d.data[n010] +
+                (fx - fz) * lut3d.data[n110] +
+                (fz)      * lut3d.data[n111];
+        }
+    }
+
+    return out;
+}
+
+
+using avec3 = glm::vec<3, float, (glm::qualifier)3>;
+using aligned_ivec4 = glm::vec<4, int, (glm::qualifier)3>;
+static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const avec4 input )
+{
+    const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
+
+    // NaNs become 0.
+    const auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
 		const auto delta = avec4(idx - glm::floor(idx));
+		const aligned_ivec4 indexLow = glm::floor(idx);
 		// {y>x, z>y, x>z}
 		// if x > y && y > z -> yzxMinusXyz : {-,-,>0} lessThan(yzxMinusXyz, 0) = {true, true, false}
 		// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
@@ -381,84 +493,80 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-  	aligned_ivec3 indexHigh = glm::ceil(idx).xyz();
-  	aligned_ivec4 indexHighLow = aligned_ivec4{ indexHigh.zy(), ivIndexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
-  	aligned_ivec4 indexLowHigh = aligned_ivec4{ ivIndexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
+  	const aligned_ivec4 indexHigh = glm::ceil(idx);
+  	//aligned_ivec4 indexHighLow = aligned_ivec4{ indexHigh.zy(), ivIndexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
+  	//aligned_ivec4 indexLowHigh = aligned_ivec4{ ivIndexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-		idx.avec4::~avec4();
-		indexHigh.aligned_ivec3::~aligned_ivec3();
-		ivIndexLow.aligned_ivec3::~aligned_ivec3();
+		//indexHigh.aligned_ivec3::~aligned_ivec3();
+		//ivIndexLow.aligned_ivec3::~aligned_ivec3();
     // Compute index into LUT for surrounding corners
-    aligned_ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
-    const int n111 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zw(), indexHighLow.x, edgeSizeSeries);
+    //aligned_ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
     const int n000 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zw(), indexLowHigh.x, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
+    const int n111 =
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
     const int n001 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zwx(), edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
     const int n110 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zwx(), edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
 
 
     using mat4x3 = glm::mat<4,3,float,(glm::qualifier)0>;
-    glm::vec3 ldzero = lut3d.data[n000];
-    using aligned_bvec3 = glm::vec<3, bool, (glm::qualifier)3>;
-    static constexpr auto zero = avec3(0.f);
-    auto comp = glm::lessThan(yzxMinusXyz, zero);
-    if ( constexpr auto check = (aligned_bvec3{true, true, false}); comp == check  ) 
+
+    //using aligned_bvec3 = glm::vec<3, bool, (glm::qualifier)3>;
+    //static constexpr auto zero = avec4(0.f);
+    //auto comp = aligned_bvec3(glm::lessThan(yzxMinusXyz, zero));
+    
+    const glm::vec3 ldzero = lut3d.data[n000];
+    const auto x=delta[0], y=delta[1], z=delta[2];
+    if ( x > y && y > z  ) 
     {
     	const int n100 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
     	//x > y && y > z
     	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n110], lut3d.data[n111]};
     	auto v1 = delta.wxyz();
     	return glm::operator*(ldata,glm::vec4(v1 - delta)) + ldzero;
-    } else if ( constexpr auto orWith = (aligned_bvec3{false, true, true}),
-    	 					check = (aligned_bvec3{true});
-    	 					 (comp | orWith) == check ) {
+    } else if ( x > y ) {
     	const int n100 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zyx(), edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
       const int n101 =
-        GetLut3DIndexRedFastRGB(indexLowHigh.zy(), indexHighLow.x, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexHigh[0], indexLow[1], indexHigh[2], lut3d.lutEdgeSize);
     	// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
 		// if x > y && z >= x -> yzxMinusXyz : {-,>=0,<=0} lessThan(yzxMinusXyz, 0) = {true, false, ?} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, false}
-    	if ( constexpr auto orWith = (aligned_bvec3{false, true, false}),
-    			 check = (aligned_bvec3(true));
-    				(comp | orWith | (glm::greaterThan(yzxMinusXyz, zero))) == check ) {
+    	if ( x > z ) {
     		// x > y && y <= z && x > z
-    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n101],  lut3d.data[n111]};
+      	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n100], lut3d.data[n101], lut3d.data[n111]};
     		auto v1 = delta.wxzy();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	} else {
     		//x > y && z >= x
-    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n101], lut3d.data[n111]};
+      	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n101], lut3d.data[n111]};
     		auto v1 = delta.wzxy();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	}
     		
     } else {
     	const int n010 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zy(), indexLowHigh.x, edgeSizeSeries);
+        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexLow[2], lut3d.lutEdgeSize);
       const int n011 =
-        GetLut3DIndexRedFastRGB(indexHighLow.zyx(), edgeSizeSeries);
-    	static constexpr auto gtOrWith = (aligned_bvec3{true, false, false});
-    	auto compGt = (glm::greaterThan(yzxMinusXyz, zero)) | gtOrWith;
-    	if ( constexpr auto check = (aligned_bvec3{true}); compGt == check ) {
+        GetLut3DIndexRedFastRGB(indexLow[0], indexHigh[1], indexHigh[2], lut3d.lutEdgeSize);
+    	//static constexpr auto gtOrWith = (aligned_bvec3{true, false, false});
+    	//auto compGt = aligned_bvec3(glm::greaterThan(yzxMinusXyz, zero)) | gtOrWith;
+    	if ( z > y ) {
     		//y >= x && z > y
-    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n011], lut3d.data[n111]};
+      	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n001], lut3d.data[n011], lut3d.data[n111]};
     		auto v1 = delta.wzyx();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	
-    	} else if ( constexpr auto orWith = (aligned_bvec3{true, true, false}),
-    							check = (aligned_bvec3{true});
-    							(comp | orWith) == check ) {
+    	} else if ( z > x ) {
     		//y >= x && z <= y && z > x
-    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n011], lut3d.data[n111]};
+      	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n011], lut3d.data[n111]};
     		auto v1 = delta.wyzx();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	} else {
     		//y >= x && z <= x
-    		mat4x3 ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n110], lut3d.data[n111]};
+      	mat4x3  ldata = mat4x3{ldzero, lut3d.data[n010], lut3d.data[n110], lut3d.data[n111]};
     		auto v1 = delta.wyxz();
     		return glm::operator*(ldata,(v1 - delta)) + ldzero;
     	}
@@ -887,11 +995,154 @@ void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             {
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
-                    glm::vec3 sourceColorEOTFEncoded = glm::vec3( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b );
+                    glm::vec4 sourceColorEOTFEncoded = glm::vec4( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b, 0.f );
 
                     if ( pLook && !pLook->data.empty() )
                     {
                         sourceColorEOTFEncoded = ApplyLut3D_Tetrahedral( *pLook, sourceColorEOTFEncoded );
+                    }
+
+                    // Convert to linearized display referred for source colorimetry
+                    glm::vec3 sourceColorLinear = calcEOTFToLinear(sourceColorEOTFEncoded, sourceEOTF, tonemapping );
+
+                    // Convert to dest colorimetry (linearized display referred)
+                    glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
+
+                    // Do a naive blending with native gamut based on saturation
+                    // ( A very simplified form of gamut mapping )
+                    // float colorSaturation = rgb_to_hsv( sourceColor ).y;
+                    float colorSaturation = rgb_to_hsv( sourceColorLinear ).y;
+                    float amount = cfit( colorSaturation, mapping.blendEnableMinSat, mapping.blendEnableMaxSat, mapping.blendAmountMin, mapping.blendAmountMax );
+                    destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
+
+                    // Apply linear Mult
+                    destColorLinear = vMultLinear * destColorLinear;
+
+                    // Apply destination virtual white point mapping
+                    destColorLinear = whitePointDestAdaptation * destColorLinear;
+
+                    // Apply tonemapping
+                    destColorLinear = tonemapping.apply( destColorLinear );
+
+                    // Hue preservation
+                    if ( g_bHuePreservationWhenClipping )
+                    {
+                        float flMax = std::max( std::max( destColorLinear.r, destColorLinear.g ), destColorLinear.b );
+                        // TODO: Don't use g22_luminance here or in tonemapping, use whatever maxContentLightLevel is for the connector.
+                        if ( flMax > tonemapping.g22_luminance + 1.0f )
+                        {
+                            destColorLinear /= flMax;
+                            destColorLinear *= tonemapping.g22_luminance;
+                        }
+                    }
+
+                    // Apply dest EOTF
+                    glm::vec3 destColorEOTFEncoded = calcLinearToEOTF( destColorLinear, destEOTF, tonemapping );
+
+                    // Write LUT
+                    pLut3d->data[GetLut3DIndexRedFastRGB( nRed, nGreen, nBlue, nLutEdgeSize3d )] = destColorEOTFEncoded;
+                }
+            }
+        }
+    }
+}
+
+template <uint32_t lutEdgeSize3d>
+void calcColorTransform_Original_pLook( lut1d_t * pShaper, int nLutSize1d,
+	lut3d_t * pLut3d,
+	const displaycolorimetry_t & source, EOTF sourceEOTF,
+	const displaycolorimetry_t & dest,  EOTF destEOTF,
+    const glm::vec2 & destVirtualWhite, EChromaticAdaptationMethod eMethod,
+    const colormapping_t & mapping, const nightmode_t & nightmode, const tonemapping_t & tonemapping,
+    const lut3d_t * pLook, float flGain )
+{
+    // Generate shaper lut
+    // Note: while this is typically a 1D approximation of our end to end transform,
+    // it need not be! Conceptually this is just to determine the interpolation properties...
+    // The 3d lut should be considered a 'matched' pair where the transform is only complete
+    // when applying both.  I.e., you can put ANY transform in here, and it should work.
+
+    static constexpr int32_t nLutEdgeSize3d = static_cast<int32_t>(lutEdgeSize3d);
+    assert( (sourceEOTF==EOTF_Gamma22 || sourceEOTF==EOTF_PQ) && (destEOTF==EOTF_Gamma22 || destEOTF==EOTF_PQ) );
+    if ( pShaper )
+    {
+        float flScale = 1.f / ( (float) nLutSize1d - 1.f );
+        pShaper->resize( nLutSize1d );
+
+        for ( int nVal=0; nVal<nLutSize1d; ++nVal )
+        {
+            glm::vec3 sourceColorEOTFEncoded = { nVal * flScale, nVal * flScale, nVal * flScale };
+            glm::vec3 shapedSourceColor = applyShaper( sourceColorEOTFEncoded, sourceEOTF, destEOTF, tonemapping, flGain );
+            pShaper->dataR[nVal] = shapedSourceColor.r;
+            pShaper->dataG[nVal] = shapedSourceColor.g;
+            pShaper->dataB[nVal] = shapedSourceColor.b;
+        }
+
+        pShaper->finalize();
+    }
+
+    if ( pLut3d )
+    {
+        glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
+        glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
+
+        glm::mat3 xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
+        glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source; // XYZ scaling for white point adjustment
+
+        // Precalc night mode scalars & digital gain
+        // amount and saturation are overdetermined but we separate the two as they conceptually represent
+        // different quantities, and this preserves forwards algorithmic compatibility
+        glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
+        glm::vec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) );
+        vMultLinear = vMultLinear * flGain;
+
+        // Calculate the virtual white point adaptation
+        glm::mat3x3 whitePointDestAdaptation = glm::mat3x3( 1.f ); // identity
+        if ( destVirtualWhite.x > 0.01f && destVirtualWhite.y > 0.01f )
+        {
+            // if source white is within tiny tolerance of sourceWhitePointOverride
+            // don't do the override? (aka two quantizations of d65)
+            glm::mat3x3 virtualWhiteXYZFromPhysicalWhiteXYZ = chromatic_adaptation_matrix(
+                 xy_to_xyz( dest.white ), xy_to_xyz( destVirtualWhite ), eMethod );
+            whitePointDestAdaptation = dest_from_xyz * virtualWhiteXYZFromPhysicalWhiteXYZ * xyz_from_dest;
+
+            // Consider lerp-ing the gain limiting between 0-1? That would allow partial clipping
+            // so that contrast ratios wouldnt be sacrified too bad with alternate white points
+            static const bool k_bLimitGain = true;
+            if ( k_bLimitGain )
+            {
+                glm::vec3 white = whitePointDestAdaptation * glm::vec3(1.f, 1.f, 1.f );
+                float whiteMax = std::max( white.r, std::max( white.g, white.b ) );
+                float normScale = 1.f / whiteMax;
+                whitePointDestAdaptation = whitePointDestAdaptation * glm::diagonal3x3( glm::vec3( normScale ) );
+            }
+        }
+
+        // Precalculate source color EOTF encoded per-edge.
+        glm::vec3 vSourceColorEOTFEncodedEdge[nLutEdgeSize3d];
+        float flEdgeScale = 1.f / ( (float) nLutEdgeSize3d - 1.f );
+        for ( int nIndex = 0; nIndex < nLutEdgeSize3d; ++nIndex )
+        {
+            vSourceColorEOTFEncodedEdge[nIndex] = glm::vec3( nIndex * flEdgeScale );
+            if ( pShaper )
+            {
+                vSourceColorEOTFEncodedEdge[nIndex] = ApplyLut1D_Inverse_Linear( *pShaper, vSourceColorEOTFEncodedEdge[nIndex] );
+            }
+        }
+
+        pLut3d->resize( nLutEdgeSize3d );
+    
+        for ( int nBlue=0; nBlue<nLutEdgeSize3d; ++nBlue )
+        {
+            for ( int nGreen=0; nGreen<nLutEdgeSize3d; ++nGreen )
+            {
+                for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
+                {
+                    glm::vec3 sourceColorEOTFEncoded = glm::vec3( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b );
+
+                    if ( pLook && !pLook->data.empty() )
+                    {
+                        sourceColorEOTFEncoded = ApplyLut3D_Tetrahedral_Original( *pLook, sourceColorEOTFEncoded );
                     }
 
                     // Convert to linearized display referred for source colorimetry
