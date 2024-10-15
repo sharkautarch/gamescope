@@ -16,14 +16,8 @@ uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
 lut1d_t lut1d_float;
 lut3d_t lut3d_float;
 
-static lut3d_t lut3dLook;
-void __attribute__((constructor)) loadLook() {
-	std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
-	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
-		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
-		abort();
-	}
-}
+
+
 
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
@@ -92,12 +86,20 @@ static void BenchmarkCalcColorTransform_pLook(EOTF inputEOTF, benchmark::State &
 
     nightmode_t nightmode{};
     float flGain = 1.0f;
-
+    lut3d_t lut3dLook;
+		std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
+	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
+		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
+		abort();
+	}
+		benchmark::DoNotOptimize( lut3dLook );
     for (auto _ : state) {
+    		auto* ptr = &lut3dLook;
+    		benchmark::DoNotOptimize( ptr );
         calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
             outputEncodingColorimetry, EOTF_Gamma22,
             destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
-            colorMapping, nightmode, tonemapping, &lut3dLook, flGain );
+            colorMapping, nightmode, tonemapping, ptr, flGain );
         for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
         {
             lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
@@ -138,11 +140,20 @@ static void BenchmarkCalcColorTransform_pLookOriginal(EOTF inputEOTF, benchmark:
     nightmode_t nightmode{};
     float flGain = 1.0f;
 
+    lut3d_t lut3dLook;
+		std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
+	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
+		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
+		abort();
+	}
+		benchmark::DoNotOptimize( lut3dLook );
     for (auto _ : state) {
+    		auto* ptr = &lut3dLook;
+    		benchmark::DoNotOptimize( ptr );
         calcColorTransform_Original_pLook<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
             outputEncodingColorimetry, EOTF_Gamma22,
             destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
-            colorMapping, nightmode, tonemapping, &lut3dLook, flGain );
+            colorMapping, nightmode, tonemapping, ptr, flGain );
         for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
         {
             lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
