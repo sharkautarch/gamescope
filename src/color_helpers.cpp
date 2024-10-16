@@ -1151,7 +1151,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
         // amount and saturation are overdetermined but we separate the two as they conceptually represent
         // different quantities, and this preserves forwards algorithmic compatibility
         glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
-        avec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) ) * flGain;
+        glm::vec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) ) * flGain;
 
         // Calculate the virtual white point adaptation
         glm::mat3x3 whitePointDestAdaptation = glm::mat3x3( 1.f ); // identity
@@ -1196,7 +1196,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             {
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
-                    avec4 sourceColorEOTFEncoded = glm::vec4( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b, 0.f );
+                    avec3 sourceColorEOTFEncoded = avec3( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b);
 
                     if ( pLook && !pLook->data.empty() )
                     {
@@ -1204,10 +1204,10 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
                     }
 
                     // Convert to linearized display referred for source colorimetry
-                    avec4 sourceColorLinear = calcEOTFToLinear(sourceColorEOTFEncoded, sourceEOTF, tonemapping );
+                    glm::vec3 sourceColorLinear = calcEOTFToLinear(sourceColorEOTFEncoded, sourceEOTF, tonemapping );
 
                     // Convert to dest colorimetry (linearized display referred)
-                    avec4 destColorLinear = dest_from_source * std::bit_cast<avec3>(sourceColorLinear);
+                    glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
 
                     // Do a naive blending with native gamut based on saturation
                     // ( A very simplified form of gamut mapping )
@@ -1217,7 +1217,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
                     destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
 
                     // Apply linear Mult
-                    destColorLinear = std::bit_cast<avec4>(vMultLinear) * destColorLinear;
+                    destColorLinear = vMultLinear * destColorLinear;
 
                     // Apply destination virtual white point mapping
                     destColorLinear = whitePointDestAdaptation * destColorLinear;
