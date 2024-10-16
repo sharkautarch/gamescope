@@ -200,15 +200,31 @@ typedef int16_t gcc_i16vec4x4 __attribute__((vector_size(4*4*sizeof(int16_t))));
 typedef int16_t gcc_i16vec4 __attribute__((vector_size(4*sizeof(int16_t))));
 typedef int16_t gcc_i16vec8 __attribute__((vector_size(8*sizeof(int16_t))));
 
-#if __AVX__
+
+gcc_i16vec4 loadVecConst2(gcc_i16vec4 v) {
+   
+   union S {
+    gcc_i16vec4 v1;
+    gcc_i16vec4 v2;
+   };
+
+   S s {.v1={}};
+   
+   S s2 {.v1={gcc_i16vec4{}+1}};
+   
+   return __builtin_shufflevector(v, s.v2 + (s2.v2), 5, 0, 1, 2);
+}
+
 template <std::array<glm::bvec3, 4> mask>
-aligned_i16vec4	GetLut3DIndexRedFastRGBx4(aligned_i16vec4 indexLow, aligned_i16vec4 indexHigh, gcc_i16vec8 edgeSize) {
-	volatile const gcc_i16vec8 edgeSizeOne = (~(std::bit_cast<gcc_i16vec8>(edgeSize) ^ std::bit_cast<gcc_i16vec8>(edgeSize)))>>14; //marking this line as volatile avoids the compiler attempting to loading a constant from memory here, which **tanks** performance hard! 
+aligned_i16vec4	GetLut3DIndexRedFastRGBx4(aligned_i16vec4 indexLow, aligned_i16vec4 indexHigh, gcc_i16vec4 edgeSize) {
 	
-	const gcc_i16vec8 lutEdgeSizeSq = std::bit_cast<gcc_i16vec8>(edgeSize)*std::bit_cast<gcc_i16vec8>(edgeSize);
-	gcc_i16vec8 ivDimSeries = __builtin_shufflevector(edgeSizeOne, std::bit_cast<gcc_i16vec8>(edgeSize), 0, 5, -1, -1, -1, -1, -1, -1);
-	ivDimSeries = __builtin_shufflevector(ivDimSeries, lutEdgeSizeSq, 0, 1, 2, 5, -1, -1, -1, -1);
-	const gcc_i16vec4x4 ivDimSeriesx4 = gcc_i16vec4x4{std::bit_cast<gcc_i16vec4x4>(_mm256_broadcastq_epi64(std::bit_cast<__m128i>(ivDimSeries)))};
+	const gcc_i16vec4 lutEdgeSizeSq = edgeSize*edgeSize;
+	gcc_i16vec4 ivDimSeries = __builtin_shufflevector(edgeSize, lutEdgeSizeSq, 0, 0, 5, 5);
+	ivDimSeries = loadVecConst2(ivDimSeries);
+	typedef int64_t gcc_i64vec4 __attribute__((vector_size(4*sizeof(int64_t))));
+	const gcc_i16vec4x4 ivDimSeriesx4 = std::bit_cast<gcc_i16vec4x4>(
+		 gcc_i64vec4{} + std::bit_cast<int64_t>(ivDimSeries)
+	);
 	const gcc_i16vec4 low = std::bit_cast<gcc_i16vec4>(indexLow);
 	const gcc_i16vec4 high = std::bit_cast<gcc_i16vec4>(indexHigh);
 	
@@ -240,7 +256,7 @@ aligned_i16vec4	GetLut3DIndexRedFastRGBx4(aligned_i16vec4 indexLow, aligned_i16v
 			12 13 14 15
 		}*/
 	
-	rgbx4 *= ivDimSeriesx4*4;
+	rgbx4 *= ivDimSeriesx4;
 	rgbx4 += __builtin_shufflevector(rgbx4, rgbx4, 
 		1, -1, -1, -1,
 		5, -1, -1, -1,
@@ -255,7 +271,6 @@ aligned_i16vec4	GetLut3DIndexRedFastRGBx4(aligned_i16vec4 indexLow, aligned_i16v
 	
 	return aligned_i16vec4(__builtin_shufflevector(rgbx4, rgbx4, 0, 4, 8, 12));
 }
-#endif
 
 int GetLut3DIndexRedFastRGB(aligned_ivec3 iv, aligned_ivec3 ivDim)
 {
@@ -537,17 +552,25 @@ inline glm::vec3 __attribute__((noinline)) ApplyLut3D_Tetrahedral_Original( cons
 using avec3 = glm::vec<3, float, (glm::qualifier)3>;
 using aligned_ivec4 = glm::vec<4, int, (glm::qualifier)3>;
 using aligned_i64vec4 = glm::vec<4, int64_t, (glm::qualifier)3>;
-//using aligned_flPtrvec4 = glm::vec<4, float*, (glm::qualifier)3>;
-static inline glm::vec3 __attribute__((noinline,flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const avec4 input);
-static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const avec4 input )
+
+#ifdef __AVX2__
+#define FALLBACK_ATTR noinline,
+#else
+#define FALLBACK_ATTR
+#endif
+
+static inline avec3 __attribute__((FALLBACK_ATTR flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const avec4 input);
+#undef FALLBACK_ATTR
+
+static inline avec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const avec4 input )
 {
-#if __AVX__
+#if __AVX2__
 		if (lut3d.lutEdgeSize >= 32) {
 #endif
     	return ApplyLut3D_Tetrahedral_Fallback(lut3d, input);
-#if __AVX__
+#if __AVX2__
     }
-    gcc_i16vec8 edgeSize = gcc_i16vec8{} + (int16_t)lut3d.lutEdgeSize;
+    const gcc_i16vec4 edgeSize = gcc_i16vec4{} + (int16_t)lut3d.lutEdgeSize;
     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
 
     // NaNs become 0.
@@ -560,6 +583,13 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     using mat4x3 = glm::mat<4,3,float,(glm::qualifier)0>;
     const auto x=delta[0], y=delta[1], z=delta[2];
     using TMask = std::array<glm::bvec3, 4>;
+    
+    //reinterpreting between ptr and int64_t avoids implicit multiplication by sizeof(float)
+    //when indexing into the ptr
+    
+    //we manually multiply the vector of int64_t by sizeof(float)=4ll 
+    //(compiler will turn that into a simd bit shift),
+    //which is slightly faster than what would otherwise be implicit scalar multiplications/bit shifts
     auto loadAddr = [](int64_t addr) -> float {
     	return *(std::bit_cast<float*>(addr));
     };
@@ -574,8 +604,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     	};
     	const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   		const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  		const auto addresses = aligned_i64vec4(i16Indices) + data;
-    	mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  		const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    	const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     	auto v1 = delta.wxyz();
     	return glm::operator*(ldata,glm::vec4(v1 - delta)) + ldata[0];
     } else if ( x > y ) {
@@ -589,8 +619,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     		};
     		const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   			const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  			const auto addresses = aligned_i64vec4(i16Indices) + data;
-    		mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  			const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    		const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     		auto v1 = delta.wxzy();
     		return glm::operator*(ldata,(v1 - delta)) + ldata[0];
     	} else {
@@ -603,8 +633,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     		};
     		const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   			const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  			const auto addresses = aligned_i64vec4(i16Indices) + data;
-    		mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  			const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    		const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     		auto v1 = delta.wzxy();
     		return glm::operator*(ldata,(v1 - delta)) + ldata[0];
     	}
@@ -620,8 +650,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     		};
     		const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   			const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  			const auto addresses = aligned_i64vec4(i16Indices) + data;
-    		mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  			const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    		const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     		auto v1 = delta.wzyx();
     		return glm::operator*(ldata,(v1 - delta)) + ldata[0];
     	
@@ -635,8 +665,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     		};
     		const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   			const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  			const auto addresses = aligned_i64vec4(i16Indices) + data;
-    		mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  			const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    		const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     		auto v1 = delta.wyzx();
     		return glm::operator*(ldata,(v1 - delta)) + ldata[0];
     	} else {
@@ -649,8 +679,8 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     		};
     		const auto i16Indices = GetLut3DIndexRedFastRGBx4<masks>(indexLow, indexHigh, edgeSize);
   			const auto data = std::bit_cast<int64_t>(lut3d.data.data());
-  			const auto addresses = aligned_i64vec4(i16Indices) + data;
-    		mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
+  			const auto addresses = aligned_i64vec4(i16Indices)*4ll + data;
+    		const mat4x3 ldata = mat4x3{loadAddr(addresses[0]), loadAddr(addresses[1]), loadAddr(addresses[2]), loadAddr(addresses[3])};
     		auto v1 = delta.wyxz();
     		return glm::operator*(ldata,(v1 - delta)) + ldata[0];
     	}
@@ -658,32 +688,20 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     }
 #endif
 }
-static inline glm::vec3 __attribute__((noinline,flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const avec4 input)
+static inline avec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const avec4 input)
 {
     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
     const auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
     
 		const auto delta = avec4(idx - glm::floor(idx));
 		const aligned_ivec4 indexLow = glm::floor(idx);
-		// {y>x, z>y, x>z}
-		// if x > y && y > z -> yzxMinusXyz : {-,-,>0} lessThan(yzxMinusXyz, 0) = {true, true, false}
-		// if x > y && y <= z && x > z -> yzxMinusXyz : {-,>=0,>0} lessThan(yzxMinusXyz, 0) = {true, false, false} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
-		// if x > y && z >= x -> yzxMinusXyz : {-,>=0,<=0} lessThan(yzxMinusXyz, 0) = {true, false, ?} | {false, true, false} | greaterThan(yzxMinusXyz, 0) = {true, true, false}
-		// if y >= x && z > y -> yzxMinusXyz : {>=0,>0,>0} {true, false, false} | greaterThan(yzxMinusXyz, 0) = {true, true, true}
-		// if y >= x && z <= y && z > x -> yzxMinusXyz : {>=0,<=0,<0} lessThan(yzxMinusXyz, 0) | {true, true, false} == {true, true, true}
-		// if y >= x && z <= x -> yzxMinusXyz : {>=0,<=0,>=0} lessThan(yzxMinusXyz, 0) | {true, true, false} == {true, true, false}
 		// When the idx is exactly equal to an index (e.g. 0,1,2...)
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
   	const aligned_ivec4 indexHigh = glm::ceil(idx);
-  	//aligned_ivec4 indexHighLow = aligned_ivec4{ indexHigh.zy(), ivIndexLow.xy() }; //{ indexHigh[2], indexHigh[1], indexLow[0], indexLow[1] }
-  	//aligned_ivec4 indexLowHigh = aligned_ivec4{ ivIndexLow.zy(), indexHigh.xy() }; //{ indexLow[2], indexLow[1], indexHigh[0], indexHigh[1] }
 
-		//indexHigh.aligned_ivec3::~aligned_ivec3();
-		//ivIndexLow.aligned_ivec3::~aligned_ivec3();
     // Compute index into LUT for surrounding corners
-    //aligned_ivec3 edgeSizeSeries = GetDimAsPowSeries(l3dEdgeSize);
     const int n000 =
         GetLut3DIndexRedFastRGB(indexLow[0], indexLow[1], indexLow[2], lut3d.lutEdgeSize);
     const int n111 =
@@ -1133,8 +1151,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
         // amount and saturation are overdetermined but we separate the two as they conceptually represent
         // different quantities, and this preserves forwards algorithmic compatibility
         glm::vec3 nightModeMultHSV( nightmode.hue, clamp01( nightmode.saturation * nightmode.amount ), 1.f );
-        glm::vec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) );
-        vMultLinear = vMultLinear * flGain;
+        avec3 vMultLinear = glm::pow( hsv_to_rgb( nightModeMultHSV ), glm::vec3( 2.2f ) ) * flGain;
 
         // Calculate the virtual white point adaptation
         glm::mat3x3 whitePointDestAdaptation = glm::mat3x3( 1.f ); // identity
@@ -1161,6 +1178,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
         // Precalculate source color EOTF encoded per-edge.
         glm::vec3 vSourceColorEOTFEncodedEdge[nLutEdgeSize3d];
         float flEdgeScale = 1.f / ( (float) nLutEdgeSize3d - 1.f );
+        
         for ( int nIndex = 0; nIndex < nLutEdgeSize3d; ++nIndex )
         {
             vSourceColorEOTFEncodedEdge[nIndex] = glm::vec3( nIndex * flEdgeScale );
@@ -1178,7 +1196,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
             {
                 for ( int nRed=0; nRed<nLutEdgeSize3d; ++nRed )
                 {
-                    glm::vec4 sourceColorEOTFEncoded = glm::vec4( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b, 0.f );
+                    avec4 sourceColorEOTFEncoded = glm::vec4( vSourceColorEOTFEncodedEdge[nRed].r, vSourceColorEOTFEncodedEdge[nGreen].g, vSourceColorEOTFEncodedEdge[nBlue].b, 0.f );
 
                     if ( pLook && !pLook->data.empty() )
                     {
@@ -1186,10 +1204,10 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
                     }
 
                     // Convert to linearized display referred for source colorimetry
-                    glm::vec3 sourceColorLinear = calcEOTFToLinear(sourceColorEOTFEncoded, sourceEOTF, tonemapping );
+                    avec4 sourceColorLinear = calcEOTFToLinear(sourceColorEOTFEncoded, sourceEOTF, tonemapping );
 
                     // Convert to dest colorimetry (linearized display referred)
-                    glm::vec3 destColorLinear = dest_from_source * sourceColorLinear;
+                    avec4 destColorLinear = dest_from_source * std::bit_cast<avec3>(sourceColorLinear);
 
                     // Do a naive blending with native gamut based on saturation
                     // ( A very simplified form of gamut mapping )
@@ -1199,7 +1217,7 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
                     destColorLinear = glm::mix( destColorLinear, sourceColorLinear, amount );
 
                     // Apply linear Mult
-                    destColorLinear = vMultLinear * destColorLinear;
+                    destColorLinear = std::bit_cast<avec4>(vMultLinear) * destColorLinear;
 
                     // Apply destination virtual white point mapping
                     destColorLinear = whitePointDestAdaptation * destColorLinear;

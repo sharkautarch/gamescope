@@ -16,9 +16,15 @@ uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
 lut1d_t lut1d_float;
 lut3d_t lut3d_float;
 
-
-
-
+static lut3d_t g_lut3dLook;
+FILE* pNullDev = fopen("/dev/null", "w");
+void __attribute__((constructor)) loadLutLook() {
+	std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
+	if (!LoadCubeLut(&g_lut3dLook, path.c_str())) {
+		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
+		abort();
+	}
+}
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
     SET_FAST_MATH_FLAGS
@@ -71,49 +77,60 @@ static void BenchmarkCalcColorTransform_pLook(EOTF inputEOTF, benchmark::State &
     const glm::vec2 white = { 0.3070f, 0.3220f };
     const glm::vec2 destVirtualWhite = { 0.f, 0.f };
 
-    displaycolorimetry_t inputColorimetry{};
-    inputColorimetry.primaries = primaries;
-    inputColorimetry.white = white;
 
-    displaycolorimetry_t outputEncodingColorimetry{};
-    outputEncodingColorimetry.primaries = primaries;
-    outputEncodingColorimetry.white = white;
+		struct data_t {
+			uint16_t lut1d[nLutSize1d*4];
+			uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
+			lut1d_t lut1d_float;
+			lut3d_t lut3d_float;
+		  displaycolorimetry_t inputColorimetry;
 
-    colormapping_t colorMapping{};
+		  displaycolorimetry_t outputEncodingColorimetry;
 
-    tonemapping_t tonemapping{};
-    tonemapping.bUseShaper = true;
+		  colormapping_t colorMapping{};
 
-    nightmode_t nightmode{};
-    float flGain = 1.0f;
-    lut3d_t lut3dLook;
-		std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
-	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
-		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
-		abort();
-	}
-		benchmark::DoNotOptimize( lut3dLook );
+		  tonemapping_t tonemapping;
+
+
+		  nightmode_t nightmode{};
+		  float flGain;
+		  lut3d_t lut3dLook;
+		};
+		
+		const data_t data_initial = {
+			.inputColorimetry={.primaries = primaries, .white = white},
+			.outputEncodingColorimetry={.primaries = primaries, .white = white},
+			.tonemapping = {.bUseShaper = true},
+			.flGain = 1.f,
+			.lut3dLook = g_lut3dLook
+		};
+		
+
     for (auto _ : state) {
-    		auto* ptr = &lut3dLook;
-    		benchmark::DoNotOptimize( ptr );
-        calcColorTransform<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
-            outputEncodingColorimetry, EOTF_Gamma22,
+    		data_t data = data_initial;
+        calcColorTransform<nLutEdgeSize3d>( &data.lut1d_float, nLutSize1d, &data.lut3d_float, data.inputColorimetry, inputEOTF,
+            data.outputEncodingColorimetry, EOTF_Gamma22,
             destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
-            colorMapping, nightmode, tonemapping, ptr, flGain );
-        for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
+            data.colorMapping, data.nightmode, data.tonemapping, &data.lut3dLook, data.flGain );
+        for ( size_t i=0, end = data.lut1d_float.dataR.size(); i<end; ++i )
         {
-            lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
-            lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
-            lut1d[4*i+2] = quantize_lut_value_16bit( lut1d_float.dataB[i] );
-            lut1d[4*i+3] = 0;
+            data.lut1d[4*i+0] = quantize_lut_value_16bit( data.lut1d_float.dataR[i] );
+            data.lut1d[4*i+1] = quantize_lut_value_16bit( data.lut1d_float.dataG[i] );
+            data.lut1d[4*i+2] = quantize_lut_value_16bit( data.lut1d_float.dataB[i] );
+            data.lut1d[4*i+3] = 0;
         }
-        for ( size_t i=0, end = lut3d_float.data.size(); i<end; ++i )
+        for ( size_t i=0, end = data.lut3d_float.data.size(); i<end; ++i )
         {
-            lut3d[4*i+0] = quantize_lut_value_16bit( lut3d_float.data[i].r );
-            lut3d[4*i+1] = quantize_lut_value_16bit( lut3d_float.data[i].g );
-            lut3d[4*i+2] = quantize_lut_value_16bit( lut3d_float.data[i].b );
-            lut3d[4*i+3] = 0;
+            data.lut3d[4*i+0] = quantize_lut_value_16bit( data.lut3d_float.data[i].r );
+            data.lut3d[4*i+1] = quantize_lut_value_16bit( data.lut3d_float.data[i].g );
+            data.lut3d[4*i+2] = quantize_lut_value_16bit( data.lut3d_float.data[i].b );
+            data.lut3d[4*i+3] = 0;
         }
+        
+        
+        fwrite_unlocked(reinterpret_cast<void*>(&data), sizeof(unsigned char), sizeof(data_t), pNullDev); //fwrite results to /dev/null, to prevent compiler from optimizing stuff away
+        
+        
     }
 }
 
@@ -124,50 +141,55 @@ static void BenchmarkCalcColorTransform_pLookOriginal(EOTF inputEOTF, benchmark:
     const glm::vec2 white = { 0.3070f, 0.3220f };
     const glm::vec2 destVirtualWhite = { 0.f, 0.f };
 
-    displaycolorimetry_t inputColorimetry{};
-    inputColorimetry.primaries = primaries;
-    inputColorimetry.white = white;
+		struct data_t {
+			uint16_t lut1d[nLutSize1d*4];
+			uint16_t lut3d[nLutEdgeSize3d*nLutEdgeSize3d*nLutEdgeSize3d*4];
+			lut1d_t lut1d_float;
+			lut3d_t lut3d_float;
+		  displaycolorimetry_t inputColorimetry;
 
-    displaycolorimetry_t outputEncodingColorimetry{};
-    outputEncodingColorimetry.primaries = primaries;
-    outputEncodingColorimetry.white = white;
+		  displaycolorimetry_t outputEncodingColorimetry;
 
-    colormapping_t colorMapping{};
+		  colormapping_t colorMapping{};
 
-    tonemapping_t tonemapping{};
-    tonemapping.bUseShaper = true;
+		  tonemapping_t tonemapping;
 
-    nightmode_t nightmode{};
-    float flGain = 1.0f;
 
-    lut3d_t lut3dLook;
-		std::string path = (std::string{getenv("HOME")} + std::string{ "/gamescope/src/color_bench_test_lut.txt"});
-	if (!LoadCubeLut(&lut3dLook, path.c_str())) {
-		fprintf(stderr, "failed to load color_bench_test_lut.txt, aborting\n");
-		abort();
-	}
-		benchmark::DoNotOptimize( lut3dLook );
+		  nightmode_t nightmode{};
+		  float flGain;
+		  lut3d_t lut3dLook;
+		};
+		
+		const data_t data_initial = {
+			.inputColorimetry={.primaries = primaries, .white = white},
+			.outputEncodingColorimetry={.primaries = primaries, .white = white},
+			.tonemapping = {.bUseShaper = true},
+			.flGain = 1.f,
+			.lut3dLook = g_lut3dLook
+		};
+
     for (auto _ : state) {
-    		auto* ptr = &lut3dLook;
-    		benchmark::DoNotOptimize( ptr );
-        calcColorTransform_Original_pLook<nLutEdgeSize3d>( &lut1d_float, nLutSize1d, &lut3d_float, inputColorimetry, inputEOTF,
-            outputEncodingColorimetry, EOTF_Gamma22,
+    		data_t data = data_initial;
+        calcColorTransform_Original_pLook<nLutEdgeSize3d>( &data.lut1d_float, nLutSize1d, &data.lut3d_float, data.inputColorimetry, inputEOTF,
+            data.outputEncodingColorimetry, EOTF_Gamma22,
             destVirtualWhite, k_EChromaticAdapatationMethod_XYZ,
-            colorMapping, nightmode, tonemapping, ptr, flGain );
-        for ( size_t i=0, end = lut1d_float.dataR.size(); i<end; ++i )
+            data.colorMapping, data.nightmode, data.tonemapping, &data.lut3dLook, data.flGain );
+        for ( size_t i=0, end = data.lut1d_float.dataR.size(); i<end; ++i )
         {
-            lut1d[4*i+0] = quantize_lut_value_16bit( lut1d_float.dataR[i] );
-            lut1d[4*i+1] = quantize_lut_value_16bit( lut1d_float.dataG[i] );
-            lut1d[4*i+2] = quantize_lut_value_16bit( lut1d_float.dataB[i] );
-            lut1d[4*i+3] = 0;
+            data.lut1d[4*i+0] = quantize_lut_value_16bit( data.lut1d_float.dataR[i] );
+            data.lut1d[4*i+1] = quantize_lut_value_16bit( data.lut1d_float.dataG[i] );
+            data.lut1d[4*i+2] = quantize_lut_value_16bit( data.lut1d_float.dataB[i] );
+            data.lut1d[4*i+3] = 0;
         }
-        for ( size_t i=0, end = lut3d_float.data.size(); i<end; ++i )
+        for ( size_t i=0, end = data.lut3d_float.data.size(); i<end; ++i )
         {
-            lut3d[4*i+0] = quantize_lut_value_16bit( lut3d_float.data[i].r );
-            lut3d[4*i+1] = quantize_lut_value_16bit( lut3d_float.data[i].g );
-            lut3d[4*i+2] = quantize_lut_value_16bit( lut3d_float.data[i].b );
-            lut3d[4*i+3] = 0;
+            data.lut3d[4*i+0] = quantize_lut_value_16bit( data.lut3d_float.data[i].r );
+            data.lut3d[4*i+1] = quantize_lut_value_16bit( data.lut3d_float.data[i].g );
+            data.lut3d[4*i+2] = quantize_lut_value_16bit( data.lut3d_float.data[i].b );
+            data.lut3d[4*i+3] = 0;
         }
+        
+        fwrite_unlocked(reinterpret_cast<void*>(&data), sizeof(unsigned char), sizeof(data_t), pNullDev); //fwrite results to /dev/null, to prevent compiler from optimizing stuff away
     }
 }
 
