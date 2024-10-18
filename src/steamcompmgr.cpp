@@ -5762,6 +5762,9 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 [[noreturn]] static void
 steamcompmgr_exit(void)
 {
+	g_present_wait_thread_should_exit = true;
+	g_currentPresentWaitId.notify_all();
+	
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -5794,21 +5797,14 @@ steamcompmgr_exit(void)
 			s_MuraCTMBlob[i] = nullptr;
 		}
 	}
-
-    //request the present_wait thread to exit
-    //needed to avoid getting a segfault at exit due to race condition:
-    g_presentThreadShouldExit.store(true, std::memory_order_release);
-    g_currentPresentWaitId = 0; //present thread will check if it should exit if this is zero
-    g_currentPresentWaitId.notify_all();
-    g_presentThreadShouldExit.wait(true); //present thread will toggle this atomic when it sees the exit request
-                                          //this allows us to wait for present thread to close before deleting the backend
-
+		printf("line before  gamescope::IBackend::Set( nullptr );\n");
     gamescope::IBackend::Set( nullptr );
-
+		printf("line after  gamescope::IBackend::Set( nullptr );\n");
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
 
+	printf("line before pthread_exit(NULL);\n");
 	pthread_exit(NULL);
 }
 

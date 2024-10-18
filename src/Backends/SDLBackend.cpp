@@ -607,6 +607,10 @@ namespace gamescope
 		SDL_Event event;
 		while( SDL_WaitEvent( &event ) )
 		{
+			if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_REQ_EXIT ) ) {
+						return;
+			}
+			
 			fake_timestamp++;
 
 			switch( event.type )
@@ -918,9 +922,6 @@ namespace gamescope
 						}
 
 						SDL_SetCursor( m_pCursor );
-					}
-					else if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_REQ_EXIT ) ) {
-						return;
 					}
 				}
 				break;

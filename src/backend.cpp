@@ -15,20 +15,59 @@ namespace gamescope
     /////////////
     // IBackend
     /////////////
-
+		
+		
+		static size_t s_currentBackendSize = 0;
     static IBackend *s_pBackend = nullptr;
-
+		static std::atomic<size_t> s_backendOffset = 0;
+		
+		static IBackend *s_pOldBackend = nullptr; //for internal book-keeping only
     IBackend *IBackend::Get()
     {
-        return s_pBackend;
+        return s_pBackend + s_backendOffset.load();
     }
-
+    #if 0
+		void* IBackend::operator new(size_t size) {
+			printf("operator new()\n");
+			//AquireExclusive();
+			size_t oldBackendSize = std::exchange(s_currentBackendSize, size);
+			if (s_pOldBackend != nullptr) { //delete the old backend for realsies
+				assert(oldBackendSize > 0);
+				::operator delete(s_pOldBackend); //invoking the *global* deleter (deletes backend & dummy block)
+				s_pOldBackend = nullptr;
+				s_backendOffset.store(0);
+			}
+			
+			auto* ptr = std::bit_cast<unsigned char*>(::operator new(size*2)); //always allocate enough space for a both the actual class
+			// plus a zero-initialized dummy block
+			std::memset(ptr+size, 0, size); //zero-initialize the extra dummy block
+			return std::bit_cast<void*>(ptr);
+		}
+		
+		void IBackend::operator delete(void* ptr ) {
+			printf("operator delete()\n");
+			//AquireExclusive();
+			s_backendOffset = s_currentBackendSize; 
+			//to avoid use-after-frees and nullptr dereferences from doing s_pBackend-><member>
+			//we simply defer actual deallocation until either gamescope exits, or gamescope creates a new IBackend
+			
+			//mitigate other race conditions, we atomically update the s_backendOffset so that IBackend::Get() will safely point to a zero-initialized dummy block
+			
+			//a big performance benefit to this approach is that on x86_64 & aarch64, simple seq_cst atomic loads have the same overhead as plain loads (the synchronization cost is actually encurred on the atomic store side)
+			assert(s_pOldBackend == nullptr);
+			s_pOldBackend = std::bit_cast<IBackend*>(ptr);
+			std::bit_cast<IBackend*>(ptr)->IBackend::~IBackend();
+		}
+		#endif
     bool IBackend::Set( IBackend *pBackend )
     {
+    		//AquireExclusive();
         if ( s_pBackend )
         {
-            delete s_pBackend;
-            s_pBackend = nullptr;
+            delete s_pBackend; //we're intentionally *not* setting s_pBackend to nullptr after deletion
+            s_pBackend=nullptr;
+            //because IBackend has overrides for new & delete, where the delete override
+            //ensures that IBackend::Get will still point to a safe memory region after it is run
         }
 
         if ( pBackend )
