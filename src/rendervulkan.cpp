@@ -79,7 +79,7 @@ static constexpr mat3x4 g_rgb2yuv_srgb_to_bt709_limited = {{
 static constexpr mat3x4 g_rgb2yuv_srgb_to_bt709_full = {{
   { 0.2126f, 0.7152f, 0.0722f, 0.0f },
   { -0.1146f, -0.3854f, 0.5000f, 0.5f },
-  { 0.5000f, -0.4542f, -0.0468f, 0.5f },
+  { 0.5000f, -0.4542f, -0.0458f, 0.5f },
 }};
 
 static const mat3x4& colorspace_to_conversion_from_srgb_matrix(EStreamColorspace colorspace) {
@@ -3957,7 +3957,7 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 	{
 		float scale = (float)pScreenshotTexture->width() / pYUVOutTexture->width();
 
-		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pScreenshotTexture->streamColorspace() ) );
+		CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pYUVOutTexture->streamColorspace() ) );
 		constants.halfExtent[0] = pYUVOutTexture->width() / 2.0f;
 		constants.halfExtent[1] = pYUVOutTexture->height() / 2.0f;
 		cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
@@ -4184,7 +4184,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			float scale = (float)compositeImage->width() / pPipewireTexture->width();
 			if ( ycbcr )
 			{
-				CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( compositeImage->streamColorspace() ) );
+				CaptureConvertBlitData_t constants( scale, colorspace_to_conversion_from_srgb_matrix( pPipewireTexture->streamColorspace() ) );
 				constants.halfExtent[0] = pPipewireTexture->width() / 2.0f;
 				constants.halfExtent[1] = pPipewireTexture->height() / 2.0f;
 				cmdBuffer->uploadConstants<CaptureConvertBlitData_t>(constants);
