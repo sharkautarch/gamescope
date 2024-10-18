@@ -385,6 +385,7 @@ inline float ClampAndSanitize( float a, float min, float max )
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
+#endif
 }
 
 // Adapted from:
