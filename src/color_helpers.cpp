@@ -381,11 +381,10 @@ inline avec4 ClampAndSanitize( glm::vec4 a, float min, float max )
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
-#ifndef __FAST_MATH__
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
-#endif
 }
 
 // Adapted from:
