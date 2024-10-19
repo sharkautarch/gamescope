@@ -42,7 +42,7 @@ namespace gamescope
 			printf("operator new()\n");
 			AcquireExclusive();
 			s_currentBackendSize = size;
-			auto* ptr = defaultAllocator.allocate(size*2); //always allocate enough space both the actual class and a headless backend
+			auto* ptr = defaultAllocator.allocate(size*2); //always allocate enough space for both the actual class and a headless backend
 			auto* pChars = std::bit_cast<unsigned char*>(ptr);
 			auto* pHeadlessAddr = std::bit_cast<gamescope::CHeadlessBackend*>(pChars + size);
 			s_pHeadless = std::construct_at(pHeadlessAddr);
