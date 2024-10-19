@@ -5772,15 +5772,7 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 			for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 				w->commit_queue.clear();
 		}
-		#if 0
-		server = NULL;
-		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
-		{
-			server->ctx.reset(nullptr);
-		}
-		#endif
 	}
-	//g_PendingCommits = decltype(g_PendingCommits){};
 	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;

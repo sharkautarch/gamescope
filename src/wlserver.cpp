@@ -187,7 +187,12 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 	nudge_steamcompmgr();
 }
 
-extern std::list<PendingCommit_t> g_PendingCommits;
+struct PendingCommit_t
+{
+	struct wlr_surface *surf;
+	struct wlr_buffer *buf;
+};
+std::list<PendingCommit_t> g_PendingCommits;
 
 void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 {
