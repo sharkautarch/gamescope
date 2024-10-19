@@ -37,7 +37,7 @@ namespace gamescope
     
     
     //order of usage (B<num> Backend obj):
-    // operator new B1 -> operator delete B1 -> operator new B2 -> RemoveOldBackend()
+    // operator new B1 -> ReplaceBackend(B1) -> operator new B2 -> B1->DestroyBackend() -> ReplaceBackend(B2)
 		void* IBackend::operator new(size_t size) {
 			printf("operator new()\n");
 			AcquireExclusive();
@@ -69,9 +69,9 @@ namespace gamescope
 			//to avoid use-after-frees and nullptr dereferences from doing s_pBackend-><member>
 			//we simply defer actual deallocation until either gamescope exits, or gamescope creates a new IBackend
 			
-			//to mitigate other race conditions, we atomically update the s_backendOffset so that IBackend::Get() will safely point to a dummy CHeadlessBackend
+			//to mitigate other race conditions, we atomically update s_pBackend so that it will safely point to a valid CHeadlessBackend object
 			
-			//a big performance benefit to this approach is that on x86_64 & aarch64, simple seq_cst atomic loads have the same overhead as plain loads (the synchronization cost is actually encurred on the atomic store side)
+			//a big performance benefit to this approach is that on x86_64 & aarch64, simple seq_cst atomic loads have the same overhead as plain loads (the synchronization [of loads w/ store] cost is actually encurred on the atomic store side)
 			
 			
 			assert(pCharsPtr + s_backendOffset == std::bit_cast<unsigned char*>(s_pHeadless));
@@ -102,9 +102,9 @@ namespace gamescope
     		AcquireExclusive();
         if ( s_pBackend )
         {
-            GetBackend()->DestroyBackend(); //we're intentionally *not* setting s_pBackend to nullptr after deletion
-            //because IBackend has overrides for new & delete, where the delete override
-            //ensures that IBackend::Get will still point to a safe memory region after it is run
+            GetBackend()->DestroyBackend(); //we're intentionally *not* setting s_pBackend to nullptr after deletion.
+            //the DestroyBackend() method ensures that 
+            //IBackend::Get will still point to a safe memory region (a CHeadlessBackend object) after it is run
         }
 
         if ( pBackend )
