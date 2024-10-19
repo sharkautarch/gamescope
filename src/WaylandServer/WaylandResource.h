@@ -3,10 +3,14 @@
 #include <cstdint>
 #include <wayland-server-core.h>
 #include "../Utils/NonCopyable.h"
-
+#include <mutex>
+#include <vector>
+using TFreedSurfaceIter = typename std::vector<unsigned char*>::iterator;
 namespace gamescope::WaylandServer
 {
-
+	extern TFreedSurfaceIter LookupPtrInFreedSurfaces(auto* ptr);
+	extern bool IsNonNullIterator(TFreedSurfaceIter it);
+	
 	#define WL_PROTO_NULL() [] <typename... Args> ( Args... args ) { }
 	#define WL_PROTO_DESTROY() [] <typename... Args> ( wl_client *pClient, wl_resource *pResource, Args... args ) { wl_resource_destroy( pResource ); }
 	#define WL_PROTO( type, name ) \
@@ -87,7 +91,6 @@ namespace gamescope::WaylandServer
 			T *pThing = new T{ desc, std::forward<Args>(args)... };
 			if ( !CheckAllocation( pThing, pClient ) )
 				return nullptr;
-
 			wl_resource_set_implementation( pResource, &T::Implementation, pThing,
 			[]( wl_resource *pResource )
 			{

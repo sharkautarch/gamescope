@@ -2976,26 +2976,21 @@ bool acquire_next_image( void )
 }
 
 
-extern std::atomic<uint64_t> g_currentPresentWaitId;
+static std::atomic<uint64_t> g_currentPresentWaitId;
 static std::mutex present_wait_lock;
 
 extern void mangoapp_output_update( uint64_t vblanktime );
-extern std::atomic<bool> g_present_wait_thread_should_exit;
 static void present_wait_thread_func( void )
 {
 	uint64_t present_wait_id = 0;
 
 	while (true)
 	{
-		if (g_present_wait_thread_should_exit)
-				return;
 		g_currentPresentWaitId.wait(present_wait_id);
 
 		// Lock to make sure swapchain destruction is waited on and that
 		// it's for this swapchain.
 		{
-			if (g_present_wait_thread_should_exit)
-				return;
 			std::unique_lock lock(present_wait_lock);
 			present_wait_id = g_currentPresentWaitId.load();
 
@@ -3003,8 +2998,6 @@ static void present_wait_thread_func( void )
 			{
 				g_device.vk.WaitForPresentKHR( g_device.device(), g_output.swapChain, present_wait_id, 1'000'000'000lu );
 				uint64_t vblanktime = get_time_in_nanos();
-				if (g_present_wait_thread_should_exit)
-					return;
 				GetVBlankTimer().MarkVBlank( vblanktime, true );
 				mangoapp_output_update( vblanktime );
 			}

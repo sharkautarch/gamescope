@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "Backends/HeadlessBackend.hpp"
 #include "vblankmanager.hpp"
 #include "convar.h"
 #include "wlserver.hpp"
@@ -17,66 +18,101 @@ namespace gamescope
     /////////////
 		
 		
-		static size_t s_currentBackendSize = 0;
-    static IBackend *s_pBackend = nullptr;
-		static std::atomic<size_t> s_backendOffset = 0;
-		
-		static IBackend *s_pOldBackend = nullptr; //for internal book-keeping only
-    IBackend *IBackend::Get()
+    inline std::atomic<IBackend*> __attribute__((visibility("default")))  s_pBackend = nullptr;
+		IBackend *IBackend::Get()
     {
-        return s_pBackend + s_backendOffset.load();
+        return s_pBackend.load();
     }
-    #if 0
+    
+    IBackend::~IBackend() {}
+		
+		///////////////////////////////////////////
+		//	IBackend Internal Book-keeping bits: //
+		///////////////////////////////////////////
+		static inline size_t s_currentBackendSize = 0;
+		static inline gamescope::CHeadlessBackend* s_pHeadless = nullptr;
+		static inline size_t s_backendOffset = 0;
+		static inline IBackend *s_pOldBackend = nullptr; //for internal book-keeping only
+		static inline std::allocator<IBackend> defaultAllocator{};
+    
+    
+    //order of usage (B<num> Backend obj):
+    // operator new B1 -> operator delete B1 -> operator new B2 -> RemoveOldBackend()
 		void* IBackend::operator new(size_t size) {
 			printf("operator new()\n");
-			//AquireExclusive();
-			size_t oldBackendSize = std::exchange(s_currentBackendSize, size);
-			if (s_pOldBackend != nullptr) { //delete the old backend for realsies
-				assert(oldBackendSize > 0);
-				::operator delete(s_pOldBackend); //invoking the *global* deleter (deletes backend & dummy block)
-				s_pOldBackend = nullptr;
-				s_backendOffset.store(0);
-			}
-			
-			auto* ptr = std::bit_cast<unsigned char*>(::operator new(size*2)); //always allocate enough space for a both the actual class
-			// plus a zero-initialized dummy block
-			std::memset(ptr+size, 0, size); //zero-initialize the extra dummy block
-			return std::bit_cast<void*>(ptr);
+			AcquireExclusive();
+			s_currentBackendSize = size;
+			auto* ptr = defaultAllocator.allocate(size*2); //always allocate enough space both the actual class and a headless backend
+			auto* pChars = std::bit_cast<unsigned char*>(ptr);
+			auto* pHeadlessAddr = std::bit_cast<gamescope::CHeadlessBackend*>(pChars + size);
+			s_pHeadless = std::construct_at(pHeadlessAddr);
+			//^construct headless backend from the extra allocated memory
+			assert(size >= sizeof(gamescope::CHeadlessBackend));
+			return ptr;
 		}
 		
-		void IBackend::operator delete(void* ptr ) {
+		void IBackend::DestroyBackend() {
 			printf("operator delete()\n");
-			//AquireExclusive();
+			AcquireExclusive();
+			auto* pCharsPtr = std::bit_cast<unsigned char*>(this);
+			if (s_pOldBackend != nullptr && (s_backendOffset > 0)
+						&& pCharsPtr != nullptr && std::bit_cast<IBackend*>(pCharsPtr - s_backendOffset) == s_pBackend.load(std::memory_order_relaxed)
+						&& std::bit_cast<IBackend*>(pCharsPtr - s_backendOffset) == s_pOldBackend) [[unlikely]] 
+			{
+					return; //do nothing if we've already marked the backend for deletion, 
+					//and have already set the current backend to the dummy headless backend
+			}
+			
+			assert(s_pOldBackend == nullptr);
+			assert(s_backendOffset == 0);
 			s_backendOffset = s_currentBackendSize; 
 			//to avoid use-after-frees and nullptr dereferences from doing s_pBackend-><member>
 			//we simply defer actual deallocation until either gamescope exits, or gamescope creates a new IBackend
 			
-			//mitigate other race conditions, we atomically update the s_backendOffset so that IBackend::Get() will safely point to a zero-initialized dummy block
+			//to mitigate other race conditions, we atomically update the s_backendOffset so that IBackend::Get() will safely point to a dummy CHeadlessBackend
 			
 			//a big performance benefit to this approach is that on x86_64 & aarch64, simple seq_cst atomic loads have the same overhead as plain loads (the synchronization cost is actually encurred on the atomic store side)
-			assert(s_pOldBackend == nullptr);
-			s_pOldBackend = std::bit_cast<IBackend*>(ptr);
-			std::bit_cast<IBackend*>(ptr)->IBackend::~IBackend();
+			
+			
+			assert(pCharsPtr + s_backendOffset == std::bit_cast<unsigned char*>(s_pHeadless));
+			s_pOldBackend = this;
+			this->IBackend::~IBackend(); //manually call the backend's destructor, without deallocating the memory
+			s_pBackend = dynamic_cast<IBackend*>(s_pHeadless);
 		}
-		#endif
+		
+		
+		static inline void __attribute__((nonnull (1)))
+			ReplaceBackend(IBackend* pNewBackend) 
+		{
+			s_pBackend = pNewBackend;
+			size_t oldBackendSize = std::exchange(s_backendOffset, 0);
+			if (auto* pOld = std::exchange(s_pOldBackend, nullptr);
+					 pOld != nullptr)
+		  { //delete the old backend for realsies
+				assert(oldBackendSize > 0);
+				s_pHeadless=nullptr;
+				defaultAllocator.deallocate(pOld, oldBackendSize*2); //invoking the *global* deleter (deletes backend & dummy headless backend block)
+			}
+		} 
+		
+		///////////////////////////////////////////
+		///////////////////////////////////////////
     bool IBackend::Set( IBackend *pBackend )
     {
-    		//AquireExclusive();
+    		AcquireExclusive();
         if ( s_pBackend )
         {
-            delete s_pBackend; //we're intentionally *not* setting s_pBackend to nullptr after deletion
-            s_pBackend=nullptr;
+            GetBackend()->DestroyBackend(); //we're intentionally *not* setting s_pBackend to nullptr after deletion
             //because IBackend has overrides for new & delete, where the delete override
             //ensures that IBackend::Get will still point to a safe memory region after it is run
         }
 
         if ( pBackend )
         {
-            s_pBackend = pBackend;
-            if ( !s_pBackend->Init() )
+            ReplaceBackend(pBackend);
+            if ( !GetBackend()->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
+                pBackend->DestroyBackend();
                 return false;
             }
         }

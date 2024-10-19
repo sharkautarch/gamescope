@@ -74,8 +74,6 @@ enum EStreamColorspace : int
 #define VK_NO_PROTOTYPES
 #include <vulkan/vulkan.h>
 #include <drm_fourcc.h>
-inline std::atomic<bool> g_present_wait_thread_should_exit {false};
-inline std::atomic<uint64_t> g_currentPresentWaitId = {0u};
 struct VulkanRenderer_t
 {
 	struct wlr_renderer base;

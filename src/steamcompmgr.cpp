@@ -5760,11 +5760,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 }
 
 [[noreturn]] static void
-steamcompmgr_exit(void)
+steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
-	g_present_wait_thread_should_exit = true;
-	g_currentPresentWaitId.notify_all();
-	
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -5775,7 +5772,15 @@ steamcompmgr_exit(void)
 			for ( steamcompmgr_win_t *w = server->ctx->list; w; w = w->xwayland().next )
 				w->commit_queue.clear();
 		}
+		#if 0
+		server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			server->ctx.reset(nullptr);
+		}
+		#endif
 	}
+	//g_PendingCommits = decltype(g_PendingCommits){};
 	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
@@ -5797,14 +5802,16 @@ steamcompmgr_exit(void)
 			s_MuraCTMBlob[i] = nullptr;
 		}
 	}
+		wlserver_lock();
 		printf("line before  gamescope::IBackend::Set( nullptr );\n");
     gamescope::IBackend::Set( nullptr );
 		printf("line after  gamescope::IBackend::Set( nullptr );\n");
-    wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
 
 	printf("line before pthread_exit(NULL);\n");
+	if (lock)
+		lock->unlock();
 	pthread_exit(NULL);
 }
 
@@ -7894,7 +7901,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit();
+	steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> {std::in_place_t{}, std::move(xwayland_server_guard)});
 }
 
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )

@@ -27,7 +27,12 @@
 #endif
 
 #define WLSERVER_BUTTON_COUNT 7
-
+struct PendingCommit_t
+{
+	struct wlr_surface *surf;
+	struct wlr_buffer *buf;
+};
+inline std::list<PendingCommit_t> g_PendingCommits;
 struct _XDisplay;
 struct xwayland_ctx_t;
 

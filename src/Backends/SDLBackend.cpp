@@ -943,7 +943,7 @@ namespace gamescope
 				.type = GetUserEventIndex( eEvent ),
 			},
 		};
-		SDL_PushEvent( &event );
+		SDL_PeepEvents( &event, 1, SDL_ADDEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT );
 	}
 
 	/////////////////////////

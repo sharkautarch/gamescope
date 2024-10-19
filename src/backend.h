@@ -168,18 +168,15 @@ namespace gamescope
         wlr_buffer *m_pClientBuffer = nullptr;
         std::shared_ptr<CReleaseTimelinePoint> m_pReleasePoint;
     };
-		inline static constinit thread_local bool s_TLocal_bIsLockHeld = false;
+		inline static constinit thread_local bool s_tl_bIsLockHeld = false;
     inline static std::mutex s_backendModifyMut;
-    inline static std::atomic<bool> s_bIsExiting = false;
+    
     class IBackend
     {
     public:
-    		bool m_bIsReal = true;
-    		#if 0
     		void* operator new(size_t size);
-    		void operator delete(void* ptr);
-    		#endif
-        virtual ~IBackend() {}
+    		//void operator delete(void* ptr) = delete; 
+        virtual ~IBackend() = 0;
 
         virtual bool Init() = 0;
         virtual bool PostInit() = 0;
@@ -229,9 +226,8 @@ namespace gamescope
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
-        		if (m_bIsReal)
-            	if ( auto* pConn = GetCurrentConnector(); pConn )
-                	return pConn->GetScreenType();
+						if ( auto* pConn = GetCurrentConnector(); pConn )
+                return pConn->GetScreenType();
 
             return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
         }
@@ -267,23 +263,24 @@ namespace gamescope
     private:
     		struct LockWrapper {
     			static inline std::optional<std::unique_lock<std::mutex>> CheckedLock() {
-    				if (s_TLocal_bIsLockHeld) {
+    				if (std::exchange(s_tl_bIsLockHeld, true)) {
     					return std::nullopt;
     				} else {
-    					s_TLocal_bIsLockHeld=true;
     					return std::optional<std::unique_lock<std::mutex>>{std::in_place_t{}, s_backendModifyMut};
     				}
     			}
     			LockWrapper() : m_oLock{CheckedLock()} {}
     			~LockWrapper() {
-    				s_TLocal_bIsLockHeld = false;
+    				s_tl_bIsLockHeld = false;
     			}
     			
     			std::optional<std::unique_lock<std::mutex>> m_oLock;
     		};
-    		static LockWrapper AquireExclusive() {
+    		static LockWrapper AcquireExclusive() {
     			return LockWrapper{};
     		}
+    		
+    		virtual void DestroyBackend();
     };
 
 

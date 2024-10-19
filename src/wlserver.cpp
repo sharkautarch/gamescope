@@ -187,13 +187,7 @@ void gamescope_xwayland_server_t::wayland_commit(struct wlr_surface *surf, struc
 	nudge_steamcompmgr();
 }
 
-struct PendingCommit_t
-{
-	struct wlr_surface *surf;
-	struct wlr_buffer *buf;
-};
-
-std::list<PendingCommit_t> g_PendingCommits;
+extern std::list<PendingCommit_t> g_PendingCommits;
 
 void wlserver_xdg_commit(struct wlr_surface *surf, struct wlr_buffer *buf)
 {
@@ -512,9 +506,36 @@ static void handle_wl_surface_commit( struct wl_listener *l, void *data )
 	xwayland_surface_commit(surf->wlr);
 }
 
+namespace gamescope::WaylandServer
+{
+	TFreedSurfaceIter LookupPtrInFreedSurfaces(auto* ptr)
+	{
+		std::unique_lock lock{wlSurfFreeList.mut};
+		auto pPtrAsChars = std::bit_cast<unsigned char*>(ptr);
+		for (TFreedSurfaceIter freedSurface = wlSurfFreeList.FreedSurfaces.begin();
+				 freedSurface != wlSurfFreeList.FreedSurfaces.end();
+				 freedSurface++)
+		{
+			unsigned char* pFreedSurface = wlSurfFreeList.FreedSurfaces[std::distance(wlSurfFreeList.FreedSurfaces.begin(), freedSurface)];
+			if (pFreedSurface <= pPtrAsChars && pPtrAsChars <= (pFreedSurface + sizeof(wlserver_wl_surface_info)))
+				return freedSurface;
+		}
+		
+		return std::end(wlSurfFreeList.FreedSurfaces);
+	}
+
+	bool IsNonNullIterator(TFreedSurfaceIter it) {
+		return it != std::end(wlSurfFreeList.FreedSurfaces);
+	}
+}
+
 static void handle_wl_surface_destroy( struct wl_listener *l, void *data )
 {
 	wlserver_wl_surface_info *surf = wl_container_of( l, surf, destroy );
+	{
+		std::unique_lock lock{gamescope::WaylandServer::wlSurfFreeList.mut};
+		gamescope::WaylandServer::wlSurfFreeList.FreedSurfaces.push_back(std::bit_cast<unsigned char*>(surf));
+	}
 	if (surf->x11_surface)
 	{
 		wlserver_x11_surface_info *x11_surface = surf->x11_surface;
