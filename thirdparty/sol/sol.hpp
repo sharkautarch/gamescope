@@ -9063,7 +9063,11 @@ namespace sol { namespace detail {
 		"`anonymous namespace'" } };
 
 #if SOL_IS_ON(SOL_COMPILER_GCC) || SOL_IS_ON(SOL_COMPILER_CLANG)
-	inline std::string ctti_get_type_name_from_sig(std::string name) {
+	constexpr bool constexpr_isblank(int ch)
+	{
+		return ch == 9 || ch == 32; //based on the table from cppref: https://en.cppreference.com/w/cpp/string/byte/isblank
+	}
+	constexpr inline std::string ctti_get_type_name_from_sig(std::string name) {
 		// cardinal sins from MINGW
 		using namespace std;
 		std::size_t start = name.find_first_of('[');
@@ -9080,9 +9084,9 @@ namespace sol { namespace detail {
 		if (start != std::string::npos) {
 			name.erase(start - 2, name.length());
 		}
-		while (!name.empty() && isblank(name.front()))
+		while (!name.empty() && constexpr_isblank(name.front()))
 			name.erase(name.begin());
-		while (!name.empty() && isblank(name.back()))
+		while (!name.empty() && constexpr_isblank(name.back()))
 			name.pop_back();
 
 		for (std::size_t r = 0; r < removals.size(); ++r) {
@@ -9097,7 +9101,7 @@ namespace sol { namespace detail {
 	}
 
 	template <typename T, class seperator_mark = int>
-	inline std::string ctti_get_type_name() {
+	inline constexpr std::string ctti_get_type_name() {
 		return ctti_get_type_name_from_sig(__PRETTY_FUNCTION__);
 	}
 #elif SOL_IS_ON(SOL_COMPILER_VCXX)
@@ -9142,18 +9146,19 @@ namespace sol { namespace detail {
 #endif // compilers
 
 	template <typename T>
-	std::string demangle_once() {
+	constexpr std::string demangle_once() {
 		std::string realname = ctti_get_type_name<T>();
 		return realname;
 	}
 
-	inline std::string short_demangle_from_type_name(std::string realname) {
+	inline std::string short_demangle_from_type_name(auto callable) {
 		// This isn't the most complete but it'll do for now...?
 		static const std::array<std::string, 10> ops = {
 			{ "operator<", "operator<<", "operator<<=", "operator<=", "operator>", "operator>>", "operator>>=", "operator>=", "operator->", "operator->*" }
 		};
 		int level = 0;
 		std::size_t idx = 0;
+		std::string realname = callable();
 		for (idx = static_cast<std::size_t>(realname.empty() ? 0 : realname.size() - 1); idx > 0; --idx) {
 			if (level == 0 && realname[idx] == ':') {
 				break;
@@ -9186,21 +9191,57 @@ namespace sol { namespace detail {
 	}
 
 	template <typename T>
-	std::string short_demangle_once() {
-		std::string realname = ctti_get_type_name<T>();
+	constexpr std::string short_demangle_once() {
+		constexpr auto realname = []() { return ctti_get_type_name<T>(); };
 		return short_demangle_from_type_name(realname);
 	}
-
+	
+	//the constexpr helpers are based on the stuff from this video: https://www.youtube.com/watch?v=ABg4_EV5L3w
+	struct oversized_array
+	{
+		std::array<char, 10*1024*1024> data{};
+		std::size_t size;
+	};
+	consteval auto to_oversized_array(const std::string &str)
+	{
+		oversized_array result;
+		std::copy(str.begin(), str.end(), result.data.begin());
+		result.size = str.size();
+		return result;
+	}
+	consteval auto to_right_sized_array(auto callable)
+	{
+		constexpr auto oversized = to_oversized_array(callable());
+		std::array<char, oversized.size> result;
+		std::copy(oversized.data.begin(), std::next(oversized.data.begin(), oversized.size), result.begin());
+		return result;
+	}
+	template <auto Data>
+	consteval const auto &make_static() {
+		return Data;
+	}
+	consteval auto to_string_view(auto callable) -> std::string_view {
+		auto &static_data = make_static<to_right_sized_array(callable)>();
+		std::string_view sv{static_data.begin(), static_data.size()};
+		return sv;
+	}
 	template <typename T>
-	const std::string& demangle() {
-		static const std::string d = demangle_once<T>();
+	consteval const std::string_view demangle_consteval() {
+			constexpr auto typename_callable = [](){
+				return ctti_get_type_name<T>();
+			};
+			return to_string_view(typename_callable);
+	}
+	
+	template <typename T>
+	const std::string& demangle()
+	{
+		const std::string& d = demangle_once<T>();
 		return d;
 	}
-
 	template <typename T>
-	const std::string& short_demangle() {
-		static const std::string d = short_demangle_once<T>();
-		return d;
+	consteval const std::string_view short_demangle() {
+		return to_string_view(short_demangle_once<T>);
 	}
 }} // namespace sol::detail
 
@@ -9210,29 +9251,28 @@ namespace sol {
 
 	template <typename T>
 	struct usertype_traits {
-		static const std::string& name() {
-			static const std::string& n = detail::short_demangle<T>();
-			return n;
+		consteval static const std::string_view name() {
+			return detail::short_demangle<T>();
 		}
-		static const std::string& qualified_name() {
-			static const std::string& q_n = detail::demangle<T>();
-			return q_n;
+		static consteval const std::string_view qualified_name() {
+			return detail::demangle_consteval<T>();
 		}
-		static const std::string& metatable() {
-			static const std::string m = std::string("sol.").append(detail::demangle<T>());
-			return m;
+		static consteval const std::string_view metatable() {
+			constexpr auto m = []() { return std::string("sol.").append(detail::demangle_consteval<T>()); };
+			return detail::to_string_view(m);
 		}
-		static const std::string& user_metatable() {
-			static const std::string u_m = std::string("sol.").append(detail::demangle<T>()).append(".user");
-			return u_m;
+		static consteval const std::string_view user_metatable() {
+			constexpr auto u_m = []() { return std::string("sol.").append(detail::demangle_consteval<T>())+(".user"); };
+			return detail::to_string_view(u_m);
 		}
-		static const std::string& user_gc_metatable() {
-			static const std::string u_g_m = std::string("sol.").append(detail::demangle<T>()).append(".user\xE2\x99\xBB");
-			return u_g_m;
+		static consteval const std::string_view user_gc_metatable() {
+			constexpr auto u_g_m = []() { return std::string("sol.").append(detail::demangle_consteval<T>()).append(".user\xE2\x99\xBB"); };
+			return detail::to_string_view(u_g_m);
 		}
-		static const std::string& gc_table() {
-			static const std::string g_t = std::string("sol.").append(detail::demangle<T>()).append(".\xE2\x99\xBB");
-			return g_t;
+		static consteval const std::string_view gc_table() {
+			constexpr auto g_t = []() { return std::string("sol.").append(detail::demangle_consteval<T>()).append(".\xE2\x99\xBB"); };
+			
+			return detail::to_string_view(g_t);
 		}
 	};
 
@@ -9728,10 +9768,10 @@ namespace sol {
 		int operator()(lua_State* L, int index, type expected, type actual, string_view message) const noexcept(false) {
 			{
 				std::string aux_message = "(bad argument into '";
-				aux_message += detail::demangle<R>();
+				aux_message += detail::demangle_consteval<R>();
 				aux_message += "(";
 				int marker = 0;
-				(void)detail::swallow { int(), (detail::accumulate_and_mark(detail::demangle<Args>(), aux_message, marker), int())... };
+				(void)detail::swallow { int(), (detail::accumulate_and_mark(detail::demangle_consteval<Args>(), aux_message, marker), int())... };
 				aux_message += ")')";
 				push_type_panic_string(L, index, expected, actual, message, aux_message);
 			}
@@ -11257,7 +11297,7 @@ namespace sol {
 				lua_pop(L, 1);
 				// luaL_error(L, "if you are the one that wrote this allocator you should feel bad for doing a
 				// worse job than malloc/realloc and should go read some books, yeah?");
-				luaL_error(L, "cannot properly align memory for '%s'", detail::demangle<T*>().data());
+				luaL_error(L, "cannot properly align memory for '%s'", detail::demangle_consteval<T*>().data());
 			}
 			return static_cast<T**>(adjusted);
 		}
@@ -11343,10 +11383,10 @@ namespace sol {
 			     = attempt_alloc(L, std::alignment_of_v<T*>, sizeof(T*), std::alignment_of_v<T>, initial_size, pointer_adjusted, data_adjusted);
 			if (!result) {
 				if (pointer_adjusted == nullptr) {
-					luaL_error(L, "aligned allocation of userdata block (pointer section) for '%s' failed", detail::demangle<T>().c_str());
+					luaL_error(L, "aligned allocation of userdata block (pointer section) for '%s' failed", detail::demangle_consteval<T>().data());
 				}
 				else {
-					luaL_error(L, "aligned allocation of userdata block (data section) for '%s' failed", detail::demangle<T>().c_str());
+					luaL_error(L, "aligned allocation of userdata block (data section) for '%s' failed", detail::demangle_consteval<T>().data());
 				}
 				return nullptr;
 			}
@@ -11394,13 +11434,13 @@ namespace sol {
 			     data_adjusted);
 			if (!result) {
 				if (pointer_adjusted == nullptr) {
-					luaL_error(L, "aligned allocation of userdata block (pointer section) for '%s' failed", detail::demangle<T>().c_str());
+					luaL_error(L, "aligned allocation of userdata block (pointer section) for '%s' failed", detail::demangle_consteval<T>().data());
 				}
 				else if (dx_adjusted == nullptr) {
-					luaL_error(L, "aligned allocation of userdata block (deleter section) for '%s' failed", detail::demangle<T>().c_str());
+					luaL_error(L, "aligned allocation of userdata block (deleter section) for '%s' failed", detail::demangle_consteval<T>().data());
 				}
 				else {
-					luaL_error(L, "aligned allocation of userdata block (data section) for '%s' failed", detail::demangle<T>().c_str());
+					luaL_error(L, "aligned allocation of userdata block (data section) for '%s' failed", detail::demangle_consteval<T>().data());
 				}
 				return nullptr;
 			}
@@ -11434,7 +11474,7 @@ namespace sol {
 			void* adjusted = align(std::alignment_of_v<T>, unadjusted, allocated_size);
 			if (adjusted == nullptr) {
 				lua_pop(L, 1);
-				luaL_error(L, "cannot properly align memory for '%s'", detail::demangle<T>().data());
+				luaL_error(L, "cannot properly align memory for '%s'", detail::demangle_consteval<T>().data());
 			}
 			return static_cast<T*>(adjusted);
 		}
@@ -11484,7 +11524,7 @@ namespace sol {
 			     "cannot call the destructor for '%s': it is either hidden (protected/private) or removed with '= "
 			     "delete' and thusly this type is being destroyed without properly destroying, invoking undefined "
 			     "behavior: please bind a usertype and specify a custom destructor to define the behavior properly",
-			     detail::demangle<T>().data());
+			     detail::demangle_consteval<T>().data());
 		}
 
 		template <typename T>
@@ -12354,7 +12394,7 @@ namespace sol {
 			return luaL_error(L,
 			     "cannot perform to_string on '%s': no 'to_string' overload in namespace, 'to_string' member "
 			     "function, or operator<<(ostream&, ...) present",
-			     detail::demangle<T>().data());
+			     detail::demangle_consteval<T>().data());
 		}
 
 		template <typename T>
@@ -12482,7 +12522,7 @@ namespace sol { namespace stack {
 	}
 
 	namespace stack_detail {
-		inline bool impl_check_metatable(lua_State* L_, int index, const std::string& metakey, bool poptable) {
+		inline bool impl_check_metatable(lua_State* L_, int index, const std::string_view metakey, bool poptable) {
 			luaL_getmetatable(L_, &metakey[0]);
 			const type expectedmetatabletype = static_cast<type>(lua_type(L_, -1));
 			if (expectedmetatabletype != type::lua_nil) {
@@ -13196,7 +13236,7 @@ namespace sol { namespace stack {
 					if constexpr (derive<element>::value) {
 						memory = detail::align_usertype_unique_tag<true, false>(memory);
 						detail::unique_tag& ic = *reinterpret_cast<detail::unique_tag*>(memory);
-						string_view ti = usertype_traits<element>::qualified_name();
+						static constexpr string_view ti = usertype_traits<element>::qualified_name();
 						string_view rebind_ti = usertype_traits<rebound_actual_type>::qualified_name();
 						if (ic(nullptr, nullptr, ti, rebind_ti) != 0) {
 							return true;
@@ -21938,77 +21978,77 @@ namespace sol {
 			typedef lua_nil_t value_type;
 
 			static int at(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'at(index)' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'at(index)' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int get(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'get(key)' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'get(key)' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int index_get(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'container[key]' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'container[key]' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int set(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'set(key, value)' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'set(key, value)' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int index_set(lua_State* L_) {
 				return luaL_error(
-				     L_, "sol: cannot call 'container[key] = value' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				     L_, "sol: cannot call 'container[key] = value' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int add(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'add' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'add' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int insert(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'insert' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'insert' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int find(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'find' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'find' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int index_of(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'index_of' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'index_of' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int size(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'end' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'end' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int clear(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'clear' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'clear' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int empty(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'empty' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'empty' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int erase(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'erase' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'erase' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int next(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'next' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'next' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int pairs(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call '__pairs/pairs' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call '__pairs/pairs' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static int ipairs(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call '__ipairs' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call '__ipairs' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 			}
 
 			static iterator begin(lua_State* L_, T&) {
-				luaL_error(L_, "sol: cannot call 'being' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				luaL_error(L_, "sol: cannot call 'being' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 				return lua_nil;
 			}
 
 			static sentinel end(lua_State* L_, T&) {
-				luaL_error(L_, "sol: cannot call 'end' on type '%s': it is not recognized as a container", detail::demangle<T>().c_str());
+				luaL_error(L_, "sol: cannot call 'end' on type '%s': it is not recognized as a container", detail::demangle_consteval<T>().data());
 				return lua_nil;
 			}
 		};
@@ -22080,11 +22120,11 @@ namespace sol {
 				if (!p) {
 					luaL_error(L_,
 					     "sol: 'self' is not of type '%s' (pass 'self' as first argument with ':' or call on proper type)",
-					     detail::demangle<T>().c_str());
+					     detail::demangle_consteval<T>().data());
 				}
 				if (p.value() == nullptr) {
 					luaL_error(
-					     L_, "sol: 'self' argument is nil (pass 'self' as first argument with ':' or call on a '%s' type)", detail::demangle<T>().c_str());
+					     L_, "sol: 'self' argument is nil (pass 'self' as first argument with ':' or call on a '%s' type)", detail::demangle_consteval<T>().data());
 				}
 				return *p.value();
 #else
@@ -22183,8 +22223,8 @@ namespace sol {
 
 			static detail::error_result get_comparative(std::false_type, lua_State*, T&, K&) {
 				return detail::error_result("cannot get this key on '%s': no suitable way to increment iterator and compare to key value '%s'",
-				     detail::demangle<T>().data(),
-				     detail::demangle<K>().data());
+				     detail::demangle_consteval<T>().data(),
+				     detail::demangle_consteval<K>().data());
 			}
 
 			static detail::error_result get_it(std::false_type, lua_State* L_, T& self, K& key) {
@@ -22209,7 +22249,7 @@ namespace sol {
 
 			static detail::error_result set_writable(std::false_type, lua_State*, T&, iterator&, stack_object) {
 				return detail::error_result(
-				     "cannot perform a 'set': '%s's iterator reference is not writable (non-copy-assignable or const)", detail::demangle<T>().data());
+				     "cannot perform a 'set': '%s's iterator reference is not writable (non-copy-assignable or const)", detail::demangle_consteval<T>().data());
 			}
 
 			static detail::error_result set_category(std::input_iterator_tag, lua_State* L_, T& self, stack_object okey, stack_object value) {
@@ -22225,7 +22265,7 @@ namespace sol {
 					if (key == 0) {
 						return add_copyable(is_copyable(), L_, self, std::move(value), meta::has_insert_after<T>::value ? backit : it);
 					}
-					return detail::error_result("out of bounds (too big) for set on '%s'", detail::demangle<T>().c_str());
+					return detail::error_result("out of bounds (too big) for set on '%s'", detail::demangle_consteval<T>().data());
 				}
 				return set_writable(is_writable(), L_, self, it, std::move(value));
 			}
@@ -22234,14 +22274,14 @@ namespace sol {
 				decltype(auto) key = okey.as<K>();
 				key = static_cast<K>(static_cast<std::ptrdiff_t>(key) + deferred_uc::index_adjustment(L_, self));
 				if (key < 0) {
-					return detail::error_result("sol: out of bounds (too small) for set on '%s'", detail::demangle<T>().c_str());
+					return detail::error_result("sol: out of bounds (too small) for set on '%s'", detail::demangle_consteval<T>().data());
 				}
 				std::ptrdiff_t len = static_cast<std::ptrdiff_t>(size_start(L_, self));
 				if (key == len) {
 					return add_copyable(is_copyable(), L_, self, std::move(value));
 				}
 				else if (key >= len) {
-					return detail::error_result("sol: out of bounds (too big) for set on '%s'", detail::demangle<T>().c_str());
+					return detail::error_result("sol: out of bounds (too big) for set on '%s'", detail::demangle_consteval<T>().data());
 				}
 				auto it = std::next(deferred_uc::begin(L_, self), key);
 				return set_writable(is_writable(), L_, self, it, std::move(value));
@@ -22251,7 +22291,7 @@ namespace sol {
 				decltype(auto) key = okey.as<K>();
 				if (!is_writable::value) {
 					return detail::error_result(
-					     "cannot perform a 'set': '%s's iterator reference is not writable (non-copy-assignable or const)", detail::demangle<T>().data());
+					     "cannot perform a 'set': '%s's iterator reference is not writable (non-copy-assignable or const)", detail::demangle_consteval<T>().data());
 				}
 				auto fx = [&](const value_type& r) -> bool { return key == get_key(is_associative(), r); };
 				auto e = deferred_uc::end(L_, self);
@@ -22264,8 +22304,8 @@ namespace sol {
 
 			static detail::error_result set_comparative(std::false_type, lua_State*, T&, stack_object, stack_object) {
 				return detail::error_result("cannot set this value on '%s': no suitable way to increment iterator or compare to '%s' key",
-				     detail::demangle<T>().data(),
-				     detail::demangle<K>().data());
+				     detail::demangle_consteval<T>().data(),
+				     detail::demangle_consteval<K>().data());
 			}
 
 			template <typename Iter>
@@ -22283,7 +22323,7 @@ namespace sol {
 					(void)it;
 					(void)key;
 					return detail::error_result(
-					     "cannot call 'set' on '%s': there is no 'insert' function on this associative type", detail::demangle<T>().c_str());
+					     "cannot call 'set' on '%s': there is no 'insert' function on this associative type", detail::demangle_consteval<T>().data());
 				}
 			}
 
@@ -22302,7 +22342,7 @@ namespace sol {
 					(void)it;
 					(void)key;
 					return detail::error_result(
-					     "cannot call 'set' on '%s': there is no 'insert' function on this non-associative type", detail::demangle<T>().c_str());
+					     "cannot call 'set' on '%s': there is no 'insert' function on this non-associative type", detail::demangle_consteval<T>().data());
 				}
 			}
 
@@ -22332,7 +22372,7 @@ namespace sol {
 				if constexpr (!is_ordered::value && idx_of) {
 					(void)L_;
 					(void)self;
-					return detail::error_result("cannot perform an 'index_of': '%s's is not an ordered container", detail::demangle<T>().data());
+					return detail::error_result("cannot perform an 'index_of': '%s's is not an ordered container", detail::demangle_consteval<T>().data());
 				}
 				else {
 					decltype(auto) key = stack::unqualified_get<K>(L_, 2);
@@ -22356,7 +22396,7 @@ namespace sol {
 				if constexpr (!is_ordered::value && idx_of) {
 					(void)L_;
 					(void)self;
-					return detail::error_result("cannot perform an 'index_of': '%s's is not an ordered container", detail::demangle<T>().data());
+					return detail::error_result("cannot perform an 'index_of': '%s's is not an ordered container", detail::demangle_consteval<T>().data());
 				}
 				else {
 					decltype(auto) value = stack::unqualified_get<V>(L_, 2);
@@ -22394,7 +22434,7 @@ namespace sol {
 			template <bool = false>
 			static detail::error_result find_comparative(std::false_type, lua_State*, T&) {
 				return detail::error_result("cannot call 'find' on '%s': there is no 'find' function and the value_type is not equality comparable",
-				     detail::demangle<T>().c_str());
+				     detail::demangle_consteval<T>().data());
 			}
 
 			template <bool idx_of = false>
@@ -22425,7 +22465,7 @@ namespace sol {
 			}
 
 			static detail::error_result add_insert_after(std::false_type, lua_State*, T&, stack_object) {
-				return detail::error_result("cannot call 'add' on type '%s': no suitable insert/push_back C++ functions", detail::demangle<T>().data());
+				return detail::error_result("cannot call 'add' on type '%s': no suitable insert/push_back C++ functions", detail::demangle_consteval<T>().data());
 			}
 
 			template <typename Iter>
@@ -22501,7 +22541,7 @@ namespace sol {
 					(void)key;
 					(void)pos;
 					return detail::error_result(
-					     "cannot call 'insert' on '%s': there is no 'insert' function on this associative type", detail::demangle<T>().c_str());
+					     "cannot call 'insert' on '%s': there is no 'insert' function on this associative type", detail::demangle_consteval<T>().data());
 				}
 			}
 
@@ -22534,7 +22574,7 @@ namespace sol {
 			}
 
 			static detail::error_result add_copyable(std::false_type, lua_State*, T&, stack_object) {
-				return detail::error_result("cannot call 'add' on '%s': value_type is non-copyable", detail::demangle<T>().data());
+				return detail::error_result("cannot call 'add' on '%s': value_type is non-copyable", detail::demangle_consteval<T>().data());
 			}
 
 			static detail::error_result insert_lookup(std::true_type, lua_State* L_, T& self, stack_object, stack_object value) {
@@ -22559,7 +22599,7 @@ namespace sol {
 					auto e = deferred_uc::end(L_, self);
 					for (auto it = deferred_uc::begin(L_, self); key > 0; ++backit, ++it, --key) {
 						if (backit == e) {
-							return detail::error_result("sol: out of bounds (too big) for set on '%s'", detail::demangle<T>().c_str());
+							return detail::error_result("sol: out of bounds (too big) for set on '%s'", detail::demangle_consteval<T>().data());
 						}
 					}
 				}
@@ -22569,7 +22609,7 @@ namespace sol {
 
 			static detail::error_result insert_after_has(std::false_type, lua_State*, T&, stack_object, stack_object) {
 				return detail::error_result(
-				     "cannot call 'insert' on '%s': no suitable or similar functionality detected on this container", detail::demangle<T>().data());
+				     "cannot call 'insert' on '%s': no suitable or similar functionality detected on this container", detail::demangle_consteval<T>().data());
 			}
 
 			static detail::error_result insert_has(std::true_type, lua_State* L_, T& self, stack_object key, stack_object value) {
@@ -22590,7 +22630,7 @@ namespace sol {
 			}
 
 			static detail::error_result insert_copyable(std::false_type, lua_State*, T&, stack_object, stack_object) {
-				return detail::error_result("cannot call 'insert' on '%s': value_type is non-copyable", detail::demangle<T>().data());
+				return detail::error_result("cannot call 'insert' on '%s': value_type is non-copyable", detail::demangle_consteval<T>().data());
 			}
 
 			static detail::error_result erase_integral(std::true_type, lua_State* L_, T& self, K& key) {
@@ -22630,7 +22670,7 @@ namespace sol {
 					auto e = deferred_uc::end(L_, self);
 					for (auto it = deferred_uc::begin(L_, self); key > 0; ++backit, ++it, --key) {
 						if (backit == e) {
-							return detail::error_result("sol: out of bounds for erase on '%s'", detail::demangle<T>().c_str());
+							return detail::error_result("sol: out of bounds for erase on '%s'", detail::demangle_consteval<T>().data());
 						}
 					}
 				}
@@ -22639,7 +22679,7 @@ namespace sol {
 			}
 
 			static detail::error_result erase_after_has(std::false_type, lua_State*, T&, const K&) {
-				return detail::error_result("sol: cannot call erase on '%s'", detail::demangle<T>().c_str());
+				return detail::error_result("sol: cannot call erase on '%s'", detail::demangle_consteval<T>().data());
 			}
 
 			static detail::error_result erase_key_has(std::true_type, lua_State* L_, T& self, K& key) {
@@ -22671,7 +22711,7 @@ namespace sol {
 			}
 
 			static void clear_has(std::false_type, lua_State* L_, T&) {
-				luaL_error(L_, "sol: cannot call clear on '%s'", detail::demangle<T>().c_str());
+				luaL_error(L_, "sol: cannot call clear on '%s'", detail::demangle_consteval<T>().data());
 			}
 
 			static bool empty_has(std::true_type, lua_State*, T& self) {
@@ -22972,11 +23012,11 @@ namespace sol {
 				if (!p) {
 					luaL_error(L_,
 					     "sol: 'self' is not of type '%s' (pass 'self' as first argument with ':' or call on proper type)",
-					     detail::demangle<T>().c_str());
+					     detail::demangle_consteval<T>().data());
 				}
 				if (p.value() == nullptr) {
 					luaL_error(
-					     L_, "sol: 'self' argument is nil (pass 'self' as first argument with ':' or call on a '%s' type)", detail::demangle<T>().c_str());
+					     L_, "sol: 'self' argument is nil (pass 'self' as first argument with ':' or call on a '%s' type)", detail::demangle_consteval<T>().data());
 				}
 #endif // Safe getting with error
 				return *p.value();
@@ -22998,7 +23038,7 @@ namespace sol {
 			}
 
 			static int find(std::false_type, lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'find' on '%s': no supported comparison operator for the value type", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'find' on '%s': no supported comparison operator for the value type", detail::demangle_consteval<T>().data());
 			}
 
 			static int next_iter(lua_State* L_) {
@@ -23018,19 +23058,19 @@ namespace sol {
 
 		public:
 			static int clear(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'clear' on type '%s': cannot remove all items from a fixed array", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'clear' on type '%s': cannot remove all items from a fixed array", detail::demangle_consteval<T>().data());
 			}
 
 			static int erase(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'erase' on type '%s': cannot remove an item from fixed arrays", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'erase' on type '%s': cannot remove an item from fixed arrays", detail::demangle_consteval<T>().data());
 			}
 
 			static int add(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'add' on type '%s': cannot add to fixed arrays", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'add' on type '%s': cannot add to fixed arrays", detail::demangle_consteval<T>().data());
 			}
 
 			static int insert(lua_State* L_) {
-				return luaL_error(L_, "sol: cannot call 'insert' on type '%s': cannot insert new entries into fixed arrays", detail::demangle<T>().c_str());
+				return luaL_error(L_, "sol: cannot call 'insert' on type '%s': cannot insert new entries into fixed arrays", detail::demangle_consteval<T>().data());
 			}
 
 			static int at(lua_State* L_) {
@@ -23056,10 +23096,10 @@ namespace sol {
 				std::ptrdiff_t idx = stack::unqualified_get<std::ptrdiff_t>(L_, 2);
 				idx += deferred_uc::index_adjustment(L_, self);
 				if (idx >= static_cast<std::ptrdiff_t>(std::extent<T>::value)) {
-					return luaL_error(L_, "sol: index out of bounds (too big) for set on '%s'", detail::demangle<T>().c_str());
+					return luaL_error(L_, "sol: index out of bounds (too big) for set on '%s'", detail::demangle_consteval<T>().data());
 				}
 				if (idx < 0) {
-					return luaL_error(L_, "sol: index out of bounds (too small) for set on '%s'", detail::demangle<T>().c_str());
+					return luaL_error(L_, "sol: index out of bounds (too small) for set on '%s'", detail::demangle_consteval<T>().data());
 				}
 				self[idx] = stack::unqualified_get<value_type>(L_, 3);
 				return 0;
@@ -23691,8 +23731,8 @@ namespace sol {
 
 			// __type table
 			lua_createtable(L, 0, 2);
-			const std::string& name = detail::demangle<T>();
-			lua_pushlstring(L, name.c_str(), name.size());
+			static constexpr auto name = detail::demangle_consteval<T>();
+			lua_pushlstring(L, name.data(), name.size());
 			lua_setfield(L, -2, "name");
 			lua_CFunction is_func = &detail::is_check<T>;
 			lua_pushcclosure(L, is_func, 0);
@@ -24693,7 +24733,7 @@ namespace sol { namespace u_detail {
 
 		// STEP 4: add some useful information to the type table
 		stateless_stack_reference stacked_type_table(L_, -storage.type_table.push(L_));
-		stack::set_field(L_, "name", detail::demangle<T>(), stacked_type_table.stack_index());
+		stack::set_field(L_, "name", detail::demangle_consteval<T>(), stacked_type_table.stack_index());
 		stack::set_field(L_, "is", &detail::is_check<T>, stacked_type_table.stack_index());
 		stacked_type_table.pop(L_);
 
