@@ -23986,11 +23986,11 @@ namespace sol { namespace u_detail {
 	};
 
 
-	template <int boost, void* _cfunc, typename F, typename T = void, bool is_index, bool is_variable>
-	static int binding_index_call_with_common(lua_State* L_, void* target)
+	template <int boost, typename F, typename T = void, bool is_index>
+	static int binding_index_call_with_common(lua_State* L_, void* target, void* _cfunc, bool is_variable)
 	{
 		int (*cfunc)(lua_State* L_) = reinterpret_cast<int (*)(lua_State*)>(_cfunc);
-		if constexpr (!is_variable) {
+		if (!is_variable) {
 			if constexpr (is_lua_c_function_v<std::decay_t<F>>) {
 					auto& f = *static_cast<std::decay_t<F>*>(target);
 					return stack::push(L_, f);
@@ -24005,9 +24005,9 @@ namespace sol { namespace u_detail {
 		} else {
 					auto& f = *static_cast<F*>(target);
 					if constexpr (is_index) {
-						return call_detail::call_wrapped<T, true, is_variable, boost>(L_, f);	
+						return call_detail::call_wrapped<T, true, true, boost>(L_, f);	
 					} else {
-						return call_detail::call_wrapped<T, false, is_variable, boost>(L_, f);
+						return call_detail::call_wrapped<T, false, true, boost>(L_, f);
 					}
 		}
 	}
@@ -24055,7 +24055,7 @@ namespace sol { namespace u_detail {
 		}
 
 		template <bool is_index = true, bool is_variable = false>
-		static inline int (*index_call_with_)(lua_State* L_, void* target) = binding_index_call_with_common<(!detail::is_non_factory_constructor<F>::value && std::is_same<K, call_construction>::value ? 1 : 0), reinterpret_cast<void*>(&call<is_index,is_variable>), F, T, is_index, is_variable>;
+		static inline int (*index_call_with_)(lua_State* L_, void* target) = [](lua_State* L_, void* target){ return binding_index_call_with_common<(!detail::is_non_factory_constructor<F>::value && std::is_same<K, call_construction>::value ? 1 : 0), F, T, is_index>(L_, target, reinterpret_cast<void*>(&call<is_index,is_variable>), is_variable); };
 
 
 		template <bool is_index = true, bool is_variable = false>
