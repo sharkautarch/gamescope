@@ -9360,58 +9360,75 @@ namespace sol {
 		}
 		static consteval const std::string_view metatable() {
 			constexpr auto m_size = []() {
-				return 4 + detail::demangle_consteval<T>().size();
+				std::array<char, 4> tmp{'s','o','l','.'};
+				return tmp.size() + detail::demangle_consteval<T>().size();
 			};
 			constexpr auto m = []() { 
 				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
-				std::array<char, 4+sv_size> result = {"sol."};
+				std::array<char, 4+sv_size> result{};
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::ranges::copy_n(tmp.begin(), tmp.size(), result.begin());
 				
-				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+tmp.size());
 				return result;
 			};
 			return detail::to_string_view(m_size, m);
 		}
 		static consteval const std::string_view user_metatable() {
 			constexpr auto u_m_size = []() {
-				return 10 + detail::demangle_consteval<T>().size();
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 7> user{'.','u','s','e','r', '\0'};
+				return tmp.size() + user.size() + detail::demangle_consteval<T>().size()-1;
 			};
 			constexpr auto u_m = []() { 
 				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
-				std::array<char, 10+sv_size> result = {"sol."};
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 7> user{'.','u','s','e','r', '\0'};
+				std::array<char, tmp.size()+user.size()+sv_size-1> result{};
+				std::ranges::copy_n(tmp.begin(), tmp.size(), result.begin());
 				
-				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
-				constexpr std::array<char, 6> user = {".user"};
-				std::ranges::copy_n(user.begin(), 6, result.begin()+4+sv_size);
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size-1, result.begin()+tmp.size());
+				
+				std::ranges::copy_n(user.begin(), user.size(), result.begin()+tmp.size()+sv_size-1);
 				return result;
 			};
 			return detail::to_string_view(u_m_size, u_m);
 		}
 		static consteval const std::string_view user_gc_metatable() {
 			constexpr auto u_g_m_size = []() {
-				return 13 + detail::demangle_consteval<T>().size();
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 9> user{'.','u','s','e','r','\xE2','\x99','\xBB','\0'};
+				return tmp.size() + user.size() + detail::demangle_consteval<T>().size()-1;
 			};
 			constexpr auto u_g_m = []() { 
 				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
-				std::array<char, 13+sv_size> result = {"sol."};
+
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 9> user{'.','u','s','e','r','\xE2','\x99','\xBB','\0'};
+				std::array<char, tmp.size()+user.size()+sv_size-1> result{};
+				std::ranges::copy_n(tmp.begin(), tmp.size(), result.begin());
 				
-				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
-				constexpr std::array<char, 9> thing = {".user\xE2\x99\xBB"};
-				std::ranges::copy_n(thing.begin(), 9, result.begin()+4+sv_size);
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size-1, result.begin()+tmp.size());
+				std::ranges::copy_n(user.begin(), user.size(), result.begin()+tmp.size()+sv_size-1);
 				return result;
 			};
 			return detail::to_string_view(u_g_m_size, u_g_m);
 		}
 		static consteval const std::string_view gc_table() {
 			constexpr auto g_t_size = []() {
-				return 9 + detail::demangle_consteval<T>().size();
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 5> thing{'.','\xE2','\x99','\xBB','\0'};
+				return tmp.size() + thing.size() + detail::demangle_consteval<T>().size()-1;
 			};
 			constexpr auto g_t = []() { 
 				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
-				std::array<char, 9+sv_size> result = {"sol."};
+				std::array<char, 4> tmp{'s','o','l','.'};
+				std::array<char, 5> thing{'.','\xE2','\x99','\xBB','\0'};
+				std::array<char, tmp.size()+thing.size()+sv_size-1> result{};
+				std::ranges::copy_n(tmp.begin(), tmp.size(), result.begin());
 				
-				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
-				constexpr std::array<char, 5> thing = {".\xE2\x99\xBB"};
-				std::ranges::copy_n(thing.begin(), 5, result.begin()+4+sv_size);
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+tmp.size());
+				std::ranges::copy_n(thing.begin(), thing.size(), result.begin()+tmp.size()+sv_size-1);
 				return result;
 			};
 			
