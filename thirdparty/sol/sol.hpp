@@ -1126,27 +1126,29 @@
 #include <type_traits>
 #include <string_view>
 #include <array>
+#include <algorithm>
 namespace sol::detail {
 		//the constexpr helpers are based on the stuff from this video: https://www.youtube.com/watch?v=ABg4_EV5L3w
 	struct oversized_array
 	{
-		std::array<char, 10*1024*1024> data{};
+		std::array<char, 1024*1024> data{};
 		std::size_t size;
 	};
 	consteval auto to_oversized_array(const std::string &str)
 	{
 		oversized_array result;
-		std::copy(str.begin(), str.end(), result.data.begin());
+		size_t size = str.size();
+		std::ranges::copy_n(str.begin(), size, result.data.begin());
 		result.size = str.size();
 		return result;
 	}
 	
-	consteval auto to_oversized_array(const char* str)
+	consteval auto to_oversized_array(char str[])
 	{
 		oversized_array result;
 		size_t size = 0;
 		char c = 0;
-		while ( (c=str[size]) != 0 ) {
+		while ( (c=str[size]) != '\0' ) {
 			result.data[size++] = c;
 		}
 		result.size = size;
@@ -9288,13 +9290,13 @@ namespace sol { namespace detail {
 		//the constexpr helpers are based on the stuff from this video: https://www.youtube.com/watch?v=ABg4_EV5L3w
 	struct oversized_array_u8
 	{
-		std::array<char8_t, 10*1024*1024> data{};
+		std::array<char8_t, 1024*1024> data{};
 		std::size_t size;
 	};
 	consteval auto to_oversized_array_u8(const std::u8string &str)
 	{
 		oversized_array_u8 result;
-		std::copy(str.begin(), str.end(), result.data.begin());
+		std::ranges::copy_n(str.begin(), str.size(), result.data.begin());
 		result.size = str.size();
 		return result;
 	}
@@ -9593,7 +9595,7 @@ namespace sol {
 	namespace detail {
 
 		static consteval const std::string_view base_class_check_key() {
-			constexpr auto key = []() { return "class_check"; };
+			constexpr auto key = []() consteval { return "class_check"; };
 			return to_string_view(key);
 		}
 
@@ -10395,7 +10397,7 @@ namespace sol {
 	}
 
 	namespace detail {
-		[[no_unique_address]] struct no_safety_tag {
+		struct no_safety_tag {
 		} inline constexpr no_safety {};
 
 		template <bool b>
@@ -11082,7 +11084,7 @@ namespace sol {
 		}
 
 		template <typename T>
-		constexpr void set(std::true_type, T&& target) {
+		void set(std::true_type, T&& target) {
 			typedef tie_size<meta::unqualified_t<T>> value_size;
 			typedef tie_size<std::tuple<Tn...>> tie_size;
 			typedef meta::conditional_t<(value_size::value < tie_size::value), value_size, tie_size> indices_size;
@@ -24512,7 +24514,7 @@ namespace sol { namespace u_detail {
 		}
 
 		template <typename T = void, typename Key, typename Value>
-		constexpr void set(lua_State* L, Key&& key, Value&& value);
+		void set(lua_State* L, Key&& key, Value&& value);
 
 		static int new_index_target_set(lua_State* L, void* target) {
 			usertype_storage_base& self = *static_cast<usertype_storage_base*>(target);
@@ -24591,7 +24593,7 @@ namespace sol { namespace u_detail {
 	};
 
 	template <typename T, typename Key, typename Value>
-	constexpr void usertype_storage_base::set(lua_State* L, Key&& key, Value&& value) {
+	void usertype_storage_base::set(lua_State* L, Key&& key, Value&& value) {
 		using ValueU = meta::unwrap_unqualified_t<Value>;
 		using KeyU = meta::unwrap_unqualified_t<Key>;
 		using Binding = binding<KeyU, ValueU, T>;

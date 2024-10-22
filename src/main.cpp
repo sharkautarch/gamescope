@@ -214,7 +214,7 @@ pthread_t g_mainThread;
 static void steamCompMgrThreadRun(int argc, char **argv);
 	struct oversized_array
 	{
-		std::array<char, 10*1024*1024> data{};
+		std::array<char, 1024*1024> data{};
 		std::size_t size;
 	};
 	consteval auto to_oversized_array(const std::string &str)
