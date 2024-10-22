@@ -52,105 +52,6 @@ const char *g_pOriginalWaylandDisplay = nullptr;
 
 int g_nCursorScaleHeight = -1;
 
-const struct option *gamescope_options = (struct option[]){
-	{ "help", no_argument, nullptr, 0 },
-	{ "version", no_argument, nullptr, 0 },
-	{ "nested-width", required_argument, nullptr, 'w' },
-	{ "nested-height", required_argument, nullptr, 'h' },
-	{ "nested-refresh", required_argument, nullptr, 'r' },
-	{ "max-scale", required_argument, nullptr, 'm' },
-	{ "scaler", required_argument, nullptr, 'S' },
-	{ "filter", required_argument, nullptr, 'F' },
-	{ "output-width", required_argument, nullptr, 'W' },
-	{ "output-height", required_argument, nullptr, 'H' },
-	{ "sharpness", required_argument, nullptr, 0 },
-	{ "fsr-sharpness", required_argument, nullptr, 0 },
-	{ "rt", no_argument, nullptr, 0 },
-	{ "prefer-vk-device", required_argument, 0 },
-	{ "expose-wayland", no_argument, 0 },
-	{ "mouse-sensitivity", required_argument, nullptr, 's' },
-	{ "mangoapp", no_argument, nullptr, 0 },
-	{ "pass-fds-to-child", required_argument, nullptr, 0 },
-
-	{ "backend", required_argument, nullptr, 0 },
-
-	// nested mode options
-	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
-	{ "borderless", no_argument, nullptr, 'b' },
-	{ "fullscreen", no_argument, nullptr, 'f' },
-	{ "grab", no_argument, nullptr, 'g' },
-	{ "force-grab-cursor", no_argument, nullptr, 0 },
-	{ "display-index", required_argument, nullptr, 0 },
-
-	// embedded mode options
-	{ "disable-layers", no_argument, nullptr, 0 },
-	{ "debug-layers", no_argument, nullptr, 0 },
-	{ "prefer-output", required_argument, nullptr, 'O' },
-	{ "default-touch-mode", required_argument, nullptr, 0 },
-	{ "generate-drm-mode", required_argument, nullptr, 0 },
-	{ "immediate-flips", no_argument, nullptr, 0 },
-	{ "adaptive-sync", no_argument, nullptr, 0 },
-	{ "framerate-limit", required_argument, nullptr, 0 },
-
-	// openvr options
-#if HAVE_OPENVR
-	{ "vr-overlay-key", required_argument, nullptr, 0 },
-	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
-	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
-	{ "vr-overlay-icon", required_argument, nullptr, 0 },
-	{ "vr-overlay-show-immediately", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar-keyboard", no_argument, nullptr, 0 },
-	{ "vr-overlay-enable-control-bar-close", no_argument, nullptr, 0 },
-	{ "vr-overlay-modal", no_argument, nullptr, 0 },
-	{ "vr-overlay-physical-width", required_argument, nullptr, 0 },
-	{ "vr-overlay-physical-curvature", required_argument, nullptr, 0 },
-	{ "vr-overlay-physical-pre-curve-pitch", required_argument, nullptr, 0 },
-	{ "vr-scroll-speed", required_argument, nullptr, 0 },
-#endif
-
-	// wlserver options
-	{ "xwayland-count", required_argument, nullptr, 0 },
-
-	// steamcompmgr options
-	{ "cursor", required_argument, nullptr, 0 },
-	{ "cursor-hotspot", required_argument, nullptr, 0 },
-	{ "cursor-scale-height", required_argument, nullptr, 0 },
-	{ "ready-fd", required_argument, nullptr, 'R' },
-	{ "stats-path", required_argument, nullptr, 'T' },
-	{ "hide-cursor-delay", required_argument, nullptr, 'C' },
-	{ "debug-focus", no_argument, nullptr, 0 },
-	{ "synchronous-x11", no_argument, nullptr, 0 },
-	{ "debug-hud", no_argument, nullptr, 'v' },
-	{ "debug-events", no_argument, nullptr, 0 },
-	{ "steam", no_argument, nullptr, 'e' },
-	{ "force-composition", no_argument, nullptr, 'c' },
-	{ "composite-debug", no_argument, nullptr, 0 },
-	{ "disable-xres", no_argument, nullptr, 'x' },
-	{ "fade-out-duration", required_argument, nullptr, 0 },
-	{ "force-orientation", required_argument, nullptr, 0 },
-	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
-
-	{ "disable-color-management", no_argument, nullptr, 0 },
-	{ "sdr-gamut-wideness", required_argument, nullptr, 0 },
-	{ "hdr-enabled", no_argument, nullptr, 0 },
-	{ "hdr-sdr-content-nits", required_argument, nullptr, 0 },
-	{ "hdr-itm-enabled", no_argument, nullptr, 0 },
-	{ "hdr-itm-sdr-nits", required_argument, nullptr, 0 },
-	{ "hdr-itm-target-nits", required_argument, nullptr, 0 },
-	{ "hdr-debug-force-support", no_argument, nullptr, 0 },
-	{ "hdr-debug-force-output", no_argument, nullptr, 0 },
-	{ "hdr-debug-heatmap", no_argument, nullptr, 0 },
-
-	{ "reshade-effect", required_argument, nullptr, 0 },
-	{ "reshade-technique-idx", required_argument, nullptr, 0 },
-
-	// Steam Deck options
-	{ "mura-map", required_argument, nullptr, 0 },
-
-	{} // keep last
-};
-
 const char usage[] =
 	"usage: gamescope [options...] -- [command...]\n"
 	"\n"
@@ -311,23 +212,72 @@ uint32_t g_preferDeviceID = 0;
 pthread_t g_mainThread;
 
 static void steamCompMgrThreadRun(int argc, char **argv);
-
-static std::string build_optstring(const struct option *options)
-{
-	std::string optstring;
-	for (size_t i = 0; options[i].name != nullptr; i++) {
-		if (!options[i].name || !options[i].val)
-			continue;
-
-		assert(optstring.find((char) options[i].val) == std::string::npos);
-
-		char str[] = { (char) options[i].val, '\0' };
-		optstring.append(str);
-
-		if (options[i].has_arg)
-			optstring.append(":");
+	struct oversized_array
+	{
+		std::array<char, 10*1024*1024> data{};
+		std::size_t size;
+	};
+	consteval auto to_oversized_array(const std::string &str)
+	{
+		oversized_array result;
+		std::copy(str.begin(), str.end(), result.data.begin());
+		result.size = str.size();
+		return result;
 	}
-	return optstring;
+	
+	consteval auto to_oversized_array(const struct option options[])
+	{
+		oversized_array result{.size=0};
+		for (size_t i = 0; options[i].name != nullptr; i++) {
+			if (!options[i].name || !options[i].val)
+				continue;
+
+
+			if (std::find(result.data.begin(), result.data.begin()+result.size, (char) options[i].val) != result.data.begin()+result.size) {
+				return oversized_array{.data={},.size=0};
+			}
+
+			char str[] = { (char) options[i].val, '\0' };
+			size_t j = 0;
+			char c = 0;
+			while ( (c = str[j]) != '\0' ) {
+				result.data[result.size+j] = c;
+				//result.size;
+				j++;
+			}
+			result.size += j;
+
+			if (options[i].has_arg) {
+				result.data[result.size++] = ':';
+			}
+		}
+		result.data[result.size++] = '\0';
+		
+		return result;
+	}
+	consteval auto to_right_sized_array(auto callable)
+	{
+		constexpr auto oversized = to_oversized_array(callable());
+		std::array<char, oversized.size> result;
+		std::copy(oversized.data.begin(), std::next(oversized.data.begin(), oversized.size), result.begin());
+		return result;
+	}
+	template <auto Data>
+	consteval const auto &make_static() {
+		return Data;
+	}
+	consteval auto to_string_view(auto callable) -> std::string_view {
+		auto &static_data = make_static<to_right_sized_array(callable)>();
+		std::string_view sv{static_data.begin(), static_data.size()};
+		return sv;
+	}
+static constexpr std::optional<std::string_view> build_optstring(auto callable)
+{
+	if (to_string_view(callable).size() == 0) {
+		return std::nullopt;
+	} else {
+		return to_string_view(callable);
+	}
 }
 
 static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const char *str )
@@ -655,7 +605,6 @@ bool g_bRt = false;
 // For now...
 int g_argc;
 char **g_argv;
-
 int main(int argc, char **argv)
 {
 	g_argc = argc;
@@ -664,8 +613,10 @@ int main(int argc, char **argv)
 	// Force disable this horrible broken layer.
 	setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 1);
 
-	static std::string optstring = build_optstring(gamescope_options);
-	gamescope_optstring = optstring.c_str();
+	static constexpr std::optional<std::string_view> oOptstring = build_optstring([](){return gamescope_options; });
+	static_assert(!!oOptstring);
+	
+	gamescope_optstring = oOptstring->data();
 
 	gamescope::GamescopeBackend eCurrentBackend = gamescope::GamescopeBackend::Auto;
 

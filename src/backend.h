@@ -104,9 +104,9 @@ namespace gamescope
             displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
             displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const = 0;
 
-        virtual const char *GetName() const = 0;
-        virtual const char *GetMake() const = 0;
-        virtual const char *GetModel() const = 0;
+        constexpr virtual const char *GetName() const = 0;
+        constexpr virtual const char *GetMake() const = 0;
+        constexpr virtual const char *GetModel() const = 0;
     };
 
     class INestedHints
@@ -175,8 +175,10 @@ namespace gamescope
     {
     public:
     		void* operator new(size_t size);
-    		//void operator delete(void* ptr) = delete; 
-        virtual ~IBackend() = 0;
+    		constexpr void  operator delete(void*) {
+    			//calling delete on IBackend is a no-op (IBackend memory is deallocated in SetBackend when it calls ReplaceBackend())
+    		}
+        constexpr virtual ~IBackend() noexcept {}
 
         virtual bool Init() = 0;
         virtual bool PostInit() = 0;

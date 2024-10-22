@@ -24,7 +24,6 @@ namespace gamescope
         return s_pBackend.load();
     }
     
-    IBackend::~IBackend() {}
 		
 		///////////////////////////////////////////
 		//	IBackend Internal Book-keeping bits: //
@@ -33,7 +32,6 @@ namespace gamescope
 		static inline gamescope::CHeadlessBackend* s_pHeadless = nullptr;
 		static inline size_t s_backendOffset = 0;
 		static inline IBackend *s_pOldBackend = nullptr; //for internal book-keeping only
-		static inline std::allocator<IBackend> defaultAllocator{};
     
     
     //order of usage (B<num> Backend obj):
@@ -42,7 +40,7 @@ namespace gamescope
 			printf("operator new()\n");
 			AcquireExclusive();
 			s_currentBackendSize = size;
-			auto* ptr = defaultAllocator.allocate(size*2); //always allocate enough space for both the actual class and a headless backend
+			auto* ptr = malloc(size*2); //always allocate enough space for both the actual class and a headless backend
 			auto* pChars = std::bit_cast<unsigned char*>(ptr);
 			auto* pHeadlessAddr = std::bit_cast<gamescope::CHeadlessBackend*>(pChars + size);
 			s_pHeadless = std::construct_at(pHeadlessAddr);
@@ -91,7 +89,7 @@ namespace gamescope
 		  { //delete the old backend for realsies
 				assert(oldBackendSize > 0);
 				s_pHeadless=nullptr;
-				defaultAllocator.deallocate(pOld, oldBackendSize*2); //invoking the *global* deleter (deletes backend & dummy headless backend block)
+				free(reinterpret_cast<void*>(pOld)); //invoking the *global* deleter (deletes backend & dummy headless backend block)
 			}
 		} 
 		

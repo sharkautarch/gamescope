@@ -76,15 +76,15 @@ namespace gamescope
 			*outputEncodingEOTF = EOTF_Gamma22;
         }
 
-        virtual const char *GetName() const override
+        constexpr virtual const char *GetName() const override
         {
             return "Headless";
         }
-        virtual const char *GetMake() const override
+        constexpr virtual const char *GetMake() const override
         {
             return "Gamescope";
         }
-        virtual const char *GetModel() const override
+        constexpr virtual const char *GetModel() const override
         {
             return "Virtual Display";
         }

@@ -87,18 +87,18 @@ namespace gamescope
             displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
             displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
 
-        virtual const char *GetName() const override
-		{
-			return "SDLWindow";
-		}
-        virtual const char *GetMake() const override
-		{
-			return "Gamescope";
-		}
-        virtual const char *GetModel() const override
-		{
-			return "Virtual Display";
-		}
+        constexpr virtual const char *GetName() const override
+				{
+					return "SDLWindow";
+				}
+        constexpr virtual const char *GetMake() const override
+				{
+					return "Gamescope";
+				}
+        constexpr virtual const char *GetModel() const override
+				{
+					return "Virtual Display";
+				}
 
 		//--
 

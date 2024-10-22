@@ -113,15 +113,15 @@ namespace gamescope
             displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
             displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
 
-        virtual const char *GetName() const override
+        constexpr virtual const char *GetName() const override
         {
             return "Wayland";
         }
-        virtual const char *GetMake() const override
+        constexpr virtual const char *GetMake() const override
         {
             return "Gamescope";
         }
-        virtual const char *GetModel() const override
+        constexpr virtual const char *GetModel() const override
         {
             return "Virtual Display";
         }

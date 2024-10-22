@@ -284,9 +284,9 @@ namespace gamescope
 		const ConnectorProperties &GetProperties() const { return m_Props; }
 
 		drmModeConnector *GetModeConnector() { return m_pConnector.get(); }
-		const char *GetName() const override { return m_Mutable.szName; }
-		const char *GetMake() const override { return m_Mutable.pszMake; }
-		const char *GetModel() const override { return m_Mutable.szModel; }
+		constexpr const char *GetName() const override { return m_Mutable.szName; }
+		constexpr const char *GetMake() const override { return m_Mutable.pszMake; }
+		constexpr const char *GetModel() const override { return m_Mutable.szModel; }
 		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
 		std::span<const uint32_t> GetValidDynamicRefreshRates() const override { return m_Mutable.ValidDynamicRefreshRates; }
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
