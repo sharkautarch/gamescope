@@ -70,7 +70,7 @@ namespace gamescope
         std::atomic<bool> m_bArmed = { false };
         std::atomic<bool> m_bRunning = { true };
 
-        alignas(16) std::optional<VBlankTime> m_PendingVBlank;
+        std::optional<VBlankTime> m_PendingVBlank;
 
         // Should have 0 contest, but just to be safe.
         // This also covers setting of m_bArmed, etc

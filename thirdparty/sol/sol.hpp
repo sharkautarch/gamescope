@@ -23832,8 +23832,12 @@ namespace sol {
 				return val;
 			} else {
 				using string_view_struct = make_string_view<decltype(val), decltype(fn)>;
-				std::string s = string_view_struct::call(fn);
-				return std::string(s.data(), s.size());
+				auto s = string_view_struct::call(fn);
+				if constexpr (std::is_same_v<decltype(s), const char*>) {
+					return std::string(s);
+				} else {
+					return std::string(s.data(), s.size());
+				}
 			}
 		}
 
@@ -24692,7 +24696,7 @@ namespace sol { namespace u_detail {
 			this->update_bases<T>(L, std::forward<Value>(value));
 		}
 		else if constexpr ((meta::is_string_like_or_constructible<KeyU>::value || std::is_same_v<KeyU, meta_function>)) {
-			std::string s = make_string([key](){return key;});
+			std::string s = make_string([_key=key](){return _key;});
 			auto storage_it = this->storage.end();
 			auto string_it = this->string_keys.find(s);
 			if (string_it != this->string_keys.cend()) {

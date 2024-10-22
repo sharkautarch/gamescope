@@ -1164,8 +1164,8 @@ public:
 	inline auto& m_getUseSrgb() { return m_textureBlock.useSrgb; }
 	
 	CVulkanTexture** __attribute__((pure)) getShaperLut(uint32_t i) {
-		if (i < EOTF_Count) {
-			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_shaperLut.data())[i]);
+		if (i < VKR_LUT3D_COUNT) {
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_shaperLut.data())[i]);
 			return ptr;
 		} else {
 			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
@@ -1173,8 +1173,8 @@ public:
 		}
 	}
 	CVulkanTexture** __attribute__((pure)) getLut3D(uint32_t i) {
-		if (i < EOTF_Count) {
-			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<32>(m_lut3D.data())[i]);
+		if (i < VKR_LUT3D_COUNT) {
+			CVulkanTexture** __restrict__ ptr = &(std::assume_aligned<16>(m_lut3D.data())[i]);
 			return ptr;
 		} else {
 			CVulkanTexture** __restrict__ ptr = static_cast<CVulkanTexture**__restrict__>(nullptr);
