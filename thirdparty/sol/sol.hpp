@@ -1134,6 +1134,7 @@ namespace sol::detail {
 		std::array<char, 1024*1024> data{};
 		std::size_t size;
 	};
+	
 	consteval auto to_oversized_array(const std::string &str)
 	{
 		oversized_array result;
@@ -1167,6 +1168,18 @@ namespace sol::detail {
 	}
 	consteval auto to_string_view(auto callable) -> std::string_view {
 		auto &static_data = make_static<to_right_sized_array(callable)>();
+		std::string_view sv{static_data.begin(), static_data.size()};
+		return sv;
+	}
+	
+	consteval auto to_right_sized_array(auto callableArrSize, auto callableArr)
+	{
+		std::array<char, callableArrSize()> result = callableArr();
+		return result;
+	}
+	
+	consteval auto to_string_view(auto callableArrSize, auto callableArr) -> std::string_view {
+		auto &static_data = make_static<to_right_sized_array(callableArrSize, callableArr)>();
 		std::string_view sv{static_data.begin(), static_data.size()};
 		return sv;
 	}
@@ -9346,21 +9359,63 @@ namespace sol {
 			return detail::demangle_consteval<T>();
 		}
 		static consteval const std::string_view metatable() {
-			constexpr auto m = []() { return std::string("sol.").append(detail::demangle_consteval<T>()); };
-			return detail::to_string_view(m);
+			constexpr auto m_size = []() {
+				return 4 + detail::demangle_consteval<T>().size();
+			};
+			constexpr auto m = []() { 
+				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
+				std::array<char, 4+sv_size> result = {"sol."};
+				
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
+				return result;
+			};
+			return detail::to_string_view(m_size, m);
 		}
 		static consteval const std::string_view user_metatable() {
-			constexpr auto u_m = []() { return std::string("sol.").append(detail::demangle_consteval<T>())+(".user"); };
-			return detail::to_string_view(u_m);
+			constexpr auto u_m_size = []() {
+				return 10 + detail::demangle_consteval<T>().size();
+			};
+			constexpr auto u_m = []() { 
+				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
+				std::array<char, 10+sv_size> result = {"sol."};
+				
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
+				constexpr std::array<char, 6> user = {".user"};
+				std::ranges::copy_n(user.begin(), 6, result.begin()+4+sv_size);
+				return result;
+			};
+			return detail::to_string_view(u_m_size, u_m);
 		}
 		static consteval const std::string_view user_gc_metatable() {
-			constexpr auto u_g_m = []() { return std::string("sol.").append(detail::demangle_consteval<T>()).append(".user\xE2\x99\xBB"); };
-			return detail::to_string_view(u_g_m);
+			constexpr auto u_g_m_size = []() {
+				return 13 + detail::demangle_consteval<T>().size();
+			};
+			constexpr auto u_g_m = []() { 
+				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
+				std::array<char, 13+sv_size> result = {"sol."};
+				
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
+				constexpr std::array<char, 9> thing = {".user\xE2\x99\xBB"};
+				std::ranges::copy_n(thing.begin(), 9, result.begin()+4+sv_size);
+				return result;
+			};
+			return detail::to_string_view(u_g_m_size, u_g_m);
 		}
 		static consteval const std::string_view gc_table() {
-			constexpr auto g_t = []() { return std::string("sol.").append(detail::demangle_consteval<T>()).append(".\xE2\x99\xBB"); };
+			constexpr auto g_t_size = []() {
+				return 9 + detail::demangle_consteval<T>().size();
+			};
+			constexpr auto g_t = []() { 
+				constexpr size_t sv_size = detail::demangle_consteval<T>().size();
+				std::array<char, 9+sv_size> result = {"sol."};
+				
+				std::ranges::copy_n(detail::demangle_consteval<T>().data(), sv_size, result.begin()+4);
+				constexpr std::array<char, 5> thing = {".\xE2\x99\xBB"};
+				std::ranges::copy_n(thing.begin(), 5, result.begin()+4+sv_size);
+				return result;
+			};
 			
-			return detail::to_string_view(g_t);
+			return detail::to_string_view(g_t_size, g_t);
 		}
 	};
 
