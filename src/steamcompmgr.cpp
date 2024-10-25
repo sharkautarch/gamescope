@@ -5896,7 +5896,7 @@ error(Display *dpy, XErrorEvent *ev)
 }
 
 [[noreturn]] static void
-steamcompmgr_exit(void)
+steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
 	g_ImageWaiter.Shutdown();
 
@@ -5936,7 +5936,9 @@ steamcompmgr_exit(void)
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
-
+	
+	if (lock)
+		lock->unlock();
 	pthread_exit(NULL);
 }
 
@@ -8042,7 +8044,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit();
+	steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> {std::in_place_t{}, std::move(xwayland_server_guard)} );
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()

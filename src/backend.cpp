@@ -1,4 +1,5 @@
 #include "backend.h"
+#include "Backends/HeadlessBackend.hpp"
 #include "vblankmanager.hpp"
 #include "convar.h"
 #include "wlserver.hpp"
@@ -16,34 +17,61 @@ namespace gamescope
     // IBackend
     /////////////
 
-    static IBackend *s_pBackend = nullptr;
+    static std::atomic<IBackend*> s_pBackend = nullptr;
 
     IBackend *IBackend::Get()
     {
         return s_pBackend;
     }
 
+    
+    static void ReplaceBackend(IBackend* pNewBackend);
+    
     bool IBackend::Set( IBackend *pBackend )
     {
         if ( s_pBackend )
         {
-            delete s_pBackend;
-            s_pBackend = nullptr;
+            GetBackend()->DestroyBackend(); //we're intentionally *not* setting s_pBackend to nullptr after deletion.
+            //the DestroyBackend() method ensures that 
+            //IBackend::Get will still point to a safe memory region (a CHeadlessBackend object) after it is run
         }
 
         if ( pBackend )
         {
-            s_pBackend = pBackend;
-            if ( !s_pBackend->Init() )
+            ReplaceBackend(pBackend);
+            if ( !GetBackend()->Init() )
             {
-                delete s_pBackend;
-                s_pBackend = nullptr;
+                pBackend->DestroyBackend();
                 return false;
             }
         }
 
         return true;
     }
+    
+    static inline IBackend *s_pOldBackend = nullptr; //for internal book-keeping only
+    
+    void IBackend::DestroyBackend() {
+      assert(s_pOldBackend == nullptr);
+      s_pBackend = new CHeadlessBackend{};
+      s_pOldBackend = this;
+      this->~IBackend(); //manually call the backend's destructor, without deallocating the memory
+    }
+    
+    static void ReplaceBackend(IBackend* pNewBackend) 
+    {
+      if (s_pBackend) {
+        ::operator delete(s_pBackend);
+      }
+
+      s_pBackend = pNewBackend;
+      if (auto* pOld = std::exchange(s_pOldBackend, nullptr);
+           pOld != nullptr)
+      { //delete the old backend for realsies
+        ::operator delete(pOld);
+      }
+    }
+
 
     /////////////////
     // CBaseBackendFb

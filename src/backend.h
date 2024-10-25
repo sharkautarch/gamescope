@@ -170,7 +170,7 @@ namespace gamescope
         wlr_buffer *m_pClientBuffer = nullptr;
         std::shared_ptr<CReleaseTimelinePoint> m_pReleasePoint;
     };
-
+    
     class IBackend
     {
     public:
@@ -206,6 +206,7 @@ namespace gamescope
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+        
         inline bool SupportsFormat( uint32_t uDrmFormat ) const
         {
             return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
@@ -263,6 +264,8 @@ namespace gamescope
 
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) = 0;
     private:
+        
+        void DestroyBackend();
     };
 
 
@@ -348,4 +351,3 @@ inline gamescope::IBackend *GetBackend()
 {
     return gamescope::IBackend::Get();
 }
-
