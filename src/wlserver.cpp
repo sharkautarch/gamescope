@@ -19,6 +19,7 @@
 #include "WaylandServer/WaylandResource.h"
 #include "WaylandServer/WaylandProtocol.h"
 #include "WaylandServer/LinuxDrmSyncobj.h"
+#include "WaylandServer/Reshade.h"
 
 #include "wlr_begin.hpp"
 #include <wlr/backend.h>
@@ -121,7 +122,7 @@ std::vector<ResListEntry_t>& gamescope_xwayland_server_t::retrieve_commits()
 	return commits;
 }
 
-gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false );
+gamescope::ConVar<bool> cv_drm_debug_syncobj_force_wait_on_commit( "drm_debug_syncobj_force_wait_on_commit", false, "Force a wait on DRM sync objects before committing buffers" );
 
 std::optional<ResListEntry_t> PrepareCommit( struct wlr_surface *surf, struct wlr_buffer *buf )
 {
@@ -1153,11 +1154,14 @@ static const struct gamescope_private_interface gamescope_private_impl = {
 static void gamescope_private_bind( struct wl_client *client, void *data, uint32_t version, uint32_t id )
 {
 	struct wl_resource *resource = wl_resource_create( client, &gamescope_private_interface, version, id );
-	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ]( LogPriority ePriority, std::string_view psvScope, const char *pText )
+	console_log.m_LoggingListeners[(uintptr_t)resource] = [ resource ]( LogPriority ePriority, std::string_view psvScope, std::string_view psvText )
 	{
 		if ( !wlserver_is_lock_held() )
 			return;
-		gamescope_private_send_log( resource, pText );
+		
+		// Can't send a length with string on Wayland api currently... :(
+		std::string sText = std::string{ psvText };
+		gamescope_private_send_log( resource, sText.c_str() );
 	};
 	wl_resource_set_implementation( resource, &gamescope_private_impl, NULL,
 		[](struct wl_resource *resource)
@@ -1176,6 +1180,11 @@ static void create_gamescope_private( void )
 static void create_explicit_sync()
 {
 	new gamescope::WaylandServer::CLinuxDrmSyncobj( wlserver.display );
+}
+
+static void create_reshade()
+{
+	new gamescope::WaylandServer::CReshade( wlserver.display );
 }
 
 
@@ -1736,6 +1745,8 @@ bool wlserver_init( void ) {
 	wl_signal_add( &wlserver.wlr.compositor->events.new_surface, &new_surface_listener );
 
 	create_ime_manager( &wlserver );
+
+	create_reshade();
 
 	create_gamescope_xwayland();
 

@@ -1,3 +1,5 @@
+#include "Script/Script.h"
+
 #include <X11/Xlib.h>
 
 #include <cstdio>
@@ -132,7 +134,7 @@ const struct option *gamescope_options = (struct option[]){
 	{ "sdr-gamut-wideness", required_argument, nullptr, 0 },
 	{ "hdr-enabled", no_argument, nullptr, 0 },
 	{ "hdr-sdr-content-nits", required_argument, nullptr, 0 },
-	{ "hdr-itm-enable", no_argument, nullptr, 0 },
+	{ "hdr-itm-enabled", no_argument, nullptr, 0 },
 	{ "hdr-itm-sdr-nits", required_argument, nullptr, 0 },
 	{ "hdr-itm-target-nits", required_argument, nullptr, 0 },
 	{ "hdr-debug-force-support", no_argument, nullptr, 0 },
@@ -194,7 +196,7 @@ const char usage[] =
 	"                                 If this is not set, and there is a HDR client, it will be tonemapped SDR.\n"
 	"  --sdr-gamut-wideness           Set the 'wideness' of the gamut for SDR comment. 0 - 1.\n"
 	"  --hdr-sdr-content-nits         set the luminance of SDR content in nits. Default: 400 nits.\n"
-	"  --hdr-itm-enable               enable SDR->HDR inverse tone mapping. only works for SDR input.\n"
+	"  --hdr-itm-enabled              enable SDR->HDR inverse tone mapping. only works for SDR input.\n"
 	"  --hdr-itm-sdr-nits             set the luminance of SDR content in nits used as the input for the inverse tone mapping process.\n"
 	"                                 Default: 100 nits, Max: 1000 nits\n"
 	"  --hdr-itm-target-nits          set the target luminace of the inverse tone mapping process.\n"
@@ -609,9 +611,6 @@ static void UpdateCompatEnvVars()
 	// Don't minimise stuff on focus loss with SDL.
 	setenv( "SDL_VIDEO_MINIMIZE_ON_FOCUS_LOSS", "0", 1 );
 
-	// A sane default here.
-	setenv( "GAMESCOPE_NV12_COLORSPACE", "k_EStreamColorspace_BT601", 0 );
-
 	const char *pszMangoConfigPath = getenv( "MANGOHUD_CONFIGFILE" );
 	if ( (g_bLaunchMangoapp && steamMode) && ( !pszMangoConfigPath || !*pszMangoConfigPath ) )
 	{
@@ -806,6 +805,11 @@ int main(int argc, char **argv)
 	if ( gpuvis_trace_init() != -1 )
 	{
 		fprintf( stderr, "Tracing is enabled\n");
+	}
+
+	{
+		gamescope::CScriptScopedLock script;
+		script.Manager().RunDefaultScripts();
 	}
 
 	XInitThreads();

@@ -5,6 +5,7 @@
 #include <atomic>
 #include <stdint.h>
 #include <memory>
+#include <map>
 #include <unordered_map>
 #include <array>
 #include <bitset>
@@ -508,8 +509,8 @@ struct VulkanOutput_t
 	std::vector<gamescope::OwningRc<CVulkanTexture>> outputImagesPartialOverlay;
 	gamescope::OwningRc<CVulkanTexture> temporaryHackyBlankImage;
 
-	VkFormat outputFormat = VK_FORMAT_UNDEFINED;
-	VkFormat outputFormatOverlay = VK_FORMAT_UNDEFINED;
+	uint32_t uOutputFormat = DRM_FORMAT_INVALID;
+	uint32_t uOutputFormatOverlay = DRM_FORMAT_INVALID;
 
 	std::array<gamescope::OwningRc<CVulkanTexture>, 2> pScreenshotImages;
 
@@ -863,7 +864,7 @@ protected:
 	VkSemaphore m_scratchTimelineSemaphore;
 	std::atomic<uint64_t> m_submissionSeqNo = { 0 };
 	std::vector<std::unique_ptr<CVulkanCmdBuffer>> m_unusedCmdBufs;
-	std::unordered_map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
+	std::map<uint64_t, std::unique_ptr<CVulkanCmdBuffer>> m_pendingCmdBufs;
 };
 
 struct TextureState

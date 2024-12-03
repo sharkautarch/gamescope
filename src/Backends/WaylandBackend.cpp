@@ -38,6 +38,8 @@
 
 #include "drm_include.h"
 
+#define WL_FRACTIONAL_SCALE_DENOMINATOR 120
+
 extern int g_nPreferredOutputWidth;
 extern int g_nPreferredOutputHeight;
 extern bool g_bForceHDR10OutputDebug;
@@ -53,6 +55,8 @@ using namespace std::literals;
 
 static LogScope xdg_log( "xdg_backend" );
 
+static const char *GAMESCOPE_plane_tag = "gamescope-plane";
+
 template <typename Func, typename... Args>
 auto CallWithAllButLast(Func pFunc, Args&&... args)
 {
@@ -61,6 +65,13 @@ auto CallWithAllButLast(Func pFunc, Args&&... args)
         return pFunc(std::get<idx>(std::forward<Tuple>(tuple))...);
     };
     return Forwarder(std::forward_as_tuple(args...), std::make_index_sequence<sizeof...(Args) - 1>());
+}
+
+static inline uint32_t WaylandScaleToPhysical( uint32_t pValue, uint32_t pFactor ) {
+    return pValue * pFactor / WL_FRACTIONAL_SCALE_DENOMINATOR;
+}
+static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor ) {
+    return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
 
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
@@ -504,7 +515,7 @@ namespace gamescope
         virtual std::span<const char *const> GetInstanceExtensions() const override;
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override;
         virtual VkImageLayout GetPresentLayout() const override;
-        virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override;
+        virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override;
         virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override;
 
         virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
@@ -545,6 +556,7 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) override;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
         virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
     protected:
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
@@ -576,8 +588,6 @@ namespace gamescope
 
         void SetFullscreen( bool bFullscreen ); // Thread safe, can be called from the input thread.
         void UpdateFullscreenState();
-
-        bool SupportsFormat( uint32_t uDRMFormat ) const;
 
         bool HostCompositorIsCurrentlyVRR() const { return m_bHostCompositorIsCurrentlyVRR; }
         void SetHostCompositorIsCurrentlyVRR( bool bActive ) { m_bHostCompositorIsCurrentlyVRR = bActive; }
@@ -672,8 +682,8 @@ namespace gamescope
         zwp_locked_pointer_v1 *m_pLockedPointer = nullptr;
         zwp_relative_pointer_v1 *m_pRelativePointer = nullptr;
 
+        bool m_bCanUseModifiers = false;
         std::unordered_map<uint32_t, std::vector<uint64_t>> m_FormatModifiers;
-        std::unordered_set<uint32_t> m_ModifierlessFormats;
         std::unordered_map<uint32_t, wl_buffer *> m_ImportedFbs;
 
         uint32_t m_uPointerEnterSerial = 0;
@@ -896,6 +906,7 @@ namespace gamescope
     {
         m_pParent = pParent;
         m_pSurface = wl_compositor_create_surface( m_pBackend->GetCompositor() );
+        wl_proxy_set_tag( (wl_proxy *)m_pSurface, &GAMESCOPE_plane_tag );
         wl_surface_set_user_data( m_pSurface, this );
         wl_surface_add_listener( m_pSurface, &s_SurfaceListener, this );
 
@@ -1017,14 +1028,15 @@ namespace gamescope
                 wl_fixed_from_double( oState->flSrcHeight ) );
             wp_viewport_set_destination(
                 m_pViewport,
-                oState->nDstWidth  * 120 / uScale,
-                oState->nDstHeight * 120 / uScale);
+                WaylandScaleToLogical( oState->nDstWidth, uScale ),
+                WaylandScaleToLogical( oState->nDstHeight, uScale ) );
+
             if ( m_pSubsurface )
             {
                 wl_subsurface_set_position(
                     m_pSubsurface,
-                    oState->nDestX * 120 / uScale,
-                    oState->nDestY * 120 / uScale );
+                    WaylandScaleToLogical( oState->nDestX, uScale ),
+                    WaylandScaleToLogical( oState->nDestY, uScale ) );
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
@@ -1042,7 +1054,10 @@ namespace gamescope
 
     void CWaylandPlane::CommitLibDecor( libdecor_configuration *pConfiguration )
     {
-        libdecor_state *pState = libdecor_state_new( g_nOutputWidth, g_nOutputHeight );
+        int32_t uScale = GetScale();
+        libdecor_state *pState = libdecor_state_new(
+            WaylandScaleToLogical( g_nOutputWidth, uScale ),
+            WaylandScaleToLogical( g_nOutputHeight, uScale ) );
         libdecor_frame_commit( m_pFrame, pState, pConfiguration );
         libdecor_state_free( pState );
     }
@@ -1149,11 +1164,11 @@ namespace gamescope
         int nWidth, nHeight;
         if ( !libdecor_configuration_get_content_size( pConfiguration, m_pFrame, &nWidth, &nHeight ) )
         {
-            nWidth  = g_nOutputWidth  * 120 / uScale;
-            nHeight = g_nOutputHeight * 120 / uScale;
+            nWidth  = WaylandScaleToLogical( g_nOutputWidth, uScale );
+            nHeight = WaylandScaleToLogical( g_nOutputHeight, uScale );
         }
-        g_nOutputWidth  = nWidth  * uScale / 120;
-        g_nOutputHeight = nHeight * uScale / 120;
+        g_nOutputWidth  = WaylandScaleToPhysical( nWidth, uScale );
+        g_nOutputHeight = WaylandScaleToPhysical( nHeight, uScale );
 
         CommitLibDecor( pConfiguration );
 
@@ -1542,23 +1557,33 @@ namespace gamescope
         return VK_IMAGE_LAYOUT_GENERAL;
     }
 
-    void CWaylandBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
+    void CWaylandBackend::GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const
     {
-        VkFormat u8BitFormat = VK_FORMAT_UNDEFINED;
-        if ( SupportsFormat( DRM_FORMAT_ARGB8888 ) )
-            u8BitFormat = VK_FORMAT_B8G8R8A8_UNORM;
+        // Prefer opaque for composition on the Wayland backend.
+
+        uint32_t u8BitFormat = DRM_FORMAT_INVALID;
+        if ( SupportsFormat( DRM_FORMAT_XRGB8888 ) )
+            u8BitFormat = DRM_FORMAT_XRGB8888;
+        else if ( SupportsFormat( DRM_FORMAT_XBGR8888 ) )
+            u8BitFormat = DRM_FORMAT_XBGR8888;        
+        else if ( SupportsFormat( DRM_FORMAT_ARGB8888 ) )
+            u8BitFormat = DRM_FORMAT_ARGB8888;
         else if ( SupportsFormat( DRM_FORMAT_ABGR8888 ) )
-            u8BitFormat = VK_FORMAT_R8G8B8A8_UNORM;
+            u8BitFormat = DRM_FORMAT_ABGR8888;
 
-        VkFormat u10BitFormat = VK_FORMAT_UNDEFINED;
-        if ( SupportsFormat( DRM_FORMAT_ABGR2101010 ) )
-            u10BitFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
+        uint32_t u10BitFormat = DRM_FORMAT_INVALID;
+        if ( SupportsFormat( DRM_FORMAT_XBGR2101010 ) )
+            u10BitFormat = DRM_FORMAT_XBGR2101010;
+        else if ( SupportsFormat( DRM_FORMAT_XRGB2101010 ) )
+            u10BitFormat = DRM_FORMAT_XRGB2101010;
+        else if ( SupportsFormat( DRM_FORMAT_ABGR2101010 ) )
+            u10BitFormat = DRM_FORMAT_ABGR2101010;
         else if ( SupportsFormat( DRM_FORMAT_ARGB2101010 ) )
-            u10BitFormat = VK_FORMAT_A2R10G10B10_UNORM_PACK32;
+            u10BitFormat = DRM_FORMAT_ARGB2101010;
 
-        assert( u8BitFormat != VK_FORMAT_UNDEFINED );
+        assert( u8BitFormat != DRM_FORMAT_INVALID );
 
-        *pPrimaryPlaneFormat = u10BitFormat != VK_FORMAT_UNDEFINED ? u10BitFormat : u8BitFormat;
+        *pPrimaryPlaneFormat = u10BitFormat != DRM_FORMAT_INVALID ? u10BitFormat : u8BitFormat;
         *pOverlayPlaneFormat = u8BitFormat;
     }
 
@@ -1760,13 +1785,10 @@ namespace gamescope
         if ( !cv_wayland_use_modifiers )
             return false;
 
-        return !m_FormatModifiers.empty();
+        return m_bCanUseModifiers;
     }
     std::span<const uint64_t> CWaylandBackend::GetSupportedModifiers( uint32_t uDrmFormat ) const
     {
-        if ( !UsesModifiers() )
-            return std::span<const uint64_t>{};
-
         auto iter = m_FormatModifiers.find( uDrmFormat );
         if ( iter == m_FormatModifiers.end() )
             return std::span<const uint64_t>{};
@@ -1971,6 +1993,10 @@ namespace gamescope
             xdg_toplevel_icon_manager_v1_set_icon( m_pToplevelIconManager, m_Planes[0].GetXdgToplevel(), nullptr );
         }
     }
+    void CWaylandBackend::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
+    {
+        // Do nothing
+    }
 
     std::shared_ptr<INestedHints::CursorInfo> CWaylandBackend::GetHostCursor()
     {
@@ -2057,13 +2083,6 @@ namespace gamescope
 
             g_bFullscreen = m_bDesiredFullscreenState;
         }
-    }
-
-    bool CWaylandBackend::SupportsFormat( uint32_t uDRMFormat ) const
-    {
-        return UsesModifiers()
-            ? m_FormatModifiers.contains( uDRMFormat )
-            : m_ModifierlessFormats.contains( uDRMFormat );
     }
 
     /////////////////////
@@ -2159,11 +2178,21 @@ namespace gamescope
     void CWaylandBackend::Wayland_Modifier( zwp_linux_dmabuf_v1 *pDmabuf, uint32_t uFormat, uint32_t uModifierHi, uint32_t uModifierLo )
     {
         uint64_t ulModifier = ( uint64_t( uModifierHi ) << 32 ) | uModifierLo;
-        //xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx", drmGetFormatName( uFormat ), uFormat, ulModifier );
+
+#if 0
+        const char *pszExtraModifierName = "";
+        if ( ulModifier == DRM_FORMAT_MOD_INVALID )
+            pszExtraModifierName = " (Invalid)";
+        if ( ulModifier == DRM_FORMAT_MOD_LINEAR )
+            pszExtraModifierName = " (Invalid)";
+
+        xdg_log.infof( "Modifier: %s (0x%" PRIX32 ") %lx%s", drmGetFormatName( uFormat ), uFormat, ulModifier, pszExtraModifierName );
+#endif
+
         if ( ulModifier != DRM_FORMAT_MOD_INVALID )
-            m_FormatModifiers[uFormat].emplace_back( ulModifier );
-        else
-            m_ModifierlessFormats.emplace( uFormat );
+            m_bCanUseModifiers = true;
+
+        m_FormatModifiers[uFormat].emplace_back( ulModifier );
     }
 
     // Output
@@ -2560,6 +2589,9 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
     {
+        if ( !( wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag ) )
+            return;
+
         CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
         if ( !pPlane )
             return;
@@ -2571,6 +2603,9 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
     {
+        if ( !( wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag ) )
+            return;
+
         CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
         if ( !pPlane )
             return;

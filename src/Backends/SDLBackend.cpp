@@ -11,6 +11,7 @@
 
 #include "SDL_clipboard.h"
 #include "SDL_events.h"
+#include "gamescope_shared.h"
 #include "main.hpp"
 #include "wlserver.hpp"
 #include <SDL.h>
@@ -122,7 +123,7 @@ namespace gamescope
 		virtual std::span<const char *const> GetInstanceExtensions() const override;
 		virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override;
 		virtual VkImageLayout GetPresentLayout() const override;
-		virtual void GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const override;
+		virtual void GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const override;
 		virtual bool ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const override;
 
         virtual int Present( const FrameInfo_t *pFrameInfo, bool bAsync ) override;
@@ -162,7 +163,8 @@ namespace gamescope
         virtual void SetVisible( bool bVisible ) override;
         virtual void SetTitle( std::shared_ptr<std::string> szTitle ) override;
         virtual void SetIcon( std::shared_ptr<std::vector<uint32_t>> uIconPixels ) override;
-		virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
+        virtual void SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection ) override;
+        virtual std::shared_ptr<INestedHints::CursorInfo> GetHostCursor() override;
 	protected:
 		virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) override;
 	private:
@@ -351,10 +353,10 @@ namespace gamescope
 		return VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 	}
 
-	void CSDLBackend::GetPreferredOutputFormat( VkFormat *pPrimaryPlaneFormat, VkFormat *pOverlayPlaneFormat ) const
+	void CSDLBackend::GetPreferredOutputFormat( uint32_t *pPrimaryPlaneFormat, uint32_t *pOverlayPlaneFormat ) const
 	{
-		*pPrimaryPlaneFormat = VK_FORMAT_A2B10G10R10_UNORM_PACK32;
-		*pOverlayPlaneFormat = VK_FORMAT_B8G8R8A8_UNORM;
+		*pPrimaryPlaneFormat = VulkanFormatToDRM( VK_FORMAT_A2B10G10R10_UNORM_PACK32 );
+		*pOverlayPlaneFormat = VulkanFormatToDRM( VK_FORMAT_B8G8R8A8_UNORM );
 	}
 
 	bool CSDLBackend::ValidPhysicalDevice( VkPhysicalDevice pVkPhysicalDevice ) const
@@ -496,7 +498,13 @@ namespace gamescope
 		m_pApplicationIcon = uIconPixels;
 		PushUserEvent( GAMESCOPE_SDL_EVENT_ICON );
 	}
-
+	void CSDLBackend::SetSelection( std::shared_ptr<std::string> szContents, GamescopeSelection eSelection )
+	{
+		if (eSelection == GAMESCOPE_SELECTION_CLIPBOARD)
+			SDL_SetClipboardText(szContents->c_str());
+		else if (eSelection == GAMESCOPE_SELECTION_PRIMARY)
+			SDL_SetPrimarySelectionText(szContents->c_str());
+	}
 	std::shared_ptr<INestedHints::CursorInfo> CSDLBackend::GetHostCursor()
 	{
 		return GetX11HostCursor();

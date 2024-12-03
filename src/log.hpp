@@ -35,6 +35,7 @@ public:
 	void SetPriority( LogPriority ePriority ) { m_eMaxPriority = ePriority; }
 
 	void vlogf(enum LogPriority priority, const char *fmt, va_list args) ATTRIB_PRINTF(3, 0);
+	void log(enum LogPriority priority, std::string_view psvText);
 
 	void warnf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
 	void errorf(const char *fmt, ...) ATTRIB_PRINTF(2, 3);
@@ -45,7 +46,7 @@ public:
 
 	bool bPrefixEnabled = true;
 
-	using LoggingListenerFunc = std::function<void( LogPriority ePriority, std::string_view psvScope, const char *psvText )>;
+	using LoggingListenerFunc = std::function<void( LogPriority ePriority, std::string_view psvScope, std::string_view psvText )>;
 	std::unordered_map<uintptr_t, LoggingListenerFunc> m_LoggingListeners;
 
 private:
