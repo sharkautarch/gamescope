@@ -287,6 +287,7 @@ namespace gamescope
 		const char *GetName() const override { return m_Mutable.szName; }
 		const char *GetMake() const override { return m_Mutable.pszMake; }
 		const char *GetModel() const override { return m_Mutable.szModel; }
+		const char *GetDisplayAscii() const override { return m_Mutable.szDisplayAscii; }
 		uint32_t GetPossibleCRTCMask() const { return m_Mutable.uPossibleCRTCMask; }
 		std::span<const uint32_t> GetValidDynamicRefreshRates() const override { return m_Mutable.ValidDynamicRefreshRates; }
 		const displaycolorimetry_t& GetDisplayColorimetry() const { return m_Mutable.DisplayColorimetry; }
@@ -392,6 +393,7 @@ namespace gamescope
 			char szName[32]{};
 			char szMakePNP[4]{};
 			char szModel[16]{};
+			char szDisplayAscii[16]{};
 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			DRMModeGenerator fnDynamicModeGenerator;
@@ -2134,10 +2136,17 @@ namespace gamescope
 				// m_szModel is 16 bytes.
 				const char *pszModel = di_edid_display_descriptor_get_string( pDesc );
 				strncpy( m_Mutable.szModel, pszModel, sizeof( m_Mutable.szModel ) );
+			} else if ( di_edid_display_descriptor_get_tag( pDesc ) == DI_EDID_DISPLAY_DESCRIPTOR_DATA_STRING )
+			{
+				// Max length of di_edid_display_descriptor_get_string is 14
+				// szDisplayAscii is 16 bytes.
+				const char *pszDisplayAscii = di_edid_display_descriptor_get_string( pDesc );
+				strncpy( m_Mutable.szDisplayAscii, pszDisplayAscii, sizeof( m_Mutable.szDisplayAscii ) );
+				m_Mutable.szDisplayAscii[ sizeof( m_Mutable.szDisplayAscii ) - 1 ] = '\0';
 			}
 		}
 
-		drm_log.infof("Connector %s -> %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel );
+		drm_log.infof("Connector %s -> %s - %s - %s", m_Mutable.szName, m_Mutable.szMakePNP, m_Mutable.szModel, m_Mutable.szDisplayAscii );
 
 		bool bHasKnownColorimetry = false;
 		bool bHasKnownHDRInfo = false;
@@ -2145,7 +2154,7 @@ namespace gamescope
 		{
 			CScriptScopedLock script;
 
-			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, m_Mutable.szMakePNP, pProduct->product, m_Mutable.szModel );
+			auto oKnownDisplay = script.Manager().Gamescope().Config.LookupDisplay( script, m_Mutable.szMakePNP, pProduct->product, m_Mutable.szModel, m_Mutable.szDisplayAscii );
 			if ( oKnownDisplay )
 			{
 				sol::table tTable = oKnownDisplay->second;

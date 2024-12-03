@@ -29,6 +29,7 @@ namespace gamescope
         std::string szConnectorName;
         std::string szDisplayMake;
         std::string szDisplayModel;
+        std::string szDisplayAscii;
         uint32_t uDisplayFlags;
         std::vector<uint32_t> ValidRefreshRates;
     };
@@ -61,7 +62,7 @@ namespace gamescope
         static const wl_registry_listener s_RegistryListener;
 
         void Wayland_GamescopeControl_FeatureSupport( gamescope_control *pGamescopeControl, uint32_t uFeature, uint32_t uVersion, uint32_t uFlags );
-        void Wayland_GamescopeControl_ActiveDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, uint32_t uDisplayFlags, wl_array *pValidRefreshRatesArray );
+        void Wayland_GamescopeControl_ActiveDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, const char *pDisplayAscii, uint32_t uDisplayFlags, wl_array *pValidRefreshRatesArray );
         void Wayland_GamescopeControl_ScreenshotTaken( gamescope_control *pGamescopeControl, const char *pPath );
         static const gamescope_control_listener s_GamescopeControlListener;
 
@@ -166,7 +167,7 @@ namespace gamescope
             .uFlags   = uFlags
         } );
     }
-    void GamescopeCtl::Wayland_GamescopeControl_ActiveDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, uint32_t uDisplayFlags, wl_array *pValidRefreshRatesArray )
+    void GamescopeCtl::Wayland_GamescopeControl_ActiveDisplayInfo( gamescope_control *pGamescopeControl, const char *pConnectorName, const char *pDisplayMake, const char *pDisplayModel, const char *pDisplayAscii, uint32_t uDisplayFlags, wl_array *pValidRefreshRatesArray )
     {
         const uint32_t *pValidRefreshRates = reinterpret_cast<const uint32_t*>( pValidRefreshRatesArray->data );
         std::vector<uint32_t> validRefreshRates;
@@ -178,6 +179,7 @@ namespace gamescope
             .szConnectorName = pConnectorName,
             .szDisplayMake   = pDisplayMake,
             .szDisplayModel  = pDisplayModel,
+            .szDisplayAscii     = pDisplayAscii,
             .uDisplayFlags   = uDisplayFlags,
             .ValidRefreshRates = std::move( validRefreshRates ),
         };
@@ -251,6 +253,7 @@ namespace gamescope
                 fprintf( stdout, "  - Connector Name: %.*s\n", (int)oActiveDisplayInfo->szConnectorName.length(), oActiveDisplayInfo->szConnectorName.data() );
                 fprintf( stdout, "  - Display Make: %.*s\n", (int)oActiveDisplayInfo->szDisplayMake.length(), oActiveDisplayInfo->szDisplayMake.data() );
                 fprintf( stdout, "  - Display Model: %.*s\n", (int)oActiveDisplayInfo->szDisplayModel.length(), oActiveDisplayInfo->szDisplayModel.data() );
+                fprintf( stdout, "  - Display Ascii: %s\n", oActiveDisplayInfo->szDisplayAscii.data() );
                 fprintf( stdout, "  - Display Flags: 0x%x\n", oActiveDisplayInfo->uDisplayFlags );
                 fprintf( stdout, "  - ValidRefreshRates: " );
                 for ( size_t i = 0; i < oActiveDisplayInfo->ValidRefreshRates.size(); i++ )

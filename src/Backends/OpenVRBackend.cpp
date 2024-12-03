@@ -247,6 +247,10 @@ namespace gamescope
         {
             return "Virtual Display";
         }
+        virtual const char *GetDisplayAscii() const override
+        {
+            return "";
+        }
 
         bool UpdateEdid()
         {

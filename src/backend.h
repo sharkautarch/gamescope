@@ -109,6 +109,7 @@ namespace gamescope
         virtual const char *GetName() const = 0;
         virtual const char *GetMake() const = 0;
         virtual const char *GetModel() const = 0;
+        virtual const char *GetDisplayAscii() const = 0;
     };
 
     class INestedHints

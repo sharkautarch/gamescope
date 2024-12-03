@@ -63,6 +63,7 @@
       <arg name="connector_name" type="string"/>
       <arg name="display_make" type="string"/>
       <arg name="display_model" type="string"/>
+      <arg name="display_ascii" type="string"/>
       <arg name="display_flags" type="uint" enum="display_flag" summary="combination of 'display_flag' values"/>
       <arg name="valid_refresh_rates" type="array" summary="valid refresh rates for the display for the purposes of combined fps limiting + refresh. empty if fixed at a mode. 32-bit unsigned integers."/>
     </event>

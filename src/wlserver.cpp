@@ -1096,7 +1096,7 @@ void wlserver_send_gamescope_control( wl_resource *control )
 		uint32_t *ptr = (uint32_t *)wl_array_add( &display_rates, sizeof(uint32_t) );
 		*ptr = (uint32_t)gamescope::ConvertmHzToHz( g_nOutputRefresh );
 	}
-	gamescope_control_send_active_display_info( control, pConn->GetName(), pConn->GetMake(), pConn->GetModel(), flags, &display_rates );
+	gamescope_control_send_active_display_info( control, pConn->GetName(), pConn->GetMake(), pConn->GetModel(), pConn->GetDisplayAscii(), flags, &display_rates );
 	wl_array_release(&display_rates);
 }
 
