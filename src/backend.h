@@ -6,6 +6,8 @@
 #include "Timeline.h"
 #include "convar.h"
 #include "rc.h"
+#include "drm_include.h"
+#include "Utils/Algorithm.h"
 
 #include <cassert>
 #include <span>
@@ -210,6 +212,10 @@ namespace gamescope
 
         virtual bool UsesModifiers() const = 0;
         virtual std::span<const uint64_t> GetSupportedModifiers( uint32_t uDrmFormat ) const = 0;
+        inline bool SupportsFormat( uint32_t uDrmFormat ) const
+        {
+            return Algorithm::Contains( this->GetSupportedModifiers( uDrmFormat ), DRM_FORMAT_MOD_INVALID );
+        }
 
         virtual IBackendConnector *GetCurrentConnector() = 0;
         virtual IBackendConnector *GetConnector( GamescopeScreenType eScreenType ) = 0;
