@@ -55,7 +55,6 @@ namespace gamescope
 		GAMESCOPE_SDL_EVENT_CURSOR,
 
 		GAMESCOPE_SDL_EVENT_COUNT,
-		GAMESCOPE_SDL_EVENT_REQ_EXIT,
 	};
 
 	class CSDLConnector final : public IBackendConnector
@@ -87,18 +86,18 @@ namespace gamescope
             displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
             displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const override;
 
-        constexpr virtual const char *GetName() const override
-				{
-					return "SDLWindow";
-				}
-        constexpr virtual const char *GetMake() const override
-				{
-					return "Gamescope";
-				}
-        constexpr virtual const char *GetModel() const override
-				{
-					return "Virtual Display";
-				}
+        virtual const char *GetName() const override
+		{
+			return "SDLWindow";
+		}
+        virtual const char *GetMake() const override
+		{
+			return "Gamescope";
+		}
+        virtual const char *GetModel() const override
+		{
+			return "Virtual Display";
+		}
 
 		//--
 
@@ -114,7 +113,6 @@ namespace gamescope
 	{
 	public:
 		CSDLBackend();
-		~CSDLBackend();
 
 		/////////////
 		// IBackend
@@ -516,12 +514,7 @@ namespace gamescope
 	{
 		// Do nothing.
 	}
-	
-	CSDLBackend::~CSDLBackend() {
-		PushUserEvent(GAMESCOPE_SDL_EVENT_REQ_EXIT);
-		m_SDLThread.join();
-	}
-	
+
 	void CSDLBackend::SDLThreadFunc()
 	{
 		pthread_setname_np( pthread_self(), "gamescope-sdl" );
@@ -607,10 +600,6 @@ namespace gamescope
 		SDL_Event event;
 		while( SDL_WaitEvent( &event ) )
 		{
-			if ( event.type == GetUserEventIndex( GAMESCOPE_SDL_EVENT_REQ_EXIT ) ) {
-						return;
-			}
-			
 			fake_timestamp++;
 
 			switch( event.type )
@@ -943,7 +932,7 @@ namespace gamescope
 				.type = GetUserEventIndex( eEvent ),
 			},
 		};
-		SDL_PeepEvents( &event, 1, SDL_ADDEVENT, SDL_FIRSTEVENT, SDL_LASTEVENT );
+		SDL_PushEvent( &event );
 	}
 
 	/////////////////////////

@@ -235,22 +235,22 @@ namespace gamescope
 			*outputEncodingEOTF = EOTF_Gamma22;
         }
 
-        constexpr virtual const char *GetName() const override
+        virtual const char *GetName() const override
         {
             return "OpenVR";
         }
-        constexpr virtual const char *GetMake() const override
+        virtual const char *GetMake() const override
         {
             return "Gamescope";
         }
-        constexpr virtual const char *GetModel() const override
+        virtual const char *GetModel() const override
         {
             return "Virtual Display";
         }
 
         bool UpdateEdid()
         {
-            m_FakeEdid = GenerateSimpleEdid( g_ivNestedResolution.x, g_ivNestedResolution.y );
+            m_FakeEdid = GenerateSimpleEdid( g_nNestedWidth, g_nNestedHeight );
 
             return true;
         }
@@ -512,18 +512,18 @@ namespace gamescope
 
         virtual std::span<const char *const> GetInstanceExtensions() const override
 		{
-            static constinit std::vector<std::string> s_exts;
+            static std::vector<std::string> s_exts;
             GetVulkanInstanceExtensionsRequired( s_exts );
-            static constinit std::vector<const char *> s_extPtrs;
+            static std::vector<const char *> s_extPtrs;
             for ( const std::string &ext : s_exts )
                 s_extPtrs.emplace_back( ext.c_str() );
 			return std::span<const char *const>{ s_extPtrs.begin(), s_extPtrs.end() };
 		}
         virtual std::span<const char *const> GetDeviceExtensions( VkPhysicalDevice pVkPhysicalDevice ) const override
 		{
-            static constinit std::vector<std::string> s_exts;
+            static std::vector<std::string> s_exts;
             GetVulkanDeviceExtensionsRequired( pVkPhysicalDevice, s_exts );
-            static constinit std::vector<const char *> s_extPtrs;
+            static std::vector<const char *> s_extPtrs;
             for ( const std::string &ext : s_exts )
                 s_extPtrs.emplace_back( ext.c_str() );
 			return std::span<const char *const>{ s_extPtrs.begin(), s_extPtrs.end() };

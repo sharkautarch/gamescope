@@ -106,9 +106,9 @@ namespace gamescope
             displaycolorimetry_t *displayColorimetry, EOTF *displayEOTF,
             displaycolorimetry_t *outputEncodingColorimetry, EOTF *outputEncodingEOTF ) const = 0;
 
-        constexpr virtual const char *GetName() const = 0;
-        constexpr virtual const char *GetMake() const = 0;
-        constexpr virtual const char *GetModel() const = 0;
+        virtual const char *GetName() const = 0;
+        virtual const char *GetMake() const = 0;
+        virtual const char *GetModel() const = 0;
     };
 
     class INestedHints
@@ -170,17 +170,11 @@ namespace gamescope
         wlr_buffer *m_pClientBuffer = nullptr;
         std::shared_ptr<CReleaseTimelinePoint> m_pReleasePoint;
     };
-		inline static constinit thread_local bool s_tl_bIsLockHeld = false;
-    inline static std::mutex s_backendModifyMut;
-    
+
     class IBackend
     {
     public:
-    		void* operator new(size_t size);
-    		constexpr void  operator delete(void*) {
-    			//calling delete on IBackend is a no-op (IBackend memory is deallocated in SetBackend when it calls ReplaceBackend())
-    		}
-        constexpr virtual ~IBackend() noexcept {}
+        virtual ~IBackend() {}
 
         virtual bool Init() = 0;
         virtual bool PostInit() = 0;
@@ -234,8 +228,8 @@ namespace gamescope
         // Dumb helper we should remove to support multi display someday.
         gamescope::GamescopeScreenType GetScreenType()
         {
-						if ( auto* pConn = GetCurrentConnector(); pConn )
-                return pConn->GetScreenType();
+            if ( GetCurrentConnector() )
+                return GetCurrentConnector()->GetScreenType();
 
             return gamescope::GAMESCOPE_SCREEN_TYPE_INTERNAL;
         }
@@ -269,26 +263,6 @@ namespace gamescope
 
         virtual void OnBackendBlobDestroyed( BackendBlob *pBlob ) = 0;
     private:
-    		struct LockWrapper {
-    			static inline std::optional<std::unique_lock<std::mutex>> CheckedLock() {
-    				if (std::exchange(s_tl_bIsLockHeld, true)) {
-    					return std::nullopt;
-    				} else {
-    					return std::optional<std::unique_lock<std::mutex>>{std::in_place_t{}, s_backendModifyMut};
-    				}
-    			}
-    			LockWrapper() : m_oLock{CheckedLock()} {}
-    			~LockWrapper() {
-    				s_tl_bIsLockHeld = false;
-    			}
-    			
-    			std::optional<std::unique_lock<std::mutex>> m_oLock;
-    		};
-    		static LockWrapper AcquireExclusive() {
-    			return LockWrapper{};
-    		}
-    		
-    		virtual void DestroyBackend();
     };
 
 
