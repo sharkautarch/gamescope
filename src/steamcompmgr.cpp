@@ -94,6 +94,7 @@
 #include "BufferMemo.h"
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
+#include "Utils/Lock.h"
 
 #include "wlr_begin.hpp"
 #include "wlr/types/wlr_pointer_constraints_v1.h"
@@ -5895,6 +5896,10 @@ error(Display *dpy, XErrorEvent *ev)
 	return 0;
 }
 
+
+static const gamescope::CGlobalLockReference s_xwlLockReference{};
+using XwlLock = gamescope::ReferencedLock<s_xwlLockReference>;
+
 [[noreturn]] static void
 steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
@@ -5962,7 +5967,7 @@ static int
 handle_io_error(Display *dpy)
 {
 	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit();
+	steamcompmgr_exit( s_xwlLockReference.popLock() );
 }
 
 static bool
@@ -7512,7 +7517,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	init_runtime_info();
 
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	XwlLock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
 	// Initialize any xwayland ctxs we have
 	{
@@ -8060,7 +8065,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> {std::in_place_t{}, std::move(xwayland_server_guard)} );
+	steamcompmgr_exit( xwayland_server_guard.popLock() );
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()
