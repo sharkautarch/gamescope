@@ -44,13 +44,6 @@ namespace gamescope::WaylandServer
 
 		~CLinuxDrmSyncobjSurface()
 		{
-			{
-				if (auto it = LookupPtrInFreedSurfaces(m_pWlSurfaceInfo);
-							IsNonNullIterator(it))
-				{
-						return;
-				}
-			}
 			assert( m_pWlSurfaceInfo->pSyncobjSurface == this );
 			m_pWlSurfaceInfo->pSyncobjSurface = nullptr;
 		}
