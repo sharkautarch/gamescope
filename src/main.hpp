@@ -105,9 +105,10 @@ static inline constexpr struct option gamescope_options[] = {
 };
 
 extern std::atomic< bool > g_bRun;
-#include <glm/fwd.hpp>
 
+#include <glm/fwd.hpp>
 extern glm::ivec2 g_ivNestedResolution;
+
 extern int g_nNestedRefresh; // mHz
 extern int g_nNestedUnfocusedRefresh; // mHz
 extern int g_nNestedDisplayIndex;

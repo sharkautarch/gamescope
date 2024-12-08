@@ -173,8 +173,7 @@ const char usage[] =
 	"";
 
 std::atomic< bool > g_bRun{true};
-
-glm::ivec2 g_ivNestedResolution {};
+glm::ivec2 g_ivNestedResolution{};
 int g_nNestedRefresh = 0;
 int g_nNestedUnfocusedRefresh = 0;
 int g_nNestedDisplayIndex = 0;

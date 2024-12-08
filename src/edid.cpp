@@ -56,6 +56,74 @@ namespace gamescope
         *val |= (uint8_t)(bits << low);
     }
 
+    typedef uint8_t u8x2_t __attribute__((vector_size(2*sizeof(uint8_t))));
+    typedef glm::vec<2, uint8_t, (glm::qualifier)3> u8vec2;
+    typedef glm::vec<4, uint8_t, (glm::qualifier)3> u8vec4;
+    typedef glm::vec<4, uint32_t, (glm::qualifier)3> u32vec4;
+    typedef uint8_t u8x4_t __attribute__((vector_size(4*sizeof(uint8_t))));
+    typedef uint32_t u32x4_t __attribute__((vector_size(4*sizeof(uint32_t))));
+    typedef uint8_t u8x16_t __attribute__((vector_size(16*sizeof(uint8_t))));
+    typedef uint64_t u64x2_t __attribute__((vector_size(2*sizeof(uint64_t))));
+    typedef glm::vec<2, uint16_t, (glm::qualifier)3> u16vec2;
+    
+		
+    template <size_t startIndex, size_t endIndex, unsigned high, unsigned low>
+    static inline void set_bit_range_uv2(uint8_t* val, __m128i bits)
+    {
+        static_assert(high <= 7 && high >= low);
+
+        static constexpr uint32_t n = high - low + 1u;
+        static constexpr uint8_t bitmask = (uint8_t) ((1u << n) - 1u);
+        assert(glm::all(glm::equal((u32vec4)((u32x4_t)bits) & (uint32_t)((uint8_t)(~bitmask)), u32vec4(0))));
+				if constexpr (n == 4 && startIndex == 4 && endIndex == 7) {
+					#ifdef __x86_64__
+					__m128i u8x4_val = _mm_loadu_si32((void*)(&val[startIndex]));
+					
+					auto masked = _mm_set1_epi8(bitmask << low);
+					u8x4_val = _mm_and_si128(u8x4_val, masked);
+					auto count = _mm_cvtsi32_si128(low);
+					bits = _mm_sll_epi32(bits, count);
+					//index of u8x16_t:	0  ,   1   ,    2   ,    3   ,   4  ,   5   ,    6   ,    7
+					//slice:					[7:0], [15:8], [23:16], [31:24], [7:0], [15:8], [23:16], [31:24]
+					bits = _mm_packus_epi16(bits, bits);
+					bits = _mm_packus_epi16(bits, bits);
+						
+					u8x4_val = _mm_or_si128(u8x4_val, bits);
+					// 0,  1,  2,  3,    4,  5,  6,  7,  8, 9, 10, 11,  12, 13, 14, 15
+					//16, 17, 18, 19    20, 21, 22, 23
+					
+					// 0,  1,  2,  3     4,  5,  6,  7
+					__m128i u8x4_val_copy = _mm_loadu_si32((void*)(&val[startIndex]));
+					auto val_fin = (__m128i)__builtin_shufflevector((u8x16_t)u8x4_val, (u8x16_t)u8x4_val_copy, 
+						 0, 17, 18, 1,
+						-1, -1, -1, -1,
+						-1, -1, -1, -1,
+						-1, -1, -1, -1);
+					_mm_storeu_si32((void*)(&val[startIndex]), val_fin);
+					#else
+					auto u16x2_val = (*((u16vec2*)(&val[startIndex]))).data;
+					
+					auto u8x4_val = (u8x4_t)(u16x2_val);
+					auto u8x4_val_copy = u8x4_val;
+					auto bits_u16 = (u8x4_t)((((u16vec2)(bits))).data);
+					u8x4_t masked = u8x4_t{} + ((uint8_t)~(bitmask << low));
+					u8x4_val &= masked;
+					u8x4_val |= (bits_u16 << (uint8_t)low);
+					auto val_fin = __builtin_shufflevector((u8x4_t)u8x4_val, (u8x4_t)u8x4_val_copy,
+						0, 5, 6, 3);
+					memcpy(&val[startIndex], &val_fin, 4); 
+					#endif
+				} else {
+					static_assert(false);
+					/*u8vec2 u8x2_val{val[startIndex], val[endIndex]};
+					auto bits_u8 = (u8vec2)(bits);
+					u8x2_val &= (uint8_t)(~(bitmask << low));
+					u8x2_val |= (bits_u8 << (uint8_t)low);
+					val[startIndex] = u8x2_val[0];
+					val[endIndex] = u8x2_val[1];*/
+				}
+    }
+
 
     static inline void patch_edid_checksum(uint8_t* block)
     {
@@ -321,10 +389,11 @@ namespace gamescope
         0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
         0x00, 0x00, 0x00, 0x36
     };
-    std::vector<uint8_t> GenerateSimpleEdid( uint32_t uWidth, uint32_t uHeight )
+    std::vector<uint8_t> GenerateSimpleEdid( __m128i resolution )
     {
-        uWidth  = std::min<uint32_t>( uWidth,  3840 );
-        uHeight = std::min<uint32_t>( uHeight, 3840 );
+    		auto vres = (u32x4_t)resolution;
+
+    		vres = (u32x4_t)((glm::min((u32vec4)vres, (u32vec4)3840u)).data);
 
         // Does not patch refresh, nothing has cared about this yet.
         std::vector<uint8_t> edid( s_GamescopeBaseEdid, s_GamescopeBaseEdid + std::size( s_GamescopeBaseEdid ) );
@@ -337,11 +406,10 @@ namespace gamescope
                 uint32_t oldHoriz = (get_bit_range(byte_desc_data[4], 7, 4) << 8) | byte_desc_data[2];
                 uint32_t oldVert  = (get_bit_range(byte_desc_data[7], 7, 4) << 8) | byte_desc_data[5];
 
-                set_bit_range( &byte_desc_data[4], 7, 4, ( uWidth >> 8 ) & 0xff );
-                byte_desc_data[2] = uWidth & 0xff;
-
-                set_bit_range( &byte_desc_data[7], 7, 4, ( uHeight >> 8 ) & 0xff );
-                byte_desc_data[5] = uHeight & 0xff;
+                set_bit_range_uv2<4, 7, 7, 4>( byte_desc_data, (__m128i)((( vres >> 8 ) & 0xff)));
+                vres &= 0xff;
+                byte_desc_data[2] = vres[0];
+                byte_desc_data[5] = vres[1];
 
                 uint32_t horiz = (get_bit_range(byte_desc_data[4], 7, 4) << 8) | byte_desc_data[2];
                 uint32_t vert  = (get_bit_range(byte_desc_data[7], 7, 4) << 8) | byte_desc_data[5];
