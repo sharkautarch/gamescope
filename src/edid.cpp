@@ -1,3 +1,7 @@
+#ifndef __clang__
+#pragma GCC optimize("-Os")
+#endif
+
 #include "edid.h"
 
 #include "backend.h"
