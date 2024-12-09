@@ -91,6 +91,98 @@ namespace GamescopeWSILayer {
     return atoi(appid);
   }
 
+  static const char* gamescopeWaylandSocket() {
+    return std::getenv("GAMESCOPE_WAYLAND_DISPLAY");
+  }
+
+  static bool isAppInfoGamescope(const VkApplicationInfo *appInfo) {
+    if (!appInfo || !appInfo->pApplicationName)
+      return false;
+
+    return appInfo->pApplicationName == "gamescope"sv;
+  }
+
+  static bool isRunningUnderGamescope() {
+    static bool s_isRunningUnderGamescope = []() -> bool {
+      const char *gamescopeSocketName = gamescopeWaylandSocket();
+      if (!gamescopeSocketName || !*gamescopeSocketName)
+        return false;
+
+      // Gamescope always sets or unsets WAYLAND_SOCKET.
+      // So if that is set to something else, we know we cannot be running
+      // under Gamescope and must be in a nested Wayland session inside of gamescope.
+      const char *waylandSocketName = std::getenv("WAYLAND_DISPLAY");
+      if (waylandSocketName && *waylandSocketName && strcmp(gamescopeSocketName, waylandSocketName) != 0)
+        return false;
+
+      return true;
+    }();
+
+    return s_isRunningUnderGamescope;
+  }
+
+  template <typename T>
+  std::optional<T> parseEnv(const char *envName) {
+    const char *str = std::getenv(envName);
+    if (!str || !*str)
+      return std::nullopt;
+
+    T value;
+    auto result = std::from_chars(str, str + strlen(str), value);
+    if (result.ec != std::errc{})
+      return std::nullopt;
+
+    return value;
+  }
+
+  template <>
+  std::optional<bool> parseEnv(const char *envName) {
+    const char *str = std::getenv(envName);
+    if (!str || !*str)
+      return std::nullopt;
+
+    if (str == "true"sv || str == "1"sv)
+      return true;
+
+    return false;
+  }
+
+  static uint32_t getMinImageCount() {
+    static uint32_t s_minImageCount = []() -> uint32_t {
+      if (auto minCount = parseEnv<uint32_t>("GAMESCOPE_WSI_MIN_IMAGE_COUNT")) {
+        fprintf(stderr, "[Gamescope WSI] minImageCount overridden by GAMESCOPE_WSI_MIN_IMAGE_COUNT: %u\n", *minCount);
+        return *minCount;
+      }
+
+      if (auto minCount = parseEnv<uint32_t>("vk_wsi_override_min_image_count")) {
+        fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_wsi_override_min_image_count: %u\n", *minCount);
+        return *minCount;
+      }
+
+      if (auto minCount = parseEnv<uint32_t>("vk_x11_override_min_image_count")) {
+        fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_x11_override_min_image_count: %u\n", *minCount);
+        return *minCount;
+      }
+
+      return 3u;
+    }();
+
+    return s_minImageCount;
+  }
+
+  static bool getStrictImageCount() {
+    static bool s_strictImageCount = []() -> bool {
+      if (auto strict = parseEnv<bool>("GAMESCOPE_WSI_STRICT_IMAGE_COUNT")) {
+        return *strict;
+      }
+      if (auto strict = parseEnv<bool>("vk_x11_strict_image_count")) {
+        return *strict;
+      }
+      return false;
+    }();
+    return s_strictImageCount;
+  }
+
   // Taken from Mesa, licensed under MIT.
   //
   // No real reason to rewrite this code,
@@ -971,73 +1063,6 @@ namespace GamescopeWSILayer {
       return pDispatch->GetPhysicalDeviceWaylandPresentationSupportKHR(physicalDevice, queueFamilyIndex, gamescopeInstance->display);
     }
 
-    static const char* gamescopeWaylandSocket() {
-      return std::getenv("GAMESCOPE_WAYLAND_DISPLAY");
-    }
-
-    static bool isAppInfoGamescope(const VkApplicationInfo *appInfo) {
-      if (!appInfo || !appInfo->pApplicationName)
-        return false;
-
-      return appInfo->pApplicationName == "gamescope"sv;
-    }
-
-    static bool isRunningUnderGamescope() {
-      static bool s_isRunningUnderGamescope = []() -> bool {
-        const char *gamescopeSocketName = gamescopeWaylandSocket();
-        if (!gamescopeSocketName || !*gamescopeSocketName)
-          return false;
-
-        // Gamescope always sets or unsets WAYLAND_SOCKET.
-        // So if that is set to something else, we know we cannot be running
-        // under Gamescope and must be in a nested Wayland session inside of gamescope.
-        const char *waylandSocketName = std::getenv("WAYLAND_DISPLAY");
-        if (waylandSocketName && *waylandSocketName && strcmp(gamescopeSocketName, waylandSocketName) != 0)
-          return false;
-
-        return true;
-      }();
-
-      return s_isRunningUnderGamescope;
-    }
-
-    template <typename T>
-    static std::optional<T> parseEnv(const char *envName) {
-      const char *str = std::getenv(envName);
-      if (!str || !*str)
-        return std::nullopt;
-
-      T value;
-      auto result = std::from_chars(str, str + strlen(str), value);
-      if (result.ec != std::errc{})
-        return std::nullopt;
-
-      return value;
-    }
-
-    static uint32_t getMinImageCount() {
-      static uint32_t s_minImageCount = []() -> uint32_t {
-        if (auto minCount = parseEnv<uint32_t>("GAMESCOPE_WSI_MIN_IMAGE_COUNT")) {
-          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by GAMESCOPE_WSI_MIN_IMAGE_COUNT: %u\n", *minCount);
-          return *minCount;
-        }
-
-        if (auto minCount = parseEnv<uint32_t>("vk_wsi_override_min_image_count")) {
-          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_wsi_override_min_image_count: %u\n", *minCount);
-          return *minCount;
-        }
-
-        if (auto minCount = parseEnv<uint32_t>("vk_x11_override_min_image_count")) {
-          fprintf(stderr, "[Gamescope WSI] minImageCount overridden by vk_x11_override_min_image_count: %u\n", *minCount);
-          return *minCount;
-        }
-
-        return 3u;
-      }();
-
-      return s_minImageCount;
-    }
-
   };
 
   class VkDeviceOverrides {
@@ -1121,9 +1146,15 @@ namespace GamescopeWSILayer {
       // We always send MAILBOX to the driver.
       swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 
-      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
+      uint32_t imageCount = swapchainInfo.minImageCount;
+      if (!getStrictImageCount())
+        imageCount = std::max(getMinImageCount(), imageCount);
+      swapchainInfo.minImageCount = imageCount;
+
+      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - provided minImageCount: %u - imageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
         pCreateInfo->minImageCount,
+        imageCount,
         vkroots::helpers::enumString(pCreateInfo->imageFormat),
         vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
         canBypass ? "true" : "false");
