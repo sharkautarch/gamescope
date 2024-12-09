@@ -170,17 +170,17 @@ namespace GamescopeWSILayer {
     return s_minImageCount;
   }
 
-  static bool getStrictImageCount() {
-    static bool s_strictImageCount = []() -> bool {
-      if (auto strict = parseEnv<bool>("GAMESCOPE_WSI_STRICT_IMAGE_COUNT")) {
-        return *strict;
+  static bool getEnsureMinImageCount() {
+    static bool s_ensureMinImageCount = []() -> bool {
+      if (auto ensure = parseEnv<bool>("GAMESCOPE_WSI_ENSURE_MIN_IMAGE_COUNT")) {
+        return *ensure;
       }
-      if (auto strict = parseEnv<bool>("vk_x11_strict_image_count")) {
-        return *strict;
+      if (auto ensure = parseEnv<bool>("vk_x11_ensure_min_image_count")) {
+        return *ensure;
       }
       return false;
     }();
-    return s_strictImageCount;
+    return s_ensureMinImageCount;
   }
 
   // Taken from Mesa, licensed under MIT.
@@ -1146,15 +1146,15 @@ namespace GamescopeWSILayer {
       // We always send MAILBOX to the driver.
       swapchainInfo.presentMode = VK_PRESENT_MODE_MAILBOX_KHR;
 
-      uint32_t imageCount = swapchainInfo.minImageCount;
-      if (!getStrictImageCount())
-        imageCount = std::max(getMinImageCount(), imageCount);
-      swapchainInfo.minImageCount = imageCount;
+      uint32_t minImageCount = swapchainInfo.minImageCount;
+      if (getEnsureMinImageCount())
+        minImageCount = std::max(getMinImageCount(), minImageCount);
+      swapchainInfo.minImageCount = minImageCount;
 
-      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - provided minImageCount: %u - imageCount: %u - format: %s - colorspace: %s - flip: %s\n",
+      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
         pCreateInfo->minImageCount,
-        imageCount,
+        minImageCount,
         vkroots::helpers::enumString(pCreateInfo->imageFormat),
         vkroots::helpers::enumString(pCreateInfo->imageColorSpace),
         canBypass ? "true" : "false");
