@@ -5,8 +5,11 @@
 #include <optional>
 #include <vector>
 #include <glm/fwd.hpp>
+#ifdef __x86_64__
 #pragma GCC target("sse4.1")
+ 
 #include <smmintrin.h>
+#endif
 namespace gamescope
 {
     struct BackendConnectorHDRInfo;
