@@ -20,6 +20,7 @@
 #include "shaders/descriptor_set_constants.h"
 
 #include "Utils/Bits.h"
+#include "Utils/Simd.h"
 
 class CVulkanCmdBuffer;
 
@@ -255,7 +256,11 @@ struct vec2_t
 	float x, y;
 };
 using aligned_vec2 = glm::vec<2, float, (glm::qualifier)3>;
+using aligned_uvec2 = glm::vec<2, float, (glm::qualifier)3>;
 using aligned_vec4 = glm::vec<4, float, (glm::qualifier)3>;
+typedef glm::vec<2, uint8_t, (glm::qualifier)3> u8vec2;
+typedef uint8_t u8x16_t __attribute__((vector_size(16*sizeof(uint8_t))));
+
 static inline bool float_is_integer(float x)
 {
 	return fabsf(ceilf(x) - x) <= 0.001f;
@@ -263,8 +268,11 @@ static inline bool float_is_integer(float x)
 
 static inline glm::bvec2 float_is_integer(aligned_vec2 x)
 {
-	auto x4 = aligned_vec4{x};
-	return glm::bvec2{lessThanEqual(glm::abs(glm::ceil(x4) - x4), aligned_vec4{0.001f})};
+	auto predicate = glm::abs(glm::ceil(x) - x).data <= (aligned_vec2{0.001f}).data;
+	auto xmm = (__m128i)__builtin_shufflevector(predicate, predicate,0,1,-1,-1);
+	auto res = (u8x16_t)gamescope::to8bit(xmm);
+	u8vec2 boolean = __builtin_shufflevector(res, res, 0, 1);
+	return boolean;
 }
 
 inline bool close_enough(float a, float b, float epsilon = 0.001f)
@@ -272,9 +280,9 @@ inline bool close_enough(float a, float b, float epsilon = 0.001f)
 	return fabsf(a - b) <= epsilon;
 }
 
-inline glm::bvec2 close_enough(aligned_vec2 a, float b, float epsilon = 0.001f)
+inline auto close_enough(aligned_vec2 a, float b, float epsilon = 0.001f)
 {
-	return lessThanEqual(glm::abs(a - b), aligned_vec2{epsilon});
+	return glm::abs(a - b).data <= aligned_vec2{epsilon}.data;
 }
 
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
@@ -333,10 +341,12 @@ struct FrameInfo_t
 		bool __attribute__((noinline)) isScreenSize() const {
 			const auto vscale = aligned_vec2 { std::bit_cast<glm::vec2>(scale)  };
 			const auto voffset= aligned_vec2 { std::bit_cast<glm::vec2>(offset) };
-			auto bvNotClose = glm::not_(close_enough(vscale, 1.0f));
-			if (bvNotClose.x || bvNotClose.y ) 
+			auto enough = close_enough(vscale, 1.0f);
+			enough = ~enough;
+			if ( enough[0] | enough[1] )
 				return false;
-			return glm::all(float_is_integer(voffset));
+			auto isInt = float_is_integer(voffset);
+			return (isInt[0]) & (isInt[1]);
 		}
 
 		bool viewConvertsToLinearAutomatically() const {

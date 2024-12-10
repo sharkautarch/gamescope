@@ -10,6 +10,7 @@
  
 #include <smmintrin.h>
 #endif
+#include "Utils/Simd.h"
 namespace gamescope
 {
     struct BackendConnectorHDRInfo;
