@@ -5898,6 +5898,23 @@ error(Display *dpy, XErrorEvent *ev)
 [[noreturn]] static void
 steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
+
+  // Need to clear all the vk_lutxd references (which can be tied to backend-allocated memory)
+  // for the colormgmt globals/statics, to avoid coredump at exit from within the colormgmt exit-time destructors:
+	for (auto& colorMgmtArr : 
+			{
+				std::ref(g_ColorMgmtLuts),
+				std::ref(g_ColorMgmtLutsOverride),
+				std::ref(g_ScreenshotColorMgmtLuts),
+				std::ref(g_ScreenshotColorMgmtLutsHDR)
+			})
+	{
+		for (auto& colorMgmt : colorMgmtArr.get())
+		{
+			colorMgmt.gamescope_color_mgmt_luts::~gamescope_color_mgmt_luts(); //dtor call also calls all the subobjects' dtors
+		}
+	}
+	
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -5922,7 +5939,6 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 	{
 		g_ColorMgmt.pending.appHDRMetadata = nullptr;
 		g_ColorMgmt.current.appHDRMetadata = nullptr;
-
 		s_scRGB709To2020Matrix = nullptr;
 		for (int i = 0; i < gamescope::GAMESCOPE_SCREEN_TYPE_COUNT; i++)
 		{
