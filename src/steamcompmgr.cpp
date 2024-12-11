@@ -5822,12 +5822,12 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 			s_MuraCTMBlob[i] = nullptr;
 		}
 	}
-		wlserver_lock();
-		printf("line before  gamescope::IBackend::Set( nullptr );\n");
-    gamescope::IBackend::Set( nullptr );
-		printf("line after  gamescope::IBackend::Set( nullptr );\n");
-    wlserver_shutdown();
-    wlserver_unlock(false);
+		
+	gamescope::IBackend::Set( nullptr );
+
+	wlserver_lock();
+  wlserver_shutdown();
+  wlserver_unlock(false);
 
 	if (lock)
 		lock->unlock();
