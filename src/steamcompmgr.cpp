@@ -85,6 +85,7 @@
 #include "BufferMemo.h"
 #include "Utils/Process.h"
 #include "Utils/Algorithm.h"
+#include "Utils/Lock.h"
 
 #include "wlr/types/wlr_pointer_constraints_v1.h"
 
@@ -5759,9 +5760,37 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 	}
 }
 
+static int
+error(Display *dpy, XErrorEvent *ev)
+{
+	// Do nothing. XErrors are usually benign.
+	return 0;
+}
+
+
+static const gamescope::CGlobalLockReference s_xwlLockReference{};
+using XwlLock = gamescope::ReferencedLock<s_xwlLockReference>;
+
 [[noreturn]] static void
 steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
+
+  // Need to clear all the vk_lutxd references (which can be tied to backend-allocated memory)
+  // for the colormgmt globals/statics, to avoid coredump at exit from within the colormgmt exit-time destructors:
+	for (auto& colorMgmtArr : 
+			{
+				std::ref(g_ColorMgmtLuts),
+				std::ref(g_ColorMgmtLutsOverride),
+				std::ref(g_ScreenshotColorMgmtLuts),
+				std::ref(g_ScreenshotColorMgmtLutsHDR)
+			})
+	{
+		for (auto& colorMgmt : colorMgmtArr.get())
+		{
+			colorMgmt.gamescope_color_mgmt_luts::~gamescope_color_mgmt_luts(); //dtor call also calls all the subobjects' dtors
+		}
+	}
+	
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -5786,7 +5815,6 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 	{
 		g_ColorMgmt.pending.appHDRMetadata = nullptr;
 		g_ColorMgmt.current.appHDRMetadata = nullptr;
-
 		s_scRGB709To2020Matrix = nullptr;
 		for (int i = 0; i < gamescope::GAMESCOPE_SCREEN_TYPE_COUNT; i++)
 		{
@@ -5801,13 +5829,17 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
     wlserver_shutdown();
     wlserver_unlock(false);
 
-	printf("line before pthread_exit(NULL);\n");
 	if (lock)
 		lock->unlock();
 	pthread_exit(NULL);
 }
 
-
+static int
+handle_io_error(Display *dpy)
+{
+	xwm_log.errorf("X11 I/O error");
+	steamcompmgr_exit( s_xwlLockReference.popLock() );
+}
 
 static bool
 register_cm(xwayland_ctx_t *ctx)
@@ -6670,15 +6702,7 @@ void init_xwayland_ctx(uint32_t serverId, gamescope_xwayland_server_t *xwayland_
 	static bool setup_error_handlers = false;
 	if (!setup_error_handlers)
 	{
-		static auto error = [](Display *dpy, XErrorEvent *ev) -> int {
-			// Do nothing. XErrors are usually benign.
-			return 0;
-		};
 		XSetErrorHandler(error);
-		static auto handle_io_error = [](Display *dpy) -> int {
-			xwm_log.errorf("X11 I/O error");
-			steamcompmgr_exit();
-		};
 		XSetIOErrorHandler(handle_io_error);
 		setup_error_handlers = true;
 	}
@@ -7349,7 +7373,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	init_runtime_info();
 
-	std::unique_lock<std::mutex> xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	XwlLock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
 	// Initialize any xwayland ctxs we have
 	{
@@ -7893,7 +7917,35 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> {std::in_place_t{}, std::move(xwayland_server_guard)});
+	steamcompmgr_exit( xwayland_server_guard.popLock() );
+}
+
+void steamcompmgr_send_frame_done_to_focus_window()
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+
+	if ( global_focus.focusWindow && global_focus.focusWindow->xwayland().surface.main_surface )
+	{
+		wlserver_lock();
+		wlserver_send_frame_done( global_focus.focusWindow->xwayland().surface.main_surface , &now );
+		wlserver_unlock();		
+	}
+}
+
+gamescope_xwayland_server_t *steamcompmgr_get_focused_server()
+{
+	if (global_focus.inputFocusWindow != nullptr)
+	{
+		gamescope_xwayland_server_t *server = NULL;
+		for (size_t i = 0; (server = wlserver_get_xwayland_server(i)); i++)
+		{
+			if (server->ctx->focus.inputFocusWindow == global_focus.inputFocusWindow)
+				return server;
+		}
+	}
+
+	return wlserver_get_xwayland_server(0);
 }
 
 struct wlr_surface *steamcompmgr_get_server_input_surface( size_t idx )
