@@ -1282,13 +1282,13 @@ glm::vec<2, float, (glm::qualifier)3> calc_scale_factor_scaler(float sourceWidth
 	
 	
 	const auto nestedResolution = aligned_vec2 { g_ivNestedResolution };
-	const auto outputRatio = (aligned_vec2)currentOutputResolution / nestedResolution;
+	const auto outputRatio = ((aligned_vec2)currentOutputResolution) / ((aligned_vec2)nestedResolution);
 	const float flOutputScaleRatio = glm::min(outputRatio.x, outputRatio.y);
 	const aligned_vec2 ratios = nestedResolution / sourceDimensions;
 
 	aligned_vec2 out_scale;
 	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL) {
-		out_scale = aligned_vec2{ glm::min(ratios.x, ratios.x) };
+		out_scale = aligned_vec2{ glm::min(ratios.x, ratios.y) };
 	} else {
 		out_scale = aligned_vec2{ glm::max(ratios.x, ratios.y) };
 	}

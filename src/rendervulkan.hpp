@@ -266,13 +266,14 @@ static inline bool float_is_integer(float x)
 	return fabsf(ceilf(x) - x) <= 0.001f;
 }
 
-static inline glm::bvec2 float_is_integer(aligned_vec2 x)
+static inline glm::bvec2 float_is_integer(aligned_vec4 x4)
 {
-	auto predicate = glm::abs(glm::ceil(x) - x).data <= (aligned_vec2{0.001f}).data;
-	auto xmm = (__m128i)__builtin_shufflevector(predicate, predicate,0,1,-1,-1);
-	auto res = (u8x16_t)gamescope::to8bit(xmm);
-	u8vec2 boolean = __builtin_shufflevector(res, res, 0, 1);
-	return boolean;
+	auto predicate = glm::abs(glm::ceil(x4) - x4).data <= (aligned_vec4{0.001f}).data;
+	auto xmm = (__m128)predicate;
+	auto res = _mm_movemask_ps(xmm);
+	glm::bvec2 ret{false};
+	memcpy(&ret, &res, sizeof(ret));
+	return ret;
 }
 
 inline bool close_enough(float a, float b, float epsilon = 0.001f)
@@ -280,9 +281,11 @@ inline bool close_enough(float a, float b, float epsilon = 0.001f)
 	return fabsf(a - b) <= epsilon;
 }
 
-inline auto close_enough(aligned_vec2 a, float b, float epsilon = 0.001f)
+inline unsigned close_enough(aligned_vec4 a4, float b, float epsilon = 0.001f)
 {
-	return glm::abs(a - b).data <= aligned_vec2{epsilon}.data;
+	auto xmm = (__m128)(glm::abs(a4 - b).data <= aligned_vec4{epsilon}.data);
+	auto res = _mm_movemask_ps(xmm);
+	return res | (~0b11u);
 }
 
 bool DRMFormatHasAlpha( uint32_t nDRMFormat );
@@ -338,12 +341,13 @@ struct FrameInfo_t
 			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
-		bool __attribute__((noinline)) isScreenSize() const {
-			const auto vscale = aligned_vec2 { std::bit_cast<glm::vec2>(scale)  };
-			const auto voffset= aligned_vec2 { std::bit_cast<glm::vec2>(offset) };
+		bool __attribute__((noinline, nostackprotector)) isScreenSize() const {
+			aligned_vec4 vscale{};
+			aligned_vec4 voffset{};
+			memcpy(&vscale, &scale, sizeof(scale));
+			memcpy(&voffset, &offset, sizeof(offset));
 			auto enough = close_enough(vscale, 1.0f);
-			enough = ~enough;
-			if ( enough[0] | enough[1] )
+			if ( ~enough )
 				return false;
 			auto isInt = float_is_integer(voffset);
 			return (isInt[0]) & (isInt[1]);
