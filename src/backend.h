@@ -269,6 +269,7 @@ namespace gamescope
     class CBaseBackend : public IBackend
     {
     public:
+    		virtual ~CBaseBackend() {}
         virtual INestedHints *GetNestedHints() override;
 
         virtual bool HackTemporarySetDynamicRefresh( int nRefresh ) override { return false; }
