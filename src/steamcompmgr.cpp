@@ -5822,15 +5822,14 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 			s_MuraCTMBlob[i] = nullptr;
 		}
 	}
-		
-	gamescope::IBackend::Set( nullptr );
+		if (lock)
+			lock->unlock();
+    gamescope::IBackend::Set( nullptr );
 
-	wlserver_lock();
-  wlserver_shutdown();
-  wlserver_unlock(false);
-
-	if (lock)
-		lock->unlock();
+    wlserver_lock();
+    wlserver_shutdown();
+    wlserver_unlock(false);
+	
 	pthread_exit(NULL);
 }
 
