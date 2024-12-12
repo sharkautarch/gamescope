@@ -1,4 +1,4 @@
-#include "color_helpers_impl.h"
+#include "color_helpers.h"
 #include <cstdio>
 
 //#include <glm/ext.hpp>
@@ -16,7 +16,6 @@ lut3d_t lut3d_float;
 
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
-    SET_FAST_MATH_FLAGS
     const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } };
     const glm::vec2 white = { 0.3070f, 0.3220f };
 
@@ -233,7 +232,6 @@ void test_eetf2390_mono()
 
 int main(int argc, char* argv[])
 {
-    SET_FAST_MATH_FLAGS
     printf("color_tests\n");
     // test_eetf2390_mono();
     color_tests();

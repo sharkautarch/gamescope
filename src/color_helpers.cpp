@@ -1,8 +1,6 @@
 #define COLOR_HELPERS_CPP
 #include "color_helpers_impl.h"
 
-FAST_MATH_ON
-
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -381,7 +379,7 @@ inline avec4 ClampAndSanitize( glm::vec4 a, float min, float max )
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
-#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
+#ifndef __FAST_MATH__
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
@@ -1438,5 +1436,3 @@ const glm::mat3 k_xyz_from_2020 = normalised_primary_matrix( displaycolorimetry_
 const glm::mat3 k_2020_from_xyz = glm::inverse( k_xyz_from_2020 );
 
 const glm::mat3 k_2020_from_709 = k_2020_from_xyz * k_xyz_from_709;
-
-FAST_MATH_OFF

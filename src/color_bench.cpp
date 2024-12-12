@@ -27,7 +27,6 @@ void __attribute__((constructor)) loadLutLook() {
 }
 static void BenchmarkCalcColorTransform(EOTF inputEOTF, benchmark::State &state)
 {
-    SET_FAST_MATH_FLAGS
     const primaries_t primaries = { { 0.602f, 0.355f }, { 0.340f, 0.574f }, { 0.164f, 0.121f } };
     const glm::vec2 white = { 0.3070f, 0.3220f };
     const glm::vec2 destVirtualWhite = { 0.f, 0.f };
