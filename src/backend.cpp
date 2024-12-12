@@ -26,9 +26,10 @@ namespace gamescope
     
     bool IBackend::Set( IBackend *pBackend )
     {
-    		if ( s_pBackend ) {
-    			std::destroy_at(GetBackend());
-    		}
+    		//FIXME: calling the backend's destructor sometimes hangs gamescope for wayland backend
+    		//if ( s_pBackend ) {
+    		//	std::destroy_at(GetBackend());
+    		//}
 
         if ( pBackend )
         {
