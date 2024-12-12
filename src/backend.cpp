@@ -27,7 +27,7 @@ namespace gamescope
     bool IBackend::Set( IBackend *pBackend )
     {
     		if ( s_pBackend ) {
-    			GetBackend()->IBackend::~IBackend();
+    			std::destroy_at(GetBackend());
     		}
 
         if ( pBackend )
