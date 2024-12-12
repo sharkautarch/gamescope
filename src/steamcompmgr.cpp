@@ -5951,15 +5951,19 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 			s_MuraCTMBlob[i] = nullptr;
 		}
 	}
-
+		if (lock)
+			lock->unlock();
     gamescope::IBackend::Set( nullptr );
 
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
 	
+<<<<<<< HEAD
 	if (lock)
 		lock->unlock();
+=======
+>>>>>>> graceful_exit
 	pthread_exit(NULL);
 }
 
@@ -8065,7 +8069,11 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
+<<<<<<< HEAD
 	steamcompmgr_exit( xwayland_server_guard.popLock() );
+=======
+	steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> {std::in_place_t{}, std::move(xwayland_server_guard)} );
+>>>>>>> graceful_exit
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()
