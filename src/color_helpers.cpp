@@ -1,6 +1,7 @@
 #define COLOR_HELPERS_CPP
 #include "color_helpers_impl.h"
 
+
 #include <algorithm>
 #include <cstdint>
 #include <cmath>
@@ -9,9 +10,11 @@
 
 #include <glm/vec2.hpp>
 #include <glm/vec3.hpp>
+#include <glm/gtx/string_cast.hpp>
+
+FAST_MATH_ON
 #include <glm/mat3x3.hpp>
 #include <glm/gtx/matrix_operation.hpp>
-#include <glm/gtx/string_cast.hpp>
 
 
 glm::vec3 xyY_to_XYZ( const glm::vec2 & xy, float Y )
@@ -379,7 +382,7 @@ inline avec4 ClampAndSanitize( glm::vec4 a, float min, float max )
 
 inline float ClampAndSanitize( float a, float min, float max )
 {
-#ifndef __FAST_MATH__
+#if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
     return std::isfinite( a ) ? std::min(std::max(min, a), max) : min;
 #else
     return std::min(std::max(min, a), max);
@@ -1436,3 +1439,5 @@ const glm::mat3 k_xyz_from_2020 = normalised_primary_matrix( displaycolorimetry_
 const glm::mat3 k_2020_from_xyz = glm::inverse( k_xyz_from_2020 );
 
 const glm::mat3 k_2020_from_709 = k_2020_from_xyz * k_xyz_from_709;
+
+FAST_MATH_OFF
