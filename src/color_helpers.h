@@ -54,7 +54,7 @@ namespace glm {
 # define INSTANTIATE(qualifier) \
   template< std::size_t I > \
   auto qualifier \
-  get( auto qualifier v ) noexcept { \
+  __attribute__((always_inline)) get( auto qualifier v ) noexcept { \
     if constexpr (I == 0) return v.x; \
     if constexpr (I == 1) return v.y; \
     if constexpr (I == 2) return v.z; \

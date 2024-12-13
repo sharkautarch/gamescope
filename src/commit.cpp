@@ -169,5 +169,5 @@ bool commit_t::ShouldPreemptivelyUpscale()
 
     glm::vec2 flScale = calc_scale_factor( vulkanTex->width(), vulkanTex->height() );
 
-    return !close_enough( flScale.x, 1.0f ) || !close_enough( flScale.y, 1.0f );
+    return !!(~close_enough( flScale, 1.0f ));
 }

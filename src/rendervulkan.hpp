@@ -266,7 +266,7 @@ static inline bool float_is_integer(float x)
 	return fabsf(ceilf(x) - x) <= 0.001f;
 }
 
-static inline glm::bvec2 float_is_integer(aligned_vec4 x4)
+static inline glm::bvec2  __attribute__((flatten)) float_is_integer(aligned_vec4 x4)
 {
 	auto predicate = glm::abs(glm::ceil(x4) - x4).data <= (aligned_vec4{0.001f}).data;
 	auto xmm = (__m128)predicate;
@@ -281,8 +281,9 @@ inline bool close_enough(float a, float b, float epsilon = 0.001f)
 	return fabsf(a - b) <= epsilon;
 }
 
-inline unsigned close_enough(aligned_vec4 a4, float b, float epsilon = 0.001f)
+inline unsigned __attribute__((always_inline, flatten)) close_enough(aligned_vec2 a, float b, float epsilon = 0.001f)
 {
+	aligned_vec4 a4 = aligned_vec4{__builtin_shufflevector(a.data, a.data, 0, 1, -1, -1)};
 	auto xmm = (__m128)(glm::abs(a4 - b).data <= aligned_vec4{epsilon}.data);
 	auto res = _mm_movemask_ps(xmm);
 	return res | (~0b11u);
@@ -341,7 +342,7 @@ struct FrameInfo_t
 			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
-		bool __attribute__((noinline, nostackprotector)) isScreenSize() const {
+		bool __attribute__((flatten, nostackprotector)) isScreenSize() const {
 			aligned_vec4 vscale{};
 			aligned_vec4 voffset{};
 			memcpy(&vscale, &scale, sizeof(scale));

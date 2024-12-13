@@ -1271,26 +1271,25 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-glm::vec<2, float, (glm::qualifier)3> calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
+glm::vec2 __attribute__((flatten)) calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
 {
-	using aligned_vec2 = glm::vec<2, float, (glm::qualifier)3>;
-	const auto sourceDimensions = aligned_vec2 {sourceWidth, sourceHeight};
+	const auto sourceDimensions = glm::vec2 {sourceWidth, sourceHeight};
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
-		return (aligned_vec2)currentOutputResolution/sourceDimensions;
+		return (glm::vec2)currentOutputResolution/sourceDimensions;
 	}
 	
 	
-	const auto nestedResolution = aligned_vec2 { g_ivNestedResolution };
-	const auto outputRatio = ((aligned_vec2)currentOutputResolution) / ((aligned_vec2)nestedResolution);
+	const auto nestedResolution = glm::vec2 { g_ivNestedResolution };
+	const auto outputRatio = ((glm::vec2)currentOutputResolution) / ((glm::vec2)nestedResolution);
 	const float flOutputScaleRatio = glm::min(outputRatio.x, outputRatio.y);
-	const aligned_vec2 ratios = nestedResolution / sourceDimensions;
+	const glm::vec2 ratios = nestedResolution / sourceDimensions;
 
-	aligned_vec2 out_scale;
+	glm::vec2 out_scale;
 	if (g_upscaleScaler != GamescopeUpscaleScaler::FILL) {
-		out_scale = aligned_vec2{ glm::min(ratios.x, ratios.y) };
+		out_scale = glm::vec2{ glm::min(ratios.x, ratios.y) };
 	} else {
-		out_scale = aligned_vec2{ glm::max(ratios.x, ratios.y) };
+		out_scale = glm::vec2{ glm::max(ratios.x, ratios.y) };
 	}
 
 	if (g_upscaleScaler == GamescopeUpscaleScaler::AUTO)
@@ -1306,14 +1305,14 @@ glm::vec<2, float, (glm::qualifier)3> calc_scale_factor_scaler(float sourceWidth
 			// x == y here always.
 			if (out_scale.x != out_scale.y)
 				__builtin_unreachable();
-			out_scale = aligned_vec2{ glm::floor(out_scale.x) };
+			out_scale = glm::vec2{ glm::floor(out_scale.x) };
 		}
 	}
 	
 	return out_scale;
 }
 
-glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight)
+glm::vec2 __attribute__((flatten)) calc_scale_factor(float sourceWidth, float sourceHeight)
 {
 	const auto globalScale = globalScaleRatio;
 	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScale;
@@ -5701,7 +5700,7 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 							win = nullptr;
 			};
 			
-			#pragma GCC unroll 8
+			#pragma GCC unroll 1
 			for (std::reference_wrapper<steamcompmgr_win_t *> win 
 					 : (std::reference_wrapper<steamcompmgr_win_t*>[])
 					 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
@@ -5770,12 +5769,13 @@ error(Display *dpy, XErrorEvent *ev)
 static const gamescope::CGlobalLockReference s_xwlLockReference{};
 using XwlLock = gamescope::ReferencedLock<s_xwlLockReference>;
 
-[[noreturn]] static void
+[[noreturn]] static void __attribute__((cold))
 steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
 {
 
   // Need to clear all the vk_lutxd references (which can be tied to backend-allocated memory)
   // for the colormgmt globals/statics, to avoid coredump at exit from within the colormgmt exit-time destructors:
+  #pragma GCC unroll 1
 	for (auto& colorMgmtArr : 
 			{
 				std::ref(g_ColorMgmtLuts),
@@ -7104,7 +7104,6 @@ void steamcompmgr_check_xdg(bool vblank, uint64_t vblank_idx)
 {
 	if (wlserver_xdg_dirty())
 	{
-		#pragma GCC unroll 6
 		for (std::reference_wrapper<steamcompmgr_win_t *> focusWin
 				 : (std::reference_wrapper<steamcompmgr_win_t*>[]) 
 				 { global_focus.focusWindow, global_focus.inputFocusWindow, global_focus.overlayWindow,
