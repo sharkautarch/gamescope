@@ -1271,9 +1271,8 @@ window_is_fullscreen( steamcompmgr_win_t *w )
 	return w && ( window_is_steam( w ) || w->isFullscreen );
 }
 
-glm::vec2 __attribute__((flatten)) calc_scale_factor_scaler(float sourceWidth, float sourceHeight)
+glm::vec2 __attribute__((flatten)) calc_scale_factor_scaler(glm::vec2 sourceDimensions)
 {
-	const auto sourceDimensions = glm::vec2 {sourceWidth, sourceHeight};
 	if (g_upscaleScaler == GamescopeUpscaleScaler::STRETCH)
 	{
 		return (glm::vec2)currentOutputResolution/sourceDimensions;
@@ -1312,10 +1311,10 @@ glm::vec2 __attribute__((flatten)) calc_scale_factor_scaler(float sourceWidth, f
 	return out_scale;
 }
 
-glm::vec2 __attribute__((flatten)) calc_scale_factor(float sourceWidth, float sourceHeight)
+glm::vec2 __attribute__((flatten)) calc_scale_factor(glm::vec2 sourceDimensions)
 {
 	const auto globalScale = globalScaleRatio;
-	return calc_scale_factor_scaler(sourceWidth, sourceHeight) * globalScale;
+	return calc_scale_factor_scaler(sourceDimensions) * globalScale;
 }
 
 /**
@@ -1678,7 +1677,7 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 	}
 	cursor_scale = std::max(cursor_scale, 1.0f);
 
-	glm::vec2 currentScaleRatio = calc_scale_factor(source.x, source.y);
+	glm::vec2 currentScaleRatio = calc_scale_factor(source);
 
 	auto cursorOffset = glm::ivec2{ ((glm::vec2)currentOutputResolution - (glm::vec2)source * currentScaleRatio) / 2.0f };
 
@@ -1855,10 +1854,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		// are using the bypass layer, we don't get that, so we need to handle
 		// this case explicitly.
 		if (w == scaleW) {
-			source = {
-				layer->tex->width(),
-				layer->tex->height()
-			};
+			source = layer->tex->dimensions();
 		} else {
 			source = {
 				scaleW->GetGeometry().nWidth,
@@ -1882,7 +1878,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
   glm::vec2 currentScaleRatio{1.0f, 1.0f};
 	if ( source != currentOutputResolution || offset || globalScaleRatio != 1.0f )
 	{
-		currentScaleRatio = calc_scale_factor(source.x, source.y);
+		currentScaleRatio = calc_scale_factor(source);
 
 		drawOffset = glm::ivec2{ ((glm::vec2)currentOutputResolution - (glm::vec2)source * currentScaleRatio) / 2.0f };
 		if ( w != scaleW )

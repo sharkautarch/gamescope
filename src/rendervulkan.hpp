@@ -174,6 +174,7 @@ public:
 	inline VkImageView chromaView() { return m_chromaView; }
 	inline uint32_t width() { return m_width; }
 	inline uint32_t height() { return m_height; }
+	inline glm::uvec2 dimensions() { glm::uvec2 ret = ret ^ ret; memcpy(&ret, std::launder(&m_width), sizeof(ret)); return ret; }
 	inline uint32_t depth() { return m_depth; }
 	inline uint32_t contentWidth() {return m_contentWidth; }
 	inline uint32_t contentHeight() {return m_contentHeight; }
@@ -362,6 +363,9 @@ struct FrameInfo_t
 
 		uint32_t integerWidth() const { return tex->width() / scale.x; }
 		uint32_t integerHeight() const { return tex->height() / scale.y; }
+		glm::uvec2 integerDimensions() const {
+			return (glm::uvec2) ( (((glm::vec2) tex->dimensions()) / std::bit_cast<glm::vec2>(scale) ) ); 
+		} 
 		vec2_t offsetPixelCenter() const
 		{
 			auto voffset = std::bit_cast<glm::vec2>(offset);

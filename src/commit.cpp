@@ -150,7 +150,7 @@ void commit_t::SetFence( int nFence, bool bMangoNudge, CommitDoneList_t *pDoneCo
     m_pDoneCommits = pDoneCommits;
 }
 
-glm::vec2 calc_scale_factor(float sourceWidth, float sourceHeight);
+glm::vec2 calc_scale_factor(glm::vec2);
 
 bool commit_t::ShouldPreemptivelyUpscale()
 {
@@ -167,7 +167,7 @@ bool commit_t::ShouldPreemptivelyUpscale()
     if ( !vulkanTex )
         return false;
 
-    glm::vec2 flScale = calc_scale_factor( vulkanTex->width(), vulkanTex->height() );
+    glm::vec2 flScale = calc_scale_factor( vulkanTex->dimensions() );
 
     return !!(~close_enough( flScale, 1.0f ));
 }

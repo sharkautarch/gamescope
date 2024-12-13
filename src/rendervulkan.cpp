@@ -1895,8 +1895,7 @@ void CVulkanCmdBuffer::dispatch(uint32_t x, uint32_t y, uint32_t z, unsigned int
 
 void CVulkanCmdBuffer::copyImage(gamescope::Rc<CVulkanTexture> src, gamescope::Rc<CVulkanTexture> dst)
 {
-	assert(src->width() == dst->width());
-	assert(src->height() == dst->height());
+	assert(src->dimensions() == dst->dimensions());
 	prepareSrcImage(src.get());
 	prepareDestImage(dst.get());
 	
@@ -3488,11 +3487,10 @@ bool vulkan_make_output()
 	return true;
 }
 
-static void update_tmp_images( uint32_t width, uint32_t height )
+static void update_tmp_images( glm::uvec2 dim )
 {
 	if ( g_output.tmpOutput != nullptr
-			&& width == g_output.tmpOutput->width()
-			&& height == g_output.tmpOutput->height() )
+			&& dim == g_output.tmpOutput->dimensions() )
 	{
 		return;
 	}
@@ -3502,7 +3500,7 @@ static void update_tmp_images( uint32_t width, uint32_t height )
 	createFlags.bStorage = true;
 
 	g_output.tmpOutput = new CVulkanTexture();
-	bool bSuccess = g_output.tmpOutput->BInit( width, height, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
+	bool bSuccess = g_output.tmpOutput->BInit( dim.x, dim.y, 1u, DRM_FORMAT_ARGB8888, createFlags, nullptr );
 
 	if ( !bSuccess )
 	{
@@ -4030,13 +4028,10 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 
 	if ( frameInfo->useFSRLayer0 )
 	{
-		uint32_t inputX = frameInfo->layers[0].tex->width();
-		uint32_t inputY = frameInfo->layers[0].tex->height();
+		glm::uvec2 input = frameInfo->layers[0].tex->dimensions();
+		glm::uvec2 temp = frameInfo->layers[0].integerDimensions();
 
-		uint32_t tempX = frameInfo->layers[0].integerWidth();
-		uint32_t tempY = frameInfo->layers[0].integerHeight();
-
-		update_tmp_images(tempX, tempY);
+		update_tmp_images(temp);
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_EASU));
 		cmdBuffer->bindTarget(g_output.tmpOutput);
@@ -4044,11 +4039,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->setTextureSrgb(0, true);
 		cmdBuffer->setSamplerUnnormalized(0, false);
 		cmdBuffer->setSamplerNearest(0, false);
-		cmdBuffer->uploadConstants<EasuPushData_t>(inputX, inputY, tempX, tempY);
+		cmdBuffer->uploadConstants<EasuPushData_t>(input.x, input.y, temp.x, temp.y);
 
 		int pixelsPerGroup = 16;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroup), div_roundup(tempY, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
+		cmdBuffer->dispatch(div_roundup(temp.x, pixelsPerGroup), div_roundup(temp.y, pixelsPerGroup), 1, total_dispatches, curr_dispatch_no++);
 
 		cmdBuffer->bindPipeline(g_device.pipeline(SHADER_TYPE_RCAS, frameInfo->layerCount, frameInfo->ycbcrMask() & ~1, 0u, frameInfo->colorspaceMask(), outputTF ));
 		bind_all_layers(cmdBuffer.get(), frameInfo);
@@ -4063,13 +4058,11 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	}
 	else if ( frameInfo->useNISLayer0 )
 	{
-		uint32_t inputX = frameInfo->layers[0].tex->width();
-		uint32_t inputY = frameInfo->layers[0].tex->height();
+		glm::uvec2 input = frameInfo->layers[0].tex->dimensions();
 
-		uint32_t tempX = frameInfo->layers[0].integerWidth();
-		uint32_t tempY = frameInfo->layers[0].integerHeight();
+		glm::uvec2 temp = frameInfo->layers[0].integerDimensions();
 
-		update_tmp_images(tempX, tempY);
+		update_tmp_images(temp);
 
 		float nisSharpness = (20 - g_upscaleFilterSharpness) / 20.0f;
 
@@ -4085,12 +4078,12 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 		cmdBuffer->bindTexture(VKR_NIS_COEF_USM_SLOT, g_output.nisUsmImage);
 		cmdBuffer->setSamplerUnnormalized(VKR_NIS_COEF_USM_SLOT, false);
 		cmdBuffer->setSamplerNearest(VKR_NIS_COEF_USM_SLOT, false);
-		cmdBuffer->uploadConstants<NisPushData_t>(inputX, inputY, tempX, tempY, nisSharpness);
+		cmdBuffer->uploadConstants<NisPushData_t>(input.x, input.y, temp.x, temp.y, nisSharpness);
 
 		int pixelsPerGroupX = 32;
 		int pixelsPerGroupY = 24;
 
-		cmdBuffer->dispatch(div_roundup(tempX, pixelsPerGroupX), div_roundup(tempY, pixelsPerGroupY), 1, total_dispatches, curr_dispatch_no++);
+		cmdBuffer->dispatch(div_roundup(temp.x, pixelsPerGroupX), div_roundup(temp.y, pixelsPerGroupY), 1, total_dispatches, curr_dispatch_no++);
 
 		struct FrameInfo_t nisFrameInfo = *frameInfo;
 		nisFrameInfo.layers[0].tex = g_output.tmpOutput;
@@ -4108,7 +4101,7 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 	}
 	else if ( frameInfo->blurLayer0 )
 	{
-		update_tmp_images(currentOutputResolution.x, currentOutputResolution.y);
+		update_tmp_images(currentOutputResolution);
 
 		ShaderType type = SHADER_TYPE_BLUR_FIRST_PASS;
 
