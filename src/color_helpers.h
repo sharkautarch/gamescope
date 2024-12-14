@@ -2,8 +2,16 @@
 
 #define GLM_ENABLE_EXPERIMENTAL 1
 #define GLM_FORCE_SWIZZLE 1
-
 #include <algorithm>
+#include <glm/detail/qualifier.hpp>
+
+#ifdef GLM_FUNC_QUALIFIER
+#undef GLM_FUNC_QUALIFIER
+#endif
+#define GLM_FUNC_QUALIFIER __attribute__((always_inline)) inline
+#include <glm/common.hpp>
+#undef GLM_FUNC_QUALIFIER
+#define GLM_FUNC_QUALIFIER inline
 #include <cstdint>
 #include <cmath>
 #include <vector>
@@ -53,12 +61,12 @@ namespace std
 namespace glm {
 # define INSTANTIATE(qualifier) \
   template< std::size_t I > \
-  auto qualifier \
+  constexpr inline auto qualifier \
   __attribute__((always_inline)) get( auto qualifier v ) noexcept { \
-    if constexpr (I == 0) return v.x; \
-    if constexpr (I == 1) return v.y; \
-    if constexpr (I == 2) return v.z; \
-    if constexpr (I == 3) return v.w; \
+    if constexpr (I == 0) return v[0]; \
+    if constexpr (I == 1) return v[1]; \
+    if constexpr (I == 2) return v[2]; \
+    if constexpr (I == 3) return v[3]; \
   }
   
   INSTANTIATE(&)

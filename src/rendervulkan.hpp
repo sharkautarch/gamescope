@@ -343,7 +343,7 @@ struct FrameInfo_t
 			return DRMFormatHasAlpha( tex->drmFormat() );
 		}
 
-		bool __attribute__((flatten, nostackprotector)) isScreenSize() const {
+		bool __attribute__((flatten, no_stack_protector)) isScreenSize() const {
 			aligned_vec4 vscale{};
 			aligned_vec4 voffset{};
 			memcpy(&vscale, &scale, sizeof(scale));

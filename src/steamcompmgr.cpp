@@ -1951,7 +1951,8 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	if (layer->filter == GamescopeUpscaleFilter::PIXEL)
 	{
 		// Don't bother doing more expensive filtering if we are sharp + integer.
-		if ( glm::all(float_is_integer(currentScaleRatio)) )
+		if ( auto isInt = float_is_integer(currentScaleRatio);
+					isInt[0] & isInt[1]  )
 			layer->filter = GamescopeUpscaleFilter::NEAREST;
 	}
 
