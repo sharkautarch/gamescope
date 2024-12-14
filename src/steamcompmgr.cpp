@@ -4874,33 +4874,35 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 			return;
 		const char *contents = (const char *) data;
 		defer( XFree( data ); );
-
 		if (ev->selection == ctx->atoms.clipboard)
 		{
 			if ( GetBackend()->GetNestedHints() )
 			{
-				//GetBackend()->GetNestedHints()->SetSelection()
+				if ( GetBackend()->GetNestedHints() )
+				{
+					GetBackend()->GetNestedHints()->SetSelection( szContents, GAMESCOPE_SELECTION_CLIPBOARD );
+				}
+				else
+				{
+					gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
+				}
 			}
-			else
+			else if (ev->selection == ctx->atoms.primarySelection)
 			{
-				gamescope_set_selection( contents, GAMESCOPE_SELECTION_CLIPBOARD );
+				if ( GetBackend()->GetNestedHints() )
+				{
+					GetBackend()->GetNestedHints()->SetSelection( szContents, GAMESCOPE_SELECTION_PRIMARY );
+				}
+				else
+				{
+					gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
+				}
 			}
-		}
-		else if (ev->selection == ctx->atoms.primarySelection)
-		{
-			if ( GetBackend()->GetNestedHints() )
-			{
-				//GetBackend()->GetNestedHints()->SetSelection()
-			}
-			else
-			{
-				gamescope_set_selection( contents, GAMESCOPE_SELECTION_PRIMARY );
-			}
-		}
 		else
 		{
 			xwm_log.errorf( "Selection '%s' not supported.  Ignoring", XGetAtomName(ctx->dpy, ev->selection) );
 		}
+	}
 	}
 }
 
