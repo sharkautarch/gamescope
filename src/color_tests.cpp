@@ -1,6 +1,9 @@
 #include "color_helpers_impl.h"
 #include <cstdio>
-
+#ifdef GLM_FUNC_QUALIFIER
+#undef GLM_FUNC_QUALIFIER
+#endif
+#define GLM_FUNC_QUALIFIER inline
 //#include <glm/ext.hpp>
 #include <glm/gtx/string_cast.hpp>
 

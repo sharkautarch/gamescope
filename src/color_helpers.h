@@ -1,31 +1,25 @@
 #pragma once
 
 #define GLM_ENABLE_EXPERIMENTAL 1
-#define GLM_FORCE_SWIZZLE 1
 #include <algorithm>
-#include <glm/detail/qualifier.hpp>
 
-#ifdef GLM_FUNC_QUALIFIER
-#undef GLM_FUNC_QUALIFIER
-#endif
-#define GLM_FUNC_QUALIFIER __attribute__((always_inline)) inline
-#include <glm/common.hpp>
-#undef GLM_FUNC_QUALIFIER
-#define GLM_FUNC_QUALIFIER inline
+#define GLM_FORCE_INLINE 1
+
+#include "../thirdparty/glm/glm/common.hpp"
 #include <cstdint>
 #include <cmath>
 #include <vector>
 
 #include "Utils/Directives.h"
 
-#include <glm/vec2.hpp> // glm::vec2
-#include <glm/vec3.hpp> // glm::vec3
+#include "../thirdparty/glm/glm/vec2.hpp"
+#include "../thirdparty/glm/glm/vec3.hpp"
 FAST_MATH_ON
-#include <glm/mat3x3.hpp> // glm::mat3
+#include "../thirdparty/glm/glm/mat3x3.hpp"
 FAST_MATH_OFF
-#include <glm/gtx/component_wise.hpp>
+#include "../thirdparty/glm/glm/gtx/component_wise.hpp"
 FAST_MATH_ON
-#include <glm/gtx/fast_exponential.hpp>
+#include "../thirdparty/glm/glm/gtx/fast_exponential.hpp"
 
 /////////////////////////////////////////////////////////
 //  Stuff for using structured bindings with glm::vec: //
