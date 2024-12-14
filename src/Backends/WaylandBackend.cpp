@@ -74,6 +74,10 @@ static inline uint32_t WaylandScaleToLogical( uint32_t pValue, uint32_t pFactor 
     return div_roundup( pValue * WL_FRACTIONAL_SCALE_DENOMINATOR, pFactor );
 }
 
+static bool IsSurfacePlane( wl_surface *pSurface ) {
+    return wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag;
+}
+
 #define WAYLAND_NULL() []<typename... Args> ( void *pData, Args... args ) { }
 #define WAYLAND_USERDATA_TO_THIS(type, name) []<typename... Args> ( void *pData, Args... args ) { type *pThing = (type *)pData; pThing->name( std::forward<Args>(args)... ); }
 
@@ -1142,12 +1146,18 @@ namespace gamescope
 
     void CWaylandPlane::Wayland_Surface_Enter( wl_surface *pSurface, wl_output *pOutput )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         m_pOutputs.emplace_back( pOutput );
 
         UpdateVRRRefreshRate();
     }
     void CWaylandPlane::Wayland_Surface_Leave( wl_surface *pSurface, wl_output *pOutput )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         std::erase( m_pOutputs, pOutput );
 
         UpdateVRRRefreshRate();
@@ -2254,6 +2264,9 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         m_uPointerEnterSerial = uSerial;
         m_bMouseEntered = true;
 
@@ -2261,6 +2274,9 @@ namespace gamescope
     }
     void CWaylandBackend::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         m_bMouseEntered = false;
     }
 
@@ -2268,14 +2284,20 @@ namespace gamescope
 
     void CWaylandBackend::Wayland_Keyboard_Enter( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface, wl_array *pKeys )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         m_bKeyboardEntered = true;
-        
+
         UpdateCursor();
     }
     void CWaylandBackend::Wayland_Keyboard_Leave( wl_keyboard *pKeyboard, uint32_t uSerial, wl_surface *pSurface )
     {
+        if ( !IsSurfacePlane( pSurface ) )
+            return;
+
         m_bKeyboardEntered = false;
-        
+
         UpdateCursor();
     }
 
@@ -2588,7 +2610,7 @@ namespace gamescope
 
     void CWaylandInputThread::Wayland_Pointer_Enter( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface, wl_fixed_t fSurfaceX, wl_fixed_t fSurfaceY )
     {
-        if ( !( wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag ) )
+        if ( !IsSurfacePlane( pSurface ) )
             return;
 
         CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
@@ -2602,7 +2624,7 @@ namespace gamescope
     }
     void CWaylandInputThread::Wayland_Pointer_Leave( wl_pointer *pPointer, uint32_t uSerial, wl_surface *pSurface )
     {
-        if ( !( wl_proxy_get_tag( (wl_proxy *)pSurface ) == &GAMESCOPE_plane_tag ) )
+        if ( !IsSurfacePlane( pSurface ) )
             return;
 
         CWaylandPlane *pPlane = (CWaylandPlane *)wl_surface_get_user_data( pSurface );
