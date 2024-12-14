@@ -4873,6 +4873,7 @@ handle_selection_notify(xwayland_ctx_t *ctx, XSelectionEvent *ev)
 		if (!data)
 			return;
 		const char *contents = (const char *) data;
+		auto szContents = std::make_shared<std::string>(contents);
 		defer( XFree( data ); );
 		if (ev->selection == ctx->atoms.clipboard)
 		{
