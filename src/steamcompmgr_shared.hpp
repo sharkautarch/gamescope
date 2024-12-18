@@ -145,6 +145,34 @@ struct steamcompmgr_win_t {
 
 	steamcompmgr_win_type_t		type;
 
+	inline decltype(auto) __attribute__((always_inline, const, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) __restrict__ {
+		if (_window_types.valueless_by_exception())
+			return emptyFn();
+		return std::visit([xwlFn, xdgFn, emptyFn](auto&& arg)
+  	{
+      using T = std::decay_t<decltype(arg)>;
+      if constexpr (std::is_same_v<T, steamcompmgr_xwayland_win_t>)
+					return xwlFn(arg);
+      else if constexpr (std::is_same_v<T, steamcompmgr_xdg_win_t>)
+					return xdgFn(arg);
+      else
+      	return emptyFn();
+  		}, std::forward<decltype(_window_types)>(_window_types));
+	}
+	inline decltype(auto)  __attribute__((always_inline, const, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) const __restrict__ {
+			if (_window_types.valueless_by_exception())
+				return emptyFn();
+		return std::visit([xwlFn, xdgFn, emptyFn](const auto&& arg)
+  	{
+      using T = std::decay_t<decltype(arg)>;
+      if constexpr (std::is_same_v<T, steamcompmgr_xwayland_win_t>)
+					return xwlFn(arg);
+      else if constexpr (std::is_same_v<T, steamcompmgr_xdg_win_t>)
+					return xdgFn(arg);
+      else
+      	return emptyFn();
+  		}, std::forward<std::add_const_t<decltype(_window_types)>>(_window_types));
+	}
 	steamcompmgr_xwayland_win_t& xwayland() { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
 	const steamcompmgr_xwayland_win_t& xwayland() const { return std::get<steamcompmgr_xwayland_win_t>(_window_types); }
 
@@ -164,14 +192,31 @@ struct steamcompmgr_win_t {
 			return nullptr;
 	}
 
-	Rect GetGeometry() const
+	inline Rect __attribute__((flatten, leaf, const,visibility("internal"))) GetGeometry() const __restrict__
 	{
-		if (type == steamcompmgr_win_type_t::XWAYLAND)
-			return Rect{ xwayland().a.x, xwayland().a.y, xwayland().a.width, xwayland().a.height };
-		else if (type == steamcompmgr_win_type_t::XDG)
-			return Rect{ xdg().geometry.x, xdg().geometry.y, xdg().geometry.width, xdg().geometry.height };
-		else
-			return Rect{};
+		return visitor(
+			[](const auto&__restrict__ win) {
+				return Rect{ win.a.x, win.a.y, win.a.width, win.a.height };
+			},
+			[](const auto&__restrict__ win) {
+				return Rect{ win.geometry.x, win.geometry.y, win.geometry.width, win.geometry.height };
+			},
+			[]() {
+				return [&]() -> Rect {
+					int64_t rax, rdx;
+					rax = rax ^ rax;
+					rdx = rdx ^ rdx;
+					union {
+						struct {
+							int64_t rax;
+							int64_t rdx;
+						};
+						Rect rect;
+					} u = {.rax=rax,.rdx=rdx};
+					return u.rect;
+				}();
+			}
+		);
 	}
 
 	uint32_t id() const
