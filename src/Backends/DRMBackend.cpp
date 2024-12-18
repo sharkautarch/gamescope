@@ -393,7 +393,7 @@ namespace gamescope
 			char szName[32]{};
 			char szMakePNP[4]{};
 			char szModel[16]{};
-			char szDisplayAscii[16]{};
+			char szDisplayAscii[14]{};
 			const char *pszMake = ""; // Not owned, no free. This is a pointer to pnp db or szMakePNP.
 			std::vector<uint32_t> ValidDynamicRefreshRates{};
 			DRMModeGenerator fnDynamicModeGenerator;
@@ -2139,10 +2139,16 @@ namespace gamescope
 			} else if ( di_edid_display_descriptor_get_tag( pDesc ) == DI_EDID_DISPLAY_DESCRIPTOR_DATA_STRING )
 			{
 				// Max length of di_edid_display_descriptor_get_string is 14
-				// szDisplayAscii is 16 bytes.
+				// actual size of the string in szDisplayAscii is at most 13 bytes,
+				// but we increase it by one (14 bytes) to ensure m_Mutable.szDisplayAscii will always end up being null-terminated.
+				
+				// Note: Ascii Strings in the raw edid are actually terminated by SP (space) == 0x0A,
+				// but di_edid_display_descriptor_get_string() turns that SP terminator into a c-str terminator ('\0') for our convenience
 				const char *pszDisplayAscii = di_edid_display_descriptor_get_string( pDesc );
+				static constexpr size_t ulMaxAsciiLen = 14;
+				size_t ulAsciiSize = strnlen(pszDisplayAscii, ulMaxAsciiLen); // null-terminated str : same result as strlen(), non-null-terminated str: returns maxLen
 				strncpy( m_Mutable.szDisplayAscii, pszDisplayAscii, sizeof( m_Mutable.szDisplayAscii ) );
-				m_Mutable.szDisplayAscii[ sizeof( m_Mutable.szDisplayAscii ) - 1 ] = '\0';
+				m_Mutable.szDisplayAscii[ ulAsciiSize - 1 ] = '\0';
 			}
 		}
 
