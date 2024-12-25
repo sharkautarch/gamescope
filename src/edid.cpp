@@ -69,8 +69,8 @@ namespace gamescope
 					#ifdef __x86_64__
 					
 					__m128i u8x4_val = _mm_loadu_si32((void*)(&val[startIndex]));
-					
-					auto masked = _mm_set1_epi8(bitmask << low);
+					static constexpr uint32_t shifted = (uint32_t)bitmask << (uint32_t)low;
+					auto masked = _mm_set1_epi8(shifted);
 					u8x4_val = _mm_and_si128(u8x4_val, masked);
 					
 					auto count = _mm_cvtsi32_si128(low);
