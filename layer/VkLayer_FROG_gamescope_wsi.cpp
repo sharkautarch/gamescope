@@ -1076,7 +1076,9 @@ namespace GamescopeWSILayer {
         gamescope_swapchain_destroy(state->object);
       }
       GamescopeSwapchain::remove(swapchain);
+      fprintf(stderr, "[Gamescope WSI] Destroying swapchain: %p\n", swapchain);
       pDispatch->DestroySwapchainKHR(device, swapchain, pAllocator);
+      fprintf(stderr, "[Gamescope WSI] Destroyed swapchain: %p\n", swapchain);
     }
 
     static VkResult CreateSwapchainKHR(
@@ -1103,13 +1105,19 @@ namespace GamescopeWSILayer {
         return pDispatch->CreateSwapchainKHR(device, pCreateInfo, pAllocator, pSwapchain);
       }
 
+      const bool canBypass = gamescopeSurface->canBypassXWayland();
+
+      VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
+
       if (pCreateInfo->oldSwapchain) {
         if (auto gamescopeSwapchain = GamescopeSwapchain::get(pCreateInfo->oldSwapchain)) {
           gamescopeSwapchain->retired = true;
+          // If we are going to/from being able to bypass XWayland, make sure
+          // we NULL out oldSwapchain, as they'll be for different surfaces and swapchain types.
+          if (gamescopeSwapchain->isBypassingXWayland != canBypass)
+            swapchainInfo.oldSwapchain = VK_NULL_HANDLE;
         }
       }
-
-      VkSwapchainCreateInfoKHR swapchainInfo = *pCreateInfo;
 
       if (gamescopeSurface->flags & GamescopeLayerClient::Flag::ForceSwapchainExtent) {
         if (!gamescopeSurface->isWayland()) {
@@ -1121,7 +1129,6 @@ namespace GamescopeWSILayer {
         }
       }
 
-      const bool canBypass = gamescopeSurface->canBypassXWayland();
       // If we can't flip, fallback to the regular XCB surface on the XCB window.
       if (!canBypass)
         swapchainInfo.surface = gamescopeSurface->fallbackSurface;
@@ -1151,8 +1158,9 @@ namespace GamescopeWSILayer {
         minImageCount = std::max(getMinImageCount(), minImageCount);
       swapchainInfo.minImageCount = minImageCount;
 
-      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
+      fprintf(stderr, "[Gamescope WSI] Creating swapchain for xid: 0x%0x - oldSwapchain: %p - provided minImageCount: %u - minImageCount: %u - format: %s - colorspace: %s - flip: %s\n",
         gamescopeSurface->window,
+        pCreateInfo->oldSwapchain,
         pCreateInfo->minImageCount,
         minImageCount,
         vkroots::helpers::enumString(pCreateInfo->imageFormat),
@@ -1231,8 +1239,9 @@ namespace GamescopeWSILayer {
       uint32_t imageCount = 0;
       pDispatch->GetSwapchainImagesKHR(device, *pSwapchain, &imageCount, nullptr);
 
-      fprintf(stderr, "[Gamescope WSI] Created swapchain for xid: 0x%0x - imageCount: %u\n",
+      fprintf(stderr, "[Gamescope WSI] Created swapchain for xid: 0x%0x swapchain: %p - imageCount: %u\n",
         gamescopeSurface->window,
+        *pSwapchain,
         imageCount);
 
       gamescope_swapchain_swapchain_feedback(

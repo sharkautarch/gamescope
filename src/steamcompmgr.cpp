@@ -5766,30 +5766,9 @@ error(Display *dpy, XErrorEvent *ev)
 }
 
 
-static const gamescope::CGlobalLockReference s_xwlLockReference{};
-using XwlLock = gamescope::ReferencedLock<s_xwlLockReference>;
-
-[[noreturn]] static void __attribute__((cold))
-steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullopt)
+static void
+steamcompmgr_exit(void)
 {
-
-  // Need to clear all the vk_lutxd references (which can be tied to backend-allocated memory)
-  // for the colormgmt globals/statics, to avoid coredump at exit from within the colormgmt exit-time destructors:
-  #pragma GCC unroll 1
-	for (auto& colorMgmtArr : 
-			{
-				std::ref(g_ColorMgmtLuts),
-				std::ref(g_ColorMgmtLutsOverride),
-				std::ref(g_ScreenshotColorMgmtLuts),
-				std::ref(g_ScreenshotColorMgmtLutsHDR)
-			})
-	{
-		for (auto& colorMgmt : colorMgmtArr.get())
-		{
-			colorMgmt.gamescope_color_mgmt_luts::~gamescope_color_mgmt_luts(); //dtor call also calls all the subobjects' dtors
-		}
-	}
-	
 	g_ImageWaiter.Shutdown();
 
 	// Clean up any commits.
@@ -5804,6 +5783,11 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
 	g_steamcompmgr_xdg_wins.clear();
 	g_HeldCommits[ HELD_COMMIT_BASE ] = nullptr;
 	g_HeldCommits[ HELD_COMMIT_FADE ] = nullptr;
+
+	for ( auto &lut : g_ColorMgmtLuts ) lut.shutdown();
+	for ( auto &lut : g_ColorMgmtLutsOverride ) lut.shutdown();
+	for ( auto &lut : g_ScreenshotColorMgmtLuts ) lut.shutdown();
+	for ( auto &lut : g_ScreenshotColorMgmtLutsHDR ) lut.shutdown();
 
 	if ( statsThreadRun == true )
 	{
@@ -5827,17 +5811,16 @@ steamcompmgr_exit(std::optional<std::unique_lock<std::mutex>> lock = std::nullop
     wlserver_lock();
     wlserver_shutdown();
     wlserver_unlock(false);
-	
-	if (lock)
-		lock->unlock();
-	pthread_exit(NULL);
 }
 
-static int
+[[noreturn]] static int
 handle_io_error(Display *dpy)
 {
 	xwm_log.errorf("X11 I/O error");
-	steamcompmgr_exit( s_xwlLockReference.popLock() );
+	steamcompmgr_exit();
+
+	g_SteamCompMgrXWaylandServerMutex.unlock();
+	pthread_exit(NULL);
 }
 
 static bool
@@ -7371,7 +7354,7 @@ steamcompmgr_main(int argc, char **argv)
 
 	init_runtime_info();
 
-	XwlLock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
+	std::unique_lock xwayland_server_guard(g_SteamCompMgrXWaylandServerMutex);
 
 	// Initialize any xwayland ctxs we have
 	{
@@ -7915,7 +7898,7 @@ steamcompmgr_main(int argc, char **argv)
 		vblank = false;
 	}
 
-	steamcompmgr_exit( xwayland_server_guard.popLock() );
+	steamcompmgr_exit();
 }
 
 void steamcompmgr_send_frame_done_to_focus_window()

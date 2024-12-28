@@ -509,6 +509,14 @@ struct gamescope_color_mgmt_luts
 		return bHasLut3D && bHasLut1D;
 	}
 
+	void shutdown()
+	{
+		bHasLut1D = false;
+		bHasLut3D = false;
+		vk_lut1d = nullptr;
+		vk_lut3d = nullptr;
+	}
+
 	void reset()
 	{
 		bHasLut1D = false;
