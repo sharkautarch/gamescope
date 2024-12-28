@@ -15,7 +15,7 @@ namespace gamescope::Process
     void KillProcess( pid_t nPid, int nSignal );
 
     std::optional<int> WaitForChild( pid_t nPid );
-
+		bool BIsWineDevice( pid_t nPid );
     // Wait for all children to die,
     // but stop waiting if we hit a specific PID specified by onStopPid.
     // Returns true if we stopped because we hit the pid specified by onStopPid.

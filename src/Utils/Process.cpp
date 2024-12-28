@@ -27,6 +27,7 @@
 #include <sys/types.h>
 #include <signal.h>
 #include <errno.h>
+#include <cstring>
 
 extern const char *__progname;
 
@@ -75,12 +76,16 @@ namespace gamescope::Process
         struct dirent *pEntry;
         while ( ( pEntry = readdir( pProcDir ) ) )
         {
-            if ( pEntry->d_type != DT_DIR )
+        		printf("pEntry->d_name: %s\n", pEntry->d_name);
+            if ( pEntry->d_type != DT_DIR ) {
+            		//printf( "pEntry->d_type != DT_DIR\n" );
                 continue;
+						}
+            if ( !IsDigit( pEntry->d_name[0] ) ) {
 
-            if ( !IsDigit( pEntry->d_name[0] ) )
+            		//printf( "!IsDigit( pEntry->d_name[0] )\n");
                 continue;
-
+						}
             char szPath[ PATH_MAX ];
             snprintf( szPath, sizeof( szPath ), "/proc/%s/stat", pEntry->d_name );
             
@@ -98,12 +103,20 @@ namespace gamescope::Process
         return nPids;
     }
 
-    void KillProcessTree( std::vector<pid_t> nPids, int nSignal )
+    void KillProcessTree( std::vector<pid_t> nPids, int nSignal, bool bSkipFirstPid = false)
     {
         for ( pid_t nPid : nPids )
         {
+        		//printf( "pid: %d\n", nPid );
             auto nChildPids = GetChildPids( nPid );
-            KillProcess( nPid, nSignal );
+            if (!bSkipFirstPid) {
+            	printf("killing pid: %d\n", nPid);
+            	if (BIsWineDevice(nPid)) {
+            		KillProcess( nPid, SIGKILL );
+            	} else {
+            		KillProcess( nPid, nSignal );
+            	}
+            }
             KillProcessTree( nChildPids, nSignal );
         }
     }
@@ -111,9 +124,22 @@ namespace gamescope::Process
     void KillAllChildren( pid_t nParentPid, int nSignal )
     {
         std::vector<pid_t> nChildPids = GetChildPids( nParentPid );
-        return KillProcessTree( nChildPids, nSignal );
+        return KillProcessTree( nChildPids, nSignal, true);
     }
 
+		bool BIsWineDevice(pid_t nPid)
+		{
+			const char winedevice[] = "winedevice.exe";
+			char szName[ sizeof(winedevice) ] = {};
+			char szPath[ PATH_MAX ];
+      snprintf( szPath, sizeof( szPath ), "/proc/%i/comm", nPid );
+			FILE *pFile = fopen( szPath, "r" );
+      if ( !pFile )
+        return false;
+      defer( fclose( pFile ) );
+      fgets(szName, sizeof(winedevice), pFile);
+      return strcmp(szName, winedevice) == 0;
+		}
     void KillProcess( pid_t nPid, int nSignal )
     {
         if ( kill( nPid, nSignal ) == -1 )
