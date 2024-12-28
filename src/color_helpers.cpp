@@ -47,6 +47,34 @@ glm::vec3 xy_to_xyz( const glm::vec2 & xy )
     return glm::vec3( xy.x, xy.y, 1.f - xy.x - xy.y );
 }
 
+glm::mat<3, 3, float, glm::qualifier::aligned_highp> xy_to_xyz( const primaries_t& rgbPrimaries )
+{
+		typedef float v8sf __attribute__((vector_size(8*sizeof(float))));
+		typedef float v4sf __attribute__((vector_size(4*sizeof(float))));
+		typedef float v2sf __attribute__((vector_size(2*sizeof(float))));
+		v4sf rg; memcpy(&rg, &rgbPrimaries, sizeof(rg));
+		v2sf b; memcpy(&b, &rgbPrimaries.g, sizeof(b));
+		v8sf zero{};
+		v8sf rgExt = __builtin_shufflevector(rg, rg, 0, 1, 2, 3, -1, -1, -1, -1);
+		v4sf rgNegative = -rg; //{-rgbPrimaries.r.x, -rgbPrimaries.r.y, -rgbPrimaries.g.x, -rgbPrimaries.g.y}
+		v8sf rgNegativeExt = __builtin_shufflevector(rgNegative, rgNegative, 0, 1, 2, 3, -1, -1, -1, -1);
+		v8sf ones{1.f};
+		v8sf zerosOnes = __builtin_shufflevector(zero, ones, 0, 1, 10, 3, 4, 13, 6, 7);
+		v8sf rgNegativeX = __builtin_shufflevector(zero, rgNegativeExt, 0, 1, 8, 3, 4, 10, 6, 7);
+		v8sf rgNegativeY = __builtin_shufflevector(zero, rgNegativeExt, 0, 1, 9, 3, 4, 11, 6, 7);
+		v8sf rgShuffled = __builtin_shufflevector(zero, rgExt, 8, 9, 2, 10, 11, 5, 6, 7);
+		rgShuffled = rgShuffled + zerosOnes + rgNegativeX + rgNegativeY;
+		glm::mat<3, 3, float, glm::qualifier::aligned_highp> ret;
+		memcpy(&ret, &rgShuffled, sizeof(rgShuffled));
+		memcpy(((std::array<float,3>*)&ret)+2, &b, sizeof(b));
+		float last = 1.f - b[0] - b[1];
+		memcpy(((float*)(&ret))+8, &last, sizeof(last));	
+		return ret;
+    //{rgbPrimaries.r.x, rgbPrimaries.r.y, 1.f-rgbPrimaries.r.x-rgbPrimaries.r.y,
+    //rgbPrimaries.g.x, rgbPrimaries.b.y, 1.f-rgbPrimaries.g.x-rgbPrimaries.g.y,
+    //rgbPrimaries.b.x, rgbPrimaries.g.y, 1.f-rgbPrimaries.b.x-rgbPrimaries.b.y}
+}
+
 // Convert xy to CIE 1976 u'v'
 glm::vec2 xy_to_uv( const glm::vec2 & xy )
 {
@@ -73,9 +101,9 @@ glm::vec2 uv_to_xy( const glm::vec2 & uv )
 
 glm::mat3 normalised_primary_matrix( const primaries_t & rgbPrimaries, const glm::vec2 & whitePrimary, float whiteLuminance )
 {
-    glm::mat3 matPrimaries( xy_to_xyz( rgbPrimaries.r ), xy_to_xyz( rgbPrimaries.g ), xy_to_xyz( rgbPrimaries.b ) );
-    glm::vec3 whiteXYZ = xyY_to_XYZ( whitePrimary, whiteLuminance );
-    glm::mat3 whiteScale = glm::diagonal3x3( glm::inverse( matPrimaries ) * whiteXYZ );
+    glm::mat<3, 3, float, glm::qualifier::aligned_highp> matPrimaries( xy_to_xyz( rgbPrimaries) );
+    auto whiteXYZ =  glm::vec<3, float, glm::qualifier::aligned_highp> (xyY_to_XYZ( whitePrimary, whiteLuminance ));
+    glm::mat<3, 3, float, glm::qualifier::aligned_highp> whiteScale = glm::diagonal3x3( glm::inverse( matPrimaries ) * whiteXYZ );
     return matPrimaries * whiteScale;
 }
 
