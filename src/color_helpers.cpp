@@ -1119,11 +1119,11 @@ inline void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 
     if ( pLut3d )
     {
-        glm::mat3 xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
-        glm::mat3 dest_from_xyz = glm::inverse( xyz_from_dest );
+        auto xyz_from_dest = normalised_primary_matrix( dest.primaries, dest.white, 1.f );
+        auto dest_from_xyz = glm::inverse( xyz_from_dest );
 
-        glm::mat3 xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
-        glm::mat3 dest_from_source = dest_from_xyz * xyz_from_source; // XYZ scaling for white point adjustment
+        auto xyz_from_source = normalised_primary_matrix( source.primaries, source.white, 1.f );
+        auto dest_from_source = dest_from_xyz * xyz_from_source; // XYZ scaling for white point adjustment
 
         // Precalc night mode scalars & digital gain
         // amount and saturation are overdetermined but we separate the two as they conceptually represent
