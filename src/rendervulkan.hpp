@@ -174,7 +174,7 @@ public:
 	inline VkImageView chromaView() { return m_chromaView; }
 	inline uint32_t width() { return m_width; }
 	inline uint32_t height() { return m_height; }
-	inline glm::uvec2 dimensions() { glm::uvec2 ret = ret ^ ret; memcpy(&ret, std::launder(&m_width), sizeof(ret)); return ret; }
+	inline glm::uvec2 dimensions() { glm::uvec2 ret; memcpy(&ret, &m_width, sizeof(ret)); return ret; }
 	inline uint32_t depth() { return m_depth; }
 	inline uint32_t contentWidth() {return m_contentWidth; }
 	inline uint32_t contentHeight() {return m_contentHeight; }
@@ -363,13 +363,14 @@ struct FrameInfo_t
 
 		uint32_t integerWidth() const { return tex->width() / scale.x; }
 		uint32_t integerHeight() const { return tex->height() / scale.y; }
-		glm::uvec2 integerDimensions() const {
-			return (glm::uvec2) ( (((glm::vec2) tex->dimensions()) / std::bit_cast<glm::vec2>(scale) ) ); 
+		inline glm::uvec2 __attribute__((no_stack_protector, pure)) integerDimensions() const {
+			glm::vec2 vscale; std::memcpy(&vscale, &scale, sizeof(scale));
+			return (glm::uvec2) ( (((glm::vec2) tex->dimensions()) / vscale ) ); 
 		} 
-		vec2_t offsetPixelCenter() const
+		inline vec2_t __attribute__((no_stack_protector, pure)) offsetPixelCenter() const
 		{
-			auto voffset = std::bit_cast<glm::vec2>(offset);
-			auto vscale = std::bit_cast<glm::vec2>(scale);
+			glm::vec2 voffset; std::memcpy(&voffset, &offset, sizeof(offset));
+			glm::vec2 vscale; std::memcpy(&vscale, &scale, sizeof(scale));
 			return std::bit_cast<vec2_t>(voffset + glm::vec2{.5f}/vscale);
 		}
 	} layers[ k_nMaxLayers ];
