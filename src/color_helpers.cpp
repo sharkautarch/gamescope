@@ -397,11 +397,11 @@ inline glm::vec3 lerp_rgb(
     glm::vec3 v2 = lerp_rgb(e,f,g,h,y,z);
     return lerp_rgb(v1, v2, x);
 }
-using avec4 = glm::vec<4, float, (glm::qualifier)3>;
-inline avec4 ClampAndSanitize( glm::vec4 a, float min, float max )
+using avec3 = glm::vec<3, float, (glm::qualifier)3>;
+inline avec3 ClampAndSanitize( glm::vec3 a, float min, float max )
 {
 #if !( defined(__FAST_MATH__) || defined(__FINITE_MATH_ONLY__) )
-    return std::isfinite( a.x ) ? glm::min(glm::max(a, min), max) : glm::vec3{min};
+    return std::isfinite( a.x ) ? glm::min(glm::max(a, min), max) : avec3{min};
 #else
     return glm::min(glm::max(a, min), max);
 #endif
@@ -581,6 +581,8 @@ inline glm::vec3 __attribute__((noinline)) ApplyLut3D_Tetrahedral_Original( cons
 using avec3 = glm::vec<3, float, (glm::qualifier)3>;
 using aligned_ivec4 = glm::vec<4, int, (glm::qualifier)3>;
 using aligned_i64vec4 = glm::vec<4, int64_t, (glm::qualifier)3>;
+using aligned_ivec3 = glm::vec<3, int, (glm::qualifier)3>;
+using aligned_i64vec3 = glm::vec<3, int64_t, (glm::qualifier)3>;
 
 #if false && defined(__AVX2__) && defined(__clang__) 
 #define FALLBACK_ATTR noinline,
@@ -588,10 +590,10 @@ using aligned_i64vec4 = glm::vec<4, int64_t, (glm::qualifier)3>;
 #define FALLBACK_ATTR
 #endif
 
-static inline glm::vec3 __attribute__((FALLBACK_ATTR flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const glm::vec3 input);
+static inline glm::vec3 __attribute__((FALLBACK_ATTR flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const glm::vec3& input);
 #undef FALLBACK_ATTR
 
-static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3 input )
+static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral( const lut3d_t & lut3d, const glm::vec3& input )
 {
 #if false && defined(__AVX2__) && defined(__clang__) 
 		static constexpr gcc_i64vec4 two = gcc_i64vec4{} + 2ll;
@@ -719,11 +721,11 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     }
 #endif
 }
-static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const glm::vec3 input)
+static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_Tetrahedral_Fallback(const lut3d_t & lut3d, const glm::vec3& input)
 {
     const float dimMinusOne = float(lut3d.lutEdgeSize) - 1.f;
     const auto idx = ClampAndSanitize(input * dimMinusOne, 0.f, dimMinusOne);
-		const aligned_ivec4 indexLow = glm::floor(idx);
+		const aligned_ivec3 indexLow = glm::floor(idx);
 		float fx = idx[0] - static_cast<float>(indexLow[0]);
     float fy = idx[1] - static_cast<float>(indexLow[1]);
     float fz = idx[2] - static_cast<float>(indexLow[2]);
@@ -731,7 +733,7 @@ static inline glm::vec3 __attribute__((flatten, no_stack_protector)) ApplyLut3D_
     // then the computation of highIdx is wrong. However,
     // the delta is then equal to zero (e.g. idx-lowIdx),
     // so the highIdx has no impact.
-  	const aligned_ivec4 indexHigh = glm::ceil(idx);
+  	const aligned_ivec3 indexHigh = glm::ceil(idx);
 		
     // Compute index into LUT for surrounding corners
     const int n000 =
