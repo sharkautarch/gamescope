@@ -30,12 +30,14 @@
  */
 
 #include "gamescope_shared.h"
+#include "steamcompmgr_shared.hpp"
 #include "xwayland_ctx.hpp"
 #include <X11/X.h>
 #include <X11/Xlib.h>
 #include <X11/Xcursor/Xcursor.h>
 #include <X11/extensions/xfixeswire.h>
 #include <X11/extensions/XInput2.h>
+#include <glm/gtc/quaternion.hpp>
 #include <memory>
 #include <thread>
 #include <mutex>
@@ -1335,15 +1337,12 @@ void MouseCursor::UpdatePosition()
 	struct wlr_pointer_constraint_v1 *pConstraint = wlserver.GetCursorConstraint();
 	if ( pConstraint && pConstraint->current.cursor_hint.enabled )
 	{
-		m_x = pConstraint->current.cursor_hint.x;
-		m_y = pConstraint->current.cursor_hint.y;
+		m_xy = { pConstraint->current.cursor_hint.x, pConstraint->current.cursor_hint.y };
 		m_bConstrained = true;
 	}
 	else
 	{
-		m_x = wlserver.mouse_surface_cursorx;
-		m_y = wlserver.mouse_surface_cursory;
-		m_bConstrained = false;
+		m_xy = {wlserver.mouse_surface_cursorx, wlserver.mouse_surface_cursory};		m_bConstrained = false;
 	}
 	wlserver_unlock();
 }
@@ -1366,7 +1365,8 @@ void MouseCursor::checkSuspension()
 				if ( window_wants_no_focus_when_mouse_hidden(window) )
 				{
 					wlserver_lock();
-					wlserver_fake_mouse_pos( window->GetGeometry().nWidth - 1, window->GetGeometry().nHeight - 1 );
+					auto ivDim = Dimension(window->GetDimensions()-1);
+					wlserver_fake_mouse_pos( ivDim.nWidth(), ivDim.nHeight() );
 					wlserver_mousehide();
 					wlserver_unlock();
 				}
@@ -1485,14 +1485,16 @@ bool MouseCursor::setCursorImageByName(const char *name)
 
 int MouseCursor::x() const
 {
-	return m_x;
+	return m_xy.x;
 }
 
 int MouseCursor::y() const
 {
-	return m_y;
+	return m_xy.y;
 }
-
+glm::ivec2 MouseCursor::xy() const {
+	return m_xy;
+}
 bool MouseCursor::getTexture()
 {
 	if (!m_dirty) {
@@ -1659,12 +1661,12 @@ void MouseCursor::paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, str
 		return;
 	}
 
-	auto source = glm::uvec2{ window->GetGeometry().nWidth, window->GetGeometry().nHeight };
+	auto source = glm::uvec2{ window->GetDimensions() };
 
 	if ( fit )
 	{
 		// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-		auto fitVec = glm::uvec2{ fit->GetGeometry().nX + fit->GetGeometry().nWidth, fit->GetGeometry().nY + fit->GetGeometry().nHeight };
+		auto fitVec = glm::uvec2{ fit->GetPosition() + fit->GetDimensions() };
 		source = glm::max( source, (glm::uvec2) glm::clamp(fitVec, glm::uvec2{0}, currentOutputResolution ) );
 	}
 
@@ -1833,10 +1835,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 
 	if (notificationMode)
 	{
-		source = {
-			mainOverlayWindow->GetGeometry().nWidth,
-			mainOverlayWindow->GetGeometry().nHeight
-		};
+		source = glm::uvec2{mainOverlayWindow->GetDimensions()};
 	}
 	else if ( flags & PaintWindowFlag::NoScale )
 	{
@@ -1856,19 +1855,13 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if (w == scaleW) {
 			source = layer->tex->dimensions();
 		} else {
-			source = {
-				scaleW->GetGeometry().nWidth,
-				scaleW->GetGeometry().nHeight
-			};
+			source = scaleW->GetDimensions();
 		}
 
 		if ( fit )
 		{
 			// If we have an override window, try to fit it in as long as it won't make our scale go below 1.0.
-			auto fitVec = glm::ivec2{ 
-				fit->GetGeometry().nX + fit->GetGeometry().nWidth,
-				fit->GetGeometry().nY + fit->GetGeometry().nHeight
-			};
+			auto fitVec = fit->GetPosition() + fit->GetDimensions();
 			source = glm::max( source, (glm::uvec2)glm::clamp( fitVec, glm::ivec2{0}, glm::ivec2{currentOutputResolution} ) );
 		}
 	}
@@ -1884,15 +1877,14 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 		if ( w != scaleW )
 		{
 			drawOffset += glm::ivec2{
-				glm::vec2{w->GetGeometry().nX, w->GetGeometry().nY} * currentScaleRatio
+				glm::vec2{w->GetPosition()} * currentScaleRatio
 			};
 		}
 
 		if ( cursor && zoomScaleRatio != 1.0 )
 		{
-			auto cursorVec = glm::ivec2{ cursor->x(), cursor->y() };
 			
-			drawOffset += (glm::ivec2)( (glm::vec2)(((glm::ivec2)source / 2) - cursorVec) 
+			drawOffset += (glm::ivec2)( (glm::vec2)(((glm::ivec2)source / 2) - cursor->xy()) 
 										* currentScaleRatio );
 		}
 	}
@@ -1908,9 +1900,7 @@ paint_window_commit( const gamescope::Rc<commit_t> &lastCommit, steamcompmgr_win
 	else if (notificationMode)
 	{
 		glm::ivec2 offset {0, 0};
-		glm::ivec2 ivDim = glm::ivec2 { w->GetGeometry().nWidth, w->GetGeometry().nHeight };
-		ivDim = (glm::ivec2){ (glm::vec2)ivDim * currentScaleRatio };
-
+		glm::ivec2 ivDim =  glm::ivec2{glm::vec2{w->GetDimensions()} * currentScaleRatio};
 		if (globalScaleRatio != 1.0f)
 		{
 			offset = (glm::ivec2) (((glm::vec2)currentOutputResolution - (glm::vec2)currentOutputResolution * globalScaleRatio) / 2.0f);
@@ -2896,7 +2886,7 @@ win_is_useless( steamcompmgr_win_t *w )
 	// Windows that are 1x1 are pretty useless for override redirects.
 	// Just ignore them.
 	// Fixes the Xbox Login in Age of Empires 2: DE.
-	return w->GetGeometry().nWidth == 1 && w->GetGeometry().nHeight == 1;
+	return w->GetDimensions() == glm::ivec2{1,1};
 }
 
 static bool
@@ -3063,7 +3053,7 @@ static bool is_good_override_candidate( steamcompmgr_win_t *override, steamcompm
 	if ( !focus )
 		return false;
 
-	return override != focus && override->GetGeometry().nX >= 0 && override->GetGeometry().nY >= 0;
+	return override != focus && glm::all(glm::greaterThanEqual(override->GetPosition(), glm::ivec2{0,0}));
 } 
 
 static bool
@@ -3434,7 +3424,7 @@ void xwayland_ctx_t::DetermineAndApplyFocus( const std::vector< steamcompmgr_win
 		ctx->focus.focusWindow->nudged = true;
 	}
 
-	if (w->GetGeometry().nX != 0 || w->GetGeometry().nY != 0)
+	if (w->GetPosition() != glm::ivec2{0,0})
 		XMoveWindow(ctx->dpy, ctx->focus.focusWindow->xwayland().id, 0, 0);
 
 	if ( window_is_fullscreen( ctx->focus.focusWindow ) || ctx->force_windows_fullscreen )
@@ -3732,14 +3722,19 @@ determine_and_apply_focus()
 		if ( global_focus.inputFocusWindow->GetFocus()->bResetToCorner )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->GetGeometry().nWidth / 2, global_focus.inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
-			wlserver_fake_mouse_pos( global_focus.inputFocusWindow->GetGeometry().nWidth - 1, global_focus.inputFocusWindow->GetGeometry().nHeight - 1 );
+			Dimension ivDim = global_focus.inputFocusWindow->GetDimensions();
+			Dimension<double> dim = glm::dvec2{ivDim}/2.0;
+			ivDim = Dimension(ivDim-1);
+			wlserver_mousewarp( dim.Width(), dim.Height(), 0, true );
+			wlserver_fake_mouse_pos( ivDim.nWidth(), ivDim.nHeight() );
 			wlserver_unlock();
 		}
 		else if ( global_focus.inputFocusWindow->GetFocus()->bResetToCenter )
 		{
 			wlserver_lock();
-			wlserver_mousewarp( global_focus.inputFocusWindow->GetGeometry().nWidth / 2, global_focus.inputFocusWindow->GetGeometry().nHeight / 2, 0, true );
+			Dimension ivDim = global_focus.inputFocusWindow->GetDimensions();
+			Dimension<double> dim = glm::dvec2{ivDim}/2.0;
+			wlserver_mousewarp( dim.Width(), dim.Height(), 0, true );
 			wlserver_unlock();
 		}
 

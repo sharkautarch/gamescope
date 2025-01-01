@@ -65,6 +65,7 @@ public:
 
 	int x() const;
 	int y() const;
+	glm::ivec2 xy() const;
 
 	void paint(steamcompmgr_win_t *window, steamcompmgr_win_t *fit, FrameInfo_t *frameInfo);
 	void setDirty();
@@ -104,7 +105,7 @@ private:
 
 	void updateCursorFeedback( bool bForce = false );
 
-	int m_x = 0, m_y = 0;
+	glm::ivec2 m_xy{0};
 	bool m_bConstrained = false;
 	int m_hotspotX = 0, m_hotspotY = 0;
 

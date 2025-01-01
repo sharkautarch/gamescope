@@ -1,5 +1,6 @@
 #pragma once
 
+#include <glm/detail/qualifier.hpp>
 #include <variant>
 #include <string>
 #include <utility>
@@ -89,13 +90,66 @@ struct steamcompmgr_xdg_win_t
 	struct wlr_box geometry;
 };
 
+template <typename T = int32_t>
+struct Position : glm::vec<2, T, glm::qualifier::defaultp> {
+	constexpr T X() const {
+		return glm::vec<2, T, glm::qualifier::defaultp>::x;
+	}
+	constexpr T Y() const {
+		return glm::vec<2, T, glm::qualifier::defaultp>::y;
+	}
+	
+	constexpr int32_t nX() const requires(std::is_same_v<T, int32_t>) {
+		return X();
+	}
+	constexpr int32_t nY() const requires(std::is_same_v<T, int32_t>) {
+		return Y();
+	}
+	constexpr Position(glm::ivec2 iv) {
+		*this = std::bit_cast<Position>(iv);
+	}
+};
+template <typename T = int32_t>
+struct Dimension : glm::vec<2, T, glm::qualifier::defaultp> {
+	constexpr T Width() const {
+		return glm::vec<2, T, glm::qualifier::defaultp>::x;
+	}
+	constexpr T Height() const {
+		return glm::vec<2, T, glm::qualifier::defaultp>::y;
+	}
+	
+	constexpr int32_t nWidth() const requires(std::is_same_v<T, int32_t>) {
+		return Width();
+	}
+	constexpr int32_t nHeight() const requires(std::is_same_v<T, int32_t>) {
+		return Height();
+	}
+	constexpr Dimension(glm::vec<2, T, glm::qualifier::defaultp> v) {
+		*this = std::bit_cast<Dimension>(v);
+	}
+};
+
+
+
 struct Rect
 {
-	int32_t nX;
-	int32_t nY;
+	union {
+		struct {
+			int32_t nX;
+			int32_t nY;
 
-	int32_t nWidth;
-	int32_t nHeight;
+			int32_t nWidth;
+			int32_t nHeight;
+		};
+		glm::ivec4 iv;
+	};
+	
+	inline Position<int32_t> GetPosition() const {
+		return iv.xy();
+	}
+	inline 	Dimension<int32_t> GetDimensions() const {
+		return iv.yz();
+	}
 };
 
 extern focus_t g_steamcompmgr_xdg_focus;
@@ -145,7 +199,7 @@ struct steamcompmgr_win_t {
 
 	steamcompmgr_win_type_t		type;
 
-	inline decltype(auto) __attribute__((always_inline, const, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) __restrict__ {
+	inline decltype(auto) __attribute__((always_inline, pure, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) __restrict__ {
 		if (_window_types.valueless_by_exception())
 			return emptyFn();
 		return std::visit([xwlFn, xdgFn, emptyFn](auto&& arg)
@@ -159,7 +213,7 @@ struct steamcompmgr_win_t {
       	return emptyFn();
   		}, std::forward<decltype(_window_types)>(_window_types));
 	}
-	inline decltype(auto)  __attribute__((always_inline, const, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) const __restrict__ {
+	inline decltype(auto)  __attribute__((always_inline, pure, flatten, leaf, visibility("internal"))) visitor(auto xwlFn, auto xdgFn, auto emptyFn) const __restrict__ {
 			if (_window_types.valueless_by_exception())
 				return emptyFn();
 		return std::visit([xwlFn, xdgFn, emptyFn](const auto&& arg)
@@ -192,7 +246,7 @@ struct steamcompmgr_win_t {
 			return nullptr;
 	}
 
-	inline Rect __attribute__((flatten, leaf, const,visibility("internal"))) GetGeometry() const __restrict__
+	Rect __attribute__((flatten, leaf, pure,visibility("internal"))) GetGeometry() const __restrict__
 	{
 		return visitor(
 			[](const auto&__restrict__ win) {
@@ -203,9 +257,7 @@ struct steamcompmgr_win_t {
 			},
 			[]() {
 				return [&]() -> Rect {
-					int64_t rax, rdx;
-					rax = rax ^ rax;
-					rdx = rdx ^ rdx;
+					int64_t rax = 0, rdx = 0;
 					union {
 						struct {
 							int64_t rax;
@@ -217,6 +269,14 @@ struct steamcompmgr_win_t {
 				}();
 			}
 		);
+	}
+	Dimension<int32_t> __attribute__((pure,visibility("internal"))) GetDimensions() const __restrict__
+	{
+		return GetGeometry().GetDimensions();
+	}
+	Position<int32_t> __attribute__((pure,visibility("internal"))) GetPosition() const __restrict__
+	{
+		return GetGeometry().GetPosition();
 	}
 
 	uint32_t id() const
