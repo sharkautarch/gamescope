@@ -6207,17 +6207,17 @@ static TempUpscaleImage_t *GetTempUpscaleImage( uint32_t uWidth, uint32_t uHeigh
 		return {};
 	}
 
-	gamescope::OwningRc<CVulkanTexture> pTexture = new CVulkanTexture();
+	CVulkanTexture::createFlags imageFlags;
+	imageFlags.bSampled = true;
+	imageFlags.bStorage = true;
+	imageFlags.bFlippable = true;
+	gamescope::OwningRc<CVulkanTexture> pTexture = CVulkanTexture::make_owning_rc(g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
 
 	std::shared_ptr<gamescope::CTimeline> pTimeline = gamescope::CTimeline::Create();
 	if ( !pTimeline )
 		return nullptr;
 
-	CVulkanTexture::createFlags imageFlags;
-	imageFlags.bSampled = true;
-	imageFlags.bStorage = true;
-	imageFlags.bFlippable = true;
-	pTexture->BInit( g_nOutputWidth, g_nOutputHeight, 1, uDrmFormat, imageFlags );
+	
 	TempUpscaleImage_t &image = g_pUpscaleImages.emplace_back( std::move( pTexture ), std::move( pTimeline ) );
 
 	return &image;

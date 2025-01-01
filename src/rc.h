@@ -14,13 +14,31 @@ namespace gamescope
 
     #define ENABLE_IN_PLACE_RC using gamescope::RcObject::RcObject; \
             template <class T, gamescope::NotTheSameAs<T>... Args> \
-            friend gamescope::Rc<T, true> gamescope::make_rc(Args&&... args);
+            friend constexpr gamescope::Rc<T, true> gamescope::make_rc(Args&&... args); \
+            template <class T, gamescope::NotTheSameAs<T>... Args> \
+            friend constexpr gamescope::Rc<T, false> gamescope::make_owning_rc(Args&&... args);
+            
+    #define EXPORT_STATIC_FACTORY_FUNC(Class) template <class T = Class, gamescope::NotTheSameAs<Class>... Args> requires(std::is_same_v<T, Class>) \
+    static constexpr gamescope::Rc<Class, true> make_rc(Args&&... args) { \
+    	return gamescope::make_rc<Class>(std::forward<Args>(args)...); \
+	} \
+	template <class T = Class, gamescope::NotTheSameAs<Class>... Args> requires(std::is_same_v<T, Class>) \
+	static constexpr gamescope::Rc<Class, false> make_owning_rc(Args&&... args) { \
+    	return gamescope::make_owning_rc<Class>(std::forward<Args>(args)...); \
+	}
+	
+    
+    struct RcObjectOwnership {
+    	bool bIsOwning = false;
+    };
     class RcObject
     {
         template <class T, NotTheSameAs<T>... Args>
-        friend gamescope::Rc<T, true> make_rc(Args&&... args);
+        friend constexpr gamescope::Rc<T, true> make_rc(Args&&... args);
+        template <class T, NotTheSameAs<T>... Args>
+        friend constexpr gamescope::Rc<T, false> make_owning_rc(Args&&... args);
     protected:
-        explicit constexpr RcObject(std::in_place_t) : m_uRefCount{1}, m_uRefPrivate{1} {}
+        explicit constexpr RcObject(RcObjectOwnership ownershp) : m_uRefCount{!ownershp.bIsOwning}, m_uRefPrivate{1} {}
     public:
         RcObject() = default;
         virtual ~RcObject()
@@ -109,9 +127,14 @@ namespace gamescope
     };
 
     template <class T, NotTheSameAs<T>... Args>
-    Rc<T, true> make_rc(Args&&... args) {
-      T* pObj = new T(std::in_place_t{}, std::forward<Args>(args)...);
+    Rc<T, true> constexpr make_rc(Args&&... args) {
+      T* pObj = new T(gamescope::RcObjectOwnership {.bIsOwning=false}, std::forward<Args>(args)...);
       return Rc<T, true>{std::in_place_t{}, pObj};
+    }
+    template <class T, NotTheSameAs<T>... Args>
+    Rc<T, false> constexpr make_owning_rc(Args&&... args) {
+      T* pObj = new T(gamescope::RcObjectOwnership {.bIsOwning=true}, std::forward<Args>(args)...);
+      return Rc<T, false>{std::in_place_t{}, pObj};
     }
 
     template <typename T, bool Public = true>
@@ -121,7 +144,9 @@ namespace gamescope
         friend class Rc;
 
         template <class Tx, NotTheSameAs<Tx>... Args>
-        friend Rc<Tx, true> gamescope::make_rc(Args&&... args);
+        friend Rc<Tx, true> constexpr gamescope::make_rc(Args&&... args);
+        template <class Tx, NotTheSameAs<Tx>... Args>
+        friend Rc<Tx, false> constexpr gamescope::make_owning_rc(Args&&... args);
 
         using RcRef = RcRef_<T, Public>;
 

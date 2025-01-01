@@ -493,8 +493,6 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 	}
 
 	uint32_t drmFormat = spa_format_to_drm(state->video_info.format);
-
-	buffer->texture = new CVulkanTexture();
 	CVulkanTexture::createFlags screenshotImageFlags;
 	screenshotImageFlags.bMappable = true;
 	screenshotImageFlags.bTransferDst = true;
@@ -504,7 +502,9 @@ static void stream_handle_add_buffer(void *user_data, struct pw_buffer *pw_buffe
 		screenshotImageFlags.bExportable = true;
 		screenshotImageFlags.bLinear = true; // TODO: support multi-planar DMA-BUF export via PipeWire
 	}
-	bool bImageInitSuccess = buffer->texture->BInit( s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags );
+	buffer->texture = CVulkanTexture::make_owning_rc(s_nCaptureWidth, s_nCaptureHeight, 1u, drmFormat, screenshotImageFlags);
+	
+	bool bImageInitSuccess = buffer->texture->BIsValid();
 	if ( !bImageInitSuccess )
 	{
 		pwr_log.errorf("Failed to initialize pipewire texture");

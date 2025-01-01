@@ -129,6 +129,8 @@ inline GamescopeAppTextureColorspace VkColorSpaceToGamescopeAppTextureColorSpace
 class CVulkanTexture : public gamescope::RcObject
 {
 public:
+	ENABLE_IN_PLACE_RC
+	EXPORT_STATIC_FACTORY_FUNC(CVulkanTexture)
 	struct createFlags {
 
 		constexpr createFlags( void )
@@ -158,15 +160,25 @@ public:
 		bool bColorAttachment : 1;
 		VkImageType imageType;
 	};
+	constexpr CVulkanTexture(gamescope::RcObjectOwnership tag) : RcObject{tag} {}
+	constexpr CVulkanTexture(gamescope::RcObjectOwnership tag, auto...args) : RcObject{tag} {
+		if (BInit(args...) == false) {
+			m_bInitialized = false;
+		}
+	}
+	
+	CVulkanTexture() = delete;
 
-	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, CVulkanTexture *pExistingImageToReuseMemory = nullptr, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = nullptr );
+	bool BInit( uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0, gamescope::Rc<CVulkanTexture> pExistingImageToReuseMemory = nullptr, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb = nullptr );
 	bool BInitFromSwapchain( VkImage image, uint32_t width, uint32_t height, VkFormat format );
 
 	uint32_t IncRef();
 	uint32_t DecRef();
 
 	bool IsInUse();
-
+	bool BIsValid() {
+		return m_bInitialized;
+	}
 	inline VkImageView view( bool linear ) { return linear ? m_linearView : m_srgbView; }
 	inline VkImageView linearView() { return m_linearView; }
 	inline VkImageView srgbView() { return m_srgbView; }
@@ -204,7 +216,6 @@ public:
 
 	int memoryFence();
 
-	CVulkanTexture( void );
 	~CVulkanTexture( void );
 
 	uint32_t queueFamily = VK_QUEUE_FAMILY_IGNORED;

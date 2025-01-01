@@ -1062,13 +1062,13 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
 
     // Create Textures
     {
-        m_rt = new CVulkanTexture();
-        CVulkanTexture::createFlags flags;
-        flags.bSampled = true;
-        flags.bStorage = true;
-        flags.bColorAttachment = true;
+   		CVulkanTexture::createFlags flags;
+     	flags.bSampled = true;
+     	flags.bStorage = true;
+      	flags.bColorAttachment = true;
+        m_rt = CVulkanTexture::make_owning_rc(m_key.bufferWidth, m_key.bufferHeight, 1, VulkanFormatToDRM(m_key.bufferFormat), flags, nullptr);
 
-        bool ret = m_rt->BInit(m_key.bufferWidth, m_key.bufferHeight, 1, VulkanFormatToDRM(m_key.bufferFormat), flags, nullptr);
+        bool ret = m_rt->BIsValid();
         assert(ret);
     }
 
@@ -1077,19 +1077,20 @@ bool ReshadeEffectPipeline::init(CVulkanDevice *device, const ReshadeEffectKey &
         gamescope::Rc<CVulkanTexture> texture;
         if (tex.semantic.empty())
         {
-            texture = new CVulkanTexture();
-            CVulkanTexture::createFlags flags;
-            flags.bSampled = true;
-            // Always need storage.
-            flags.bStorage = true;
-            if (tex.render_target)
-                flags.bColorAttachment = true;
+       		CVulkanTexture::createFlags flags;
+         	flags.bSampled = true;
+         	// Always need storage.
+          	flags.bStorage = true;
+           	if (tex.render_target)
+            	flags.bColorAttachment = true;
 
             // Not supported rn.
             assert(tex.levels == 1);
             assert(tex.type == reshadefx::texture_type::texture_2d);
+            texture = CVulkanTexture::make_rc(tex.width, tex.height, tex.depth, VulkanFormatToDRM(ConvertReshadeFormat(tex.format)), flags, nullptr);
+            
 
-            bool ret = texture->BInit(tex.width, tex.height, tex.depth, VulkanFormatToDRM(ConvertReshadeFormat(tex.format)), flags, nullptr);
+            bool ret = texture->BIsValid();
             assert(ret);
         }
 
