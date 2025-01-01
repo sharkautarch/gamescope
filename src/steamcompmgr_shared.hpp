@@ -105,7 +105,7 @@ struct Position : glm::vec<2, T, glm::qualifier::defaultp> {
 	constexpr int32_t nY() const requires(std::is_same_v<T, int32_t>) {
 		return Y();
 	}
-	constexpr Position(glm::ivec2 iv) {
+	constexpr Position(glm::vec<2, T, glm::qualifier::defaultp> iv) {
 		*this = std::bit_cast<Position>(iv);
 	}
 };
@@ -257,7 +257,7 @@ struct steamcompmgr_win_t {
 			},
 			[]() {
 				return [&]() -> Rect {
-					int64_t rax = 0, rdx = 0;
+					int64_t rax = 0, rdx = 0;	
 					union {
 						struct {
 							int64_t rax;
