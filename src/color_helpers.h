@@ -294,8 +294,30 @@ inline float positive_mod( float flX, float flPeriod )
 // Colorimetry functions related to color space conversions
 struct primaries_t
 {
-	bool operator == (const primaries_t&) const = default;
-	bool operator != (const primaries_t&) const = default;
+	bool operator == (const primaries_t& other) const { 
+		#ifdef __AVX2__
+		typedef float v8sf __attribute__((vector_size(8*sizeof(float))));
+		v8sf self_extended {0.f};
+		v8sf other_extended {0.f};
+		memcpy(&self_extended, this, std::min(sizeof(*this), sizeof(self_extended)));
+		memcpy(&other_extended, &other, std::min(sizeof(*this), sizeof(other_extended)));
+		auto comp = other_extended == self_extended;
+		return _mm256_movemask_ps((__m256)comp);
+		#else
+		glm::vec<4, float, glm::qualifier::aligned_highp> rg_self, rg_other;
+		memcpy(&rg_self, this, sizeof(rg_self));
+		memcpy(&rg_other, &other, sizeof(rg_other));
+		auto firstComp = (rg_self == rg_other)
+		auto bSelf = glm::vec<2, float, glm::qualifier::aligned_highp>{b};
+		auto bOther = glm::vec<2, float, glm::qualifier::aligned_highp>{other.b};
+		auto bSelfExtended = glm::vec<4, float, glm::qualifier::aligned_highp>{__builtin_shufflevector(bSelf.data, bSelf.data, 0, 1, -1, -1)};
+		auto bOtherExtended = glm::vec<4, float, glm::qualifier::aligned_highp>{__builtin_shufflevector(bOther.data, bOther.data, 0, 1, -1, -1)};
+		return firstComp & ( bSelfExtended == bOtherExtended );
+		#endif
+	}
+	bool operator != (const primaries_t& other) const {
+		return !(*this == other);
+	}
 
 	glm::vec2 r;
 	glm::vec2 g;
@@ -312,31 +334,61 @@ enum EOTF
 
 struct displaycolorimetry_t
 {
-	bool operator == (const displaycolorimetry_t&) const = default;
-	bool operator != (const displaycolorimetry_t&) const = default;
+	bool operator == (const displaycolorimetry_t& other) const {
+		#ifdef __AVX2__
+		typedef float v8sf __attribute__((vector_size(8*sizeof(float))));
+		v8sf _self;
+		v8sf _other;
+		memcpy(&_self, this, sizeof(_self));
+		memcpy(&_other, &other, sizeof(other));
+		auto comp = _other == _self;
+		return _mm256_movemask_ps((__m256)comp);
+		#else
+		glm::vec<4, float, glm::qualifier::aligned_highp> selfP1, otherP1;
+		glm::vec<4, float, glm::qualifier::aligned_highp> selfP2, otherP2;
+		memcpy(&selfP1, this, sizeof(selfP1));
+		memcpy(&otherP1, &other, sizeof(otherP1));
+		memcpy(&selfP2, ((glm::vec4*)this)+1, sizeof(selfP2));
+		memcpy(&otherP2, ((glm::vec4*)&other)+1, sizeof(otherP2));
+		return (selfP1 == otherP1) & (selfP2 == otherP2);
+		#endif
+	}
+	bool operator != (const displaycolorimetry_t& other) const {
+		return !(*this == other);
+	}
 	primaries_t primaries;
 	glm::vec2 white;
 };
 
 struct nightmode_t
 {
-	bool operator == (const nightmode_t&) const = default;
-	bool operator != (const nightmode_t&) const = default;
+	bool operator == (const nightmode_t& other) const = default;
+	bool operator != (const nightmode_t& other) const = default;
 
-    float amount; // [0 = disabled, 1.f = on]
-    float hue; // [0,1]
-    float saturation; // [0,1]
+
+	float amount; // [0 = disabled, 1.f = on]
+	float hue; // [0,1]
+	float saturation; // [0,1]
 };
 
 struct colormapping_t
 {
-	bool operator == (const colormapping_t&) const = default;
-	bool operator != (const colormapping_t&) const = default;
+	bool operator == (const colormapping_t& other) const {
+		return glm::vec<4, float, glm::qualifier::aligned_highp>(v) == glm::vec<4, float, glm::qualifier::aligned_highp>(other.v);
+	}
+	bool operator != (const colormapping_t& other) const {
+		return glm::vec<4, float, glm::qualifier::aligned_highp>(v) != glm::vec<4, float, glm::qualifier::aligned_highp>(other.v);
+	}
 
-	float blendEnableMinSat;
-	float blendEnableMaxSat;
-	float blendAmountMin;
-	float blendAmountMax;
+	 union {
+    	struct {
+    		float blendEnableMinSat;
+				float blendEnableMaxSat;
+				float blendAmountMin;
+				float blendAmountMax;
+			};
+			glm::vec4 v;
+		};
 };
 
 displaycolorimetry_t lerp( const displaycolorimetry_t & a, const displaycolorimetry_t & b, float t );
