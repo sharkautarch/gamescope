@@ -45,7 +45,7 @@ namespace gamescope
         {
         }
 
-        uint32_t IncRef()
+        constexpr uint32_t IncRef()
         {
             uint32_t uRefCount = m_uRefCount++;
             if ( !uRefCount )
@@ -53,7 +53,7 @@ namespace gamescope
             return uRefCount;
         }
 
-        uint32_t DecRef()
+        constexpr uint32_t DecRef()
         {
             uint32_t uRefCount = --m_uRefCount;
             if ( !uRefCount )
@@ -61,12 +61,12 @@ namespace gamescope
             return uRefCount;
         }
 
-        uint32_t IncRefPrivate()
+        constexpr uint32_t IncRefPrivate()
         {
             return m_uRefPrivate++;
         }
 
-        uint32_t DecRefPrivate()
+        constexpr uint32_t DecRefPrivate()
         {
             uint32_t uRefPrivate = --m_uRefPrivate;
             if ( !uRefPrivate )
@@ -101,12 +101,12 @@ namespace gamescope
     class IRcObject : public RcObject
     {
     public:
-        virtual uint32_t IncRef()
+        virtual constexpr uint32_t IncRef()
         {
             return RcObject::IncRef();
         }
 
-        virtual uint32_t DecRef()
+        virtual constexpr uint32_t DecRef()
         {
             return RcObject::DecRef();
         }
@@ -115,15 +115,15 @@ namespace gamescope
     template <typename T, bool Public>
     struct RcRef_
     {
-        static void IncRef( T* pObject ) { pObject->IncRef(); }
-        static void DecRef( T* pObject ) { pObject->DecRef(); }
+        static constexpr void IncRef( T* pObject ) { pObject->IncRef(); }
+        static constexpr void DecRef( T* pObject ) { pObject->DecRef(); }
     };
 
     template <typename T>
     struct RcRef_<T, false>
     {
-        static void IncRef( T* pObject ) { pObject->IncRefPrivate(); }
-        static void DecRef( T* pObject ) { pObject->DecRefPrivate(); }
+        static constexpr void IncRef( T* pObject ) { pObject->IncRefPrivate(); }
+        static constexpr void DecRef( T* pObject ) { pObject->DecRefPrivate(); }
     };
 
     template <class T, NotTheSameAs<T>... Args>
@@ -232,7 +232,7 @@ namespace gamescope
             return *this;
         }
 
-        ~Rc()
+        constexpr ~Rc()
         {
             this->DecRef();
         }
@@ -255,13 +255,13 @@ namespace gamescope
     private:
         T* m_pObject = nullptr;
 
-        inline void IncRef() const
+        constexpr inline void IncRef() const
         {
             if ( m_pObject != nullptr )
                 RcRef::IncRef( m_pObject );
         }
 
-        inline void DecRef() const
+        constexpr inline void DecRef() const
         {
             if ( m_pObject != nullptr )
                 RcRef::DecRef( m_pObject );

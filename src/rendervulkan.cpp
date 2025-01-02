@@ -3629,10 +3629,10 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_bits( uint32_t wi
 
 			g_device.submit(std::move(cmdBuffer));
 			g_device.waitIdle();
-			return std::move(pTex);
+			return pTex;
 		}
 	};
-	return callable(pTex->BIsValid(), std::move(pTex));
+	return callable(pTex->BIsValid(), pTex);
 }
 
 static uint32_t s_frameId = 0;
@@ -4419,10 +4419,10 @@ gamescope::OwningRc<CVulkanTexture> vulkan_create_texture_from_wlr_buffer( struc
 			g_device.vk.DestroyBuffer(g_device.device(), buffer, nullptr);
 			g_device.vk.FreeMemory(g_device.device(), bufferMemory, nullptr);
 
-			return std::move(pTex);
+			return pTex;
 		}
 	};
 	auto pTex = lambda();
-	return callable(pTex->BIsValid(), std::move(pTex));
+	return callable(pTex->BIsValid(), pTex);
 	
 }
