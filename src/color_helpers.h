@@ -307,7 +307,7 @@ struct primaries_t
 		glm::vec<4, float, glm::qualifier::aligned_highp> rg_self, rg_other;
 		memcpy(&rg_self, this, sizeof(rg_self));
 		memcpy(&rg_other, &other, sizeof(rg_other));
-		auto firstComp = (rg_self == rg_other)
+		auto firstComp = (rg_self == rg_other);
 		auto bSelf = glm::vec<2, float, glm::qualifier::aligned_highp>{b};
 		auto bOther = glm::vec<2, float, glm::qualifier::aligned_highp>{other.b};
 		auto bSelfExtended = glm::vec<4, float, glm::qualifier::aligned_highp>{__builtin_shufflevector(bSelf.data, bSelf.data, 0, 1, -1, -1)};
