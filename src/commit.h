@@ -19,9 +19,31 @@ struct commit_t final : public gamescope::RcObject, public gamescope::IWaitable,
 {
  protected:
 	ENABLE_IN_PLACE_RC
-	explicit commit_t(gamescope::RcObjectOwnership tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq);
 	
-	uint64_t getCommitID();
+	uint64_t getCommitID()
+	{
+    static uint64_t maxCommmitID = 1;
+    return maxCommmitID++;
+	}
+	
+	template <bool bIsOwning>
+  explicit commit_t(gamescope::RcObjectOwnership<bIsOwning> tag, ResListEntry_t& reslistentry, struct wlr_buffer* buf, bool is_steam, uint64_t seq)
+  : RcObject(tag),
+    buf{buf}, 
+    async{reslistentry.async}, 
+    fifo{reslistentry.fifo},
+    is_steam{is_steam}, 
+    feedback( reslistentry.feedback 
+              ? std::optional<wlserver_vk_swapchain_feedback>(std::in_place_t{}, *reslistentry.feedback) 
+              : std::nullopt ),
+    win_seq{seq},
+    surf{reslistentry.surf}, 
+    presentation_feedbacks{std::move(reslistentry.presentation_feedbacks)},
+    present_id{reslistentry.present_id}, 
+    desired_present_time{reslistentry.desired_present_time}
+{
+    commitID = getCommitID();
+}
  public:
 	commit_t();
   ~commit_t();

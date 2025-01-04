@@ -160,12 +160,30 @@ public:
 		bool bColorAttachment : 1;
 		VkImageType imageType;
 	};
-	constexpr CVulkanTexture(gamescope::RcObjectOwnership tag) : RcObject{tag} {}
-	constexpr CVulkanTexture(gamescope::RcObjectOwnership tag, auto...args) : RcObject{tag} {
-		if (BInit(args...) == false) {
+	
+	template<bool bIsOwning>
+	constexpr CVulkanTexture(gamescope::RcObjectOwnership<bIsOwning> tag) : RcObject{tag} {}
+	
+	template <bool bIsOwning>
+	constexpr __attribute__((noinline)) CVulkanTexture(gamescope::RcObjectOwnership<bIsOwning> tag, uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA, uint32_t contentWidth, uint32_t contentHeight, gamescope::Rc<CVulkanTexture> pExistingImageToReuseMemory, gamescope::OwningRc<gamescope::IBackendFb> pBackendFb) : RcObject{tag} {
+		if (BInit(width, height, depth, drmFormat, flags, pDMA, contentWidth, contentHeight, pExistingImageToReuseMemory, pBackendFb) == false) [[unlikely]] {
 			m_bInitialized = false;
 		}
 	}
+	
+	template <bool bIsOwning>
+	constexpr __attribute__((noinline)) CVulkanTexture(gamescope::RcObjectOwnership<bIsOwning> tag, uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA, uint32_t contentWidth, uint32_t contentHeight, gamescope::Rc<CVulkanTexture> pExistingImageToReuseMemory) : RcObject{tag} {
+		if (BInit(width, height, depth, drmFormat, flags, pDMA, contentWidth, contentHeight, pExistingImageToReuseMemory) == false) [[unlikely]] {
+			m_bInitialized = false;
+		}
+	}
+	template <bool bIsOwning>
+	constexpr __attribute__((noinline)) CVulkanTexture(gamescope::RcObjectOwnership<bIsOwning> tag, uint32_t width, uint32_t height, uint32_t depth, uint32_t drmFormat, createFlags flags, wlr_dmabuf_attributes *pDMA = nullptr, uint32_t contentWidth = 0, uint32_t contentHeight = 0) : RcObject{tag} {
+		if (BInit(width, height, depth, drmFormat, flags, pDMA, contentWidth, contentHeight) == false) [[unlikely]] {
+			m_bInitialized = false;
+		}
+	}
+	
 	
 	CVulkanTexture() = delete;
 

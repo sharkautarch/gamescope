@@ -27,9 +27,8 @@ namespace gamescope
     	return gamescope::make_owning_rc<Class>(std::forward<Args>(args)...); \
 	}
 	
-    
-    struct RcObjectOwnership {
-    	bool bIsOwning = false;
+    template <bool bIsOwning = false>
+     struct RcObjectOwnership {
     };
     class RcObject
     {
@@ -38,10 +37,14 @@ namespace gamescope
         template <class T, NotTheSameAs<T>... Args>
         friend constexpr gamescope::Rc<T, false> make_owning_rc(Args&&... args);
     protected:
-        explicit constexpr RcObject(RcObjectOwnership ownershp) : m_uRefCount{!ownershp.bIsOwning}, m_uRefPrivate{1} {}
+    		
+        explicit constexpr RcObject(RcObjectOwnership<false> ownershp) : m_uRefCount{1}, m_uRefPrivate{1} {}
+        explicit constexpr RcObject(RcObjectOwnership<true> ownershp) : m_uRefCount{0}, m_uRefPrivate{1} {}
+       
+        
     public:
         RcObject() = default;
-        virtual ~RcObject()
+        constexpr virtual ~RcObject()
         {
         }
 
@@ -128,12 +131,12 @@ namespace gamescope
 
     template <class T, NotTheSameAs<T>... Args>
     Rc<T, true> constexpr make_rc(Args&&... args) {
-      T* pObj = new T(gamescope::RcObjectOwnership {.bIsOwning=false}, std::forward<Args>(args)...);
+      T* pObj = new T(gamescope::RcObjectOwnership<false>{}, std::forward<Args>(args)...);
       return Rc<T, true>{std::in_place_t{}, pObj};
     }
     template <class T, NotTheSameAs<T>... Args>
     Rc<T, false> constexpr make_owning_rc(Args&&... args) {
-      T* pObj = new T(gamescope::RcObjectOwnership {.bIsOwning=true}, std::forward<Args>(args)...);
+      T* pObj = new T(gamescope::RcObjectOwnership<true>{}, std::forward<Args>(args)...);
       return Rc<T, false>{std::in_place_t{}, pObj};
     }
 
