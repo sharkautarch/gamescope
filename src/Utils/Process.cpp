@@ -138,7 +138,7 @@ namespace gamescope::Process
         return false;
       defer( fclose( pFile ) );
       fgets(szName, sizeof(winedevice), pFile);
-      return strcmp(szName, winedevice) == 0;
+      return memcmp(szName, winedevice, sizeof(winedevice)) == 0;
 		}
     void KillProcess( pid_t nPid, int nSignal )
     {
