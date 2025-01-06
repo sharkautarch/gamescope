@@ -166,6 +166,30 @@ namespace gamescope
         bool bOpaque;
         uint32_t uFractionalScale;
     };
+    
+    inline WaylandPlaneState SanitizePlane( const WaylandPlaneState &state ) {
+    	//valid values for:
+     	// - src:
+        //    width & height: -1 or >=1
+        //    x & y: -1 or >= 0
+        // - dst:
+        //    width & height: -1 or >= 1
+        //    x & y: INT_MIN to INT_MAX (no restriction)
+    	double flSanitizedSrcX = state.flSrcX == -1.0 ? -1.0 : std::max(0.0, state.flSrcX);
+     	double flSanitizedSrcY = state.flSrcY == -1.0 ? -1.0 : std::max(0.0, state.flSrcY);
+      	double flSanitizedSrcWidth = state.flSrcWidth == -1.0 ? -1.0 : std::max(1.0, state.flSrcWidth);
+       	double flSanitizedSrcHeight = state.flSrcHeight == -1.0 ? -1.0 : std::max(1.0, state.flSrcHeight);
+        int32_t nSanitizedDstWidth = state.nDstWidth == -1 ? -1 : std::max(1, state.nDstWidth);
+        int32_t nSanitizedDstHeight = state.nDstHeight == -1 ? -1 : std::max(1, state.nDstHeight);
+        WaylandPlaneState outState = state;
+        outState.flSrcX = flSanitizedSrcX;
+        outState.flSrcY = flSanitizedSrcY;
+        outState.flSrcWidth = flSanitizedSrcWidth;
+        outState.flSrcHeight = flSanitizedSrcHeight;
+        outState.nDstWidth = nSanitizedDstWidth;
+        outState.nDstHeight = nSanitizedDstHeight;
+        return outState;
+    }
 
     inline WaylandPlaneState ClipPlane( const WaylandPlaneState &state )
     {
@@ -983,7 +1007,8 @@ namespace gamescope
 
         if ( oState )
         {
-            assert( oState->pBuffer );
+        	WaylandPlaneState sanitizedPlane = SanitizePlane(*oState);
+            assert( sanitizedPlane.pBuffer );
 
             if ( m_pFrame )
             {
@@ -998,7 +1023,7 @@ namespace gamescope
             else if ( m_pFrogColorManagedSurface )
             {
                 frog_color_managed_surface_set_render_intent( m_pFrogColorManagedSurface, FROG_COLOR_MANAGED_SURFACE_RENDER_INTENT_PERCEPTUAL );
-                switch ( oState->eColorspace )
+                switch ( sanitizedPlane.eColorspace )
                 {
                     default:
                     case GAMESCOPE_APP_TEXTURE_COLORSPACE_PASSTHRU:
@@ -1020,33 +1045,34 @@ namespace gamescope
                         break;
                 }
             }
-
+            
+            
             // Fraction with denominator of 120 per. spec
-            const uint32_t uScale = oState->uFractionalScale;
+            const uint32_t uScale = sanitizedPlane.uFractionalScale;
 
             wp_viewport_set_source(
                 m_pViewport,
-                wl_fixed_from_double( oState->flSrcX ),
-                wl_fixed_from_double( oState->flSrcY ),
-                wl_fixed_from_double( oState->flSrcWidth ),
-                wl_fixed_from_double( oState->flSrcHeight ) );
+                wl_fixed_from_double( sanitizedPlane.flSrcX ),
+                wl_fixed_from_double( sanitizedPlane.flSrcY ),
+                wl_fixed_from_double( sanitizedPlane.flSrcWidth ),
+                wl_fixed_from_double( sanitizedPlane.flSrcHeight ) );
             wp_viewport_set_destination(
                 m_pViewport,
-                WaylandScaleToLogical( oState->nDstWidth, uScale ),
-                WaylandScaleToLogical( oState->nDstHeight, uScale ) );
+                WaylandScaleToLogical( sanitizedPlane.nDstWidth, uScale ),
+                WaylandScaleToLogical( sanitizedPlane.nDstHeight, uScale ) );
 
             if ( m_pSubsurface )
             {
                 wl_subsurface_set_position(
                     m_pSubsurface,
-                    WaylandScaleToLogical( oState->nDestX, uScale ),
-                    WaylandScaleToLogical( oState->nDestY, uScale ) );
+                    WaylandScaleToLogical( sanitizedPlane.nDestX, uScale ),
+                    WaylandScaleToLogical( sanitizedPlane.nDestY, uScale ) );
             }
             // The x/y here does nothing? Why? What is it for...
             // Use the subsurface set_position thing instead.
-            wl_surface_attach( m_pSurface, oState->pBuffer, 0, 0 );
+            wl_surface_attach( m_pSurface, sanitizedPlane.pBuffer, 0, 0 );
             wl_surface_damage( m_pSurface, 0, 0, INT32_MAX, INT32_MAX );
-            wl_surface_set_opaque_region( m_pSurface, oState->bOpaque ? m_pBackend->GetFullRegion() : nullptr );
+            wl_surface_set_opaque_region( m_pSurface, sanitizedPlane.bOpaque ? m_pBackend->GetFullRegion() : nullptr );
             wl_surface_set_buffer_scale( m_pSurface, 1 );
         }
         else
