@@ -1338,8 +1338,8 @@ int VulkanTimelineSemaphore_t::GetFd() const
 
 std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphore( uint64_t ulStartPoint, bool bShared )
 {
-	VulkanTimelineSemaphore_t semaphore{};
-	semaphore.pDevice = this;
+	auto semaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	semaphore->pDevice = this;
 
 	VkSemaphoreCreateInfo createInfo =
 	{
@@ -1363,19 +1363,19 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::CreateTimelineSemaphor
 	};
 
 	VkResult res;
-	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &semaphore.pVkSemaphore ) ) != VK_SUCCESS )
+	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &semaphore->pVkSemaphore ) ) != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateSemaphore failed" );
 		return nullptr;
 	}
 
-	return std::make_shared<VulkanTimelineSemaphore_t>( semaphore );
+	return std::shared_ptr<VulkanTimelineSemaphore_t>( std::move(semaphore) );
 }
 
 std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphore( gamescope::CTimeline *pTimeline )
 {
-	VulkanTimelineSemaphore_t semaphore{};
-	semaphore.pDevice = this;
+	auto semaphore = std::make_unique<VulkanTimelineSemaphore_t>();
+	semaphore->pDevice = this;
 	
 
 	const VkSemaphoreTypeCreateInfo typeInfo =
@@ -1391,7 +1391,7 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 	};
 
 	VkResult res;
-	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &semaphore.pVkSemaphore ) ) != VK_SUCCESS )
+	if ( ( res = vk.CreateSemaphore( m_device, &createInfo, nullptr, &semaphore->pVkSemaphore ) ) != VK_SUCCESS )
 	{
 		vk_errorf( res, "vkCreateSemaphore failed" );
 		return nullptr;
@@ -1408,7 +1408,7 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 	{
 		.sType = VK_STRUCTURE_TYPE_IMPORT_SEMAPHORE_FD_INFO_KHR,
 		.pNext = nullptr,
-		.semaphore = semaphore.pVkSemaphore,
+		.semaphore = semaphore->pVkSemaphore,
 		.flags = 0, // not temporary
 		.handleType = VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_FD_BIT,
 		.fd = dup( pTimeline->GetSyncobjFd() ),
@@ -1419,7 +1419,7 @@ std::shared_ptr<VulkanTimelineSemaphore_t> CVulkanDevice::ImportTimelineSemaphor
 		return nullptr;
 	}
 
-	return std::make_shared<VulkanTimelineSemaphore_t>( semaphore );
+	return std::shared_ptr<VulkanTimelineSemaphore_t>( std::move(semaphore) );
 }
 
 void CVulkanCmdBuffer::AddDependency( std::shared_ptr<VulkanTimelineSemaphore_t> pTimelineSemaphore, uint64_t ulPoint )
