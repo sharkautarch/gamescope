@@ -3,6 +3,7 @@
 /////////////////////////////
 
 // Go from sRGB encoding -> linear
+#if 0
 vec3 srgbToLinear(vec3 color) {
     bvec3 isLo = lessThanEqual(color, vec3(0.04045f));
 
@@ -10,18 +11,28 @@ vec3 srgbToLinear(vec3 color) {
     vec3 hiPart = pow((color + 0.055f) / 1.055f, vec3(12.0f / 5.0f));
     return mix(hiPart, loPart, isLo);
 }
+#endif
+vec3 srgbToLinear(vec3 color) {
+    return color * (color * (color * 0.305306011 + 0.682171111) + 0.012522878);
+}
+
 
 vec4 srgbToLinear(vec4 color) {
   return vec4(srgbToLinear(color.rgb), color.a);
 }
 
 // Go from linear -> sRGB encoding.
+#if 0
 vec3 linearToSrgb(vec3 color) {
     bvec3 isLo = lessThanEqual(color, vec3(0.0031308f));
 
     vec3 loPart = color * 12.92f;
     vec3 hiPart = pow(color, vec3(5.0f / 12.0f)) * 1.055f - 0.055f;
     return mix(hiPart, loPart, isLo);
+}
+#endif
+vec3 linearToSrgb(vec3 color) {
+	return max(fma(vec3(1.055), pow(color, vec3(0.416666667)), -vec3(0.055)), vec3(0.0));
 }
 
 vec4 linearToSrgb(vec4 color) {

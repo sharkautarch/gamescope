@@ -30,14 +30,14 @@ vec4 sampleBandLimited(sampler2D samp, vec2 uv, vec2 size, vec2 inv_size, vec2 e
     const float max_extent = 0.25f;
 
 	// Get base pixel and phase, range [0, 1).
-	vec2 pixel = uv * (unnormalized ? vec2(1.0f) : size) - 0.5;
-	vec2 base_pixel = floor(pixel);
-	vec2 phase = pixel - base_pixel;
+	vec2 pixel = fma(uv, (unnormalized ? vec2(1.0f) : size), vec2(-0.5f));
+	vec2 base_pixel;
+	vec2 phase = modf(pixel, base_pixel);
 
 	// We can resolve the filter by just sampling a single 2x2 block.
 	// Lerp between normal sampling at LOD 0, and bandlimited pixel filter at LOD -1.
-	vec2 shift = 0.5 + 0.5 * sin(bandlimited_PI_half * clamp((phase - 0.5) / min(extent, vec2(max_extent)), -1.0, 1.0));
-	uv = (base_pixel + 0.5 + shift) * (unnormalized ? vec2(1.0f) : inv_size);
+	vec2 shift = sin(bandlimited_PI_half * clamp((phase - 0.5f) / min(extent, vec2(max_extent)), -1.0f, 1.0f));
+	uv = (fma(vec2(0.5f), shift, base_pixel + 1.0f)) * (unnormalized ? vec2(1.0f) : inv_size);
 
 	return sampleRegular(samp, uv, colorspace);
 }
@@ -148,6 +148,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalize
 vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
+    vec2 recipTexSize = 1.0f/texSize;
 
     if (coord.x < 0.0f       || coord.y < 0.0f ||
         coord.x >= texSize.x || coord.y >= texSize.y) {
@@ -160,14 +161,13 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
     }
 
     if (!unnormalized)
-        coord /= texSize;
+        coord *= recipTexSize;
 
     uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
     vec4 color;
     if (get_layer_shaderfilter(offsetLayerIdx) == filter_pixel) {
-        vec2 output_res = texSize / u_scale[offsetLayerIdx];
-        vec2 extent = max((texSize / output_res), vec2(1.0 / 256.0));
-        color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : vec2(1.0f) / texSize, extent, colorspace, unnormalized);
+        vec2 extent = max(u_scale[offsetLayerIdx], vec2(1.0 / 256.0));
+        color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : recipTexSize, extent, colorspace, unnormalized);
     }
     else if (get_layer_shaderfilter(offsetLayerIdx) == filter_linear_emulated) {
         color = sampleBilinear(layerSampler, coord, colorspace, unnormalized);
