@@ -20,10 +20,11 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
 }
 
 void main() {
-    uvec2 coord = uvec2(gl_GlobalInvocationID.x, gl_GlobalInvocationID.y);
+    uvec2 workgroupCoord = gl_WorkGroupID.xy * gl_WorkGroupSize.xy;
+    uvec2 coord = workgroupCoord + gl_LocalInvocationID.xy;
     uvec2 outSize = imageSize(dst);
 
-    if (coord.x >= outSize.x || coord.y >= outSize.y)
+    if ( workgroupCoord != min(workgroupCoord, outSize) )
         return;
 
     vec2 uv = vec2(coord);

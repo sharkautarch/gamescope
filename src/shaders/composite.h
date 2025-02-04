@@ -19,7 +19,7 @@ const float bandlimited_PI_half = 0.5 * bandlimited_PI;
 //   For uniform scaling, none of this matters.
 //   extent can be multiplied to achieve LOD bias.
 //   extent must be at least 1.0 / 256.0.
-vec4 sampleBandLimited(sampler2D samp, vec2 uv, vec2 size, vec2 inv_size, vec2 extent, uint colorspace, bool unnormalized)
+vec4 sampleBandLimited(sampler2D samp, vec2 uv, vec2 size, vec2 inv_size, vec2 extent, uint colorspace)
 {
     // Josh:
     // Clamp to behaviour like 4x scale (0.25).
@@ -28,16 +28,21 @@ vec4 sampleBandLimited(sampler2D samp, vec2 uv, vec2 size, vec2 inv_size, vec2 e
     // on Cave Story (480p) -> 800p on Deck.
     // TODO: Maybe make this configurable?
     const float max_extent = 0.25f;
-
+	//size = (unnormalized ? vec2(1.0f) : size);
+	//inv_size = (unnormalized ? vec2(1.0f) : inv_size);
 	// Get base pixel and phase, range [0, 1).
-	vec2 pixel = fma(uv, (unnormalized ? vec2(1.0f) : size), vec2(-0.5f));
-	vec2 base_pixel;
-	vec2 phase = modf(pixel, base_pixel);
-
+	vec2 pixel = fma(uv, size, vec2(-0.5f));
+	vec2 phase;
+	{
+		vec2 base_pixel;
+		phase = modf(pixel, base_pixel);
+		uv = fma(base_pixel, inv_size, inv_size);
+		inv_size /= 2;
+	}
 	// We can resolve the filter by just sampling a single 2x2 block.
 	// Lerp between normal sampling at LOD 0, and bandlimited pixel filter at LOD -1.
 	vec2 shift = sin(bandlimited_PI_half * clamp((phase - 0.5f) / min(extent, vec2(max_extent)), -1.0f, 1.0f));
-	uv = (fma(vec2(0.5f), shift, base_pixel + 1.0f)) * (unnormalized ? vec2(1.0f) : inv_size);
+	uv += (shift) * inv_size;
 
 	return sampleRegular(samp, uv, colorspace);
 }
@@ -115,9 +120,7 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
     return color;
 }
 
-vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalized) {
-    vec2 scale = unnormalized ? vec2(1.0) : vec2(textureSize(tex, 0));
-
+vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
     vec2 pixCoord = coord * scale - 0.5f;
     vec2 originPixCoord = floor(pixCoord);
 
@@ -148,10 +151,8 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, uint colorspace, bool unnormalize
 vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
-    vec2 recipTexSize = 1.0f/texSize;
 
-    if (coord.x < 0.0f       || coord.y < 0.0f ||
-        coord.x >= texSize.x || coord.y >= texSize.y) {
+    if ( coord != clamp(coord, vec2(0.0f,0.0f), texSize) ) {
         float border = (u_borderMask & (1u << offsetLayerIdx)) != 0 ? 1.0f : 0.0f;
 
         if (checkDebugFlag(compositedebug_PlaneBorders))
@@ -159,24 +160,26 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
 
         return vec4(0.0f, 0.0f, 0.0f, border);
     }
-
+		vec2 recipTexSize = 1.0f/texSize;
     if (!unnormalized)
         coord *= recipTexSize;
-
+		else {
+			texSize = recipTexSize = vec2(1.f);
+		}
     uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
     vec4 color;
     if (get_layer_shaderfilter(offsetLayerIdx) == filter_pixel) {
         vec2 extent = max(u_scale[offsetLayerIdx], vec2(1.0 / 256.0));
-        color = sampleBandLimited(layerSampler, coord, unnormalized ? vec2(1.0f) : texSize, unnormalized ? vec2(1.0f) : recipTexSize, extent, colorspace, unnormalized);
+        color = sampleBandLimited(layerSampler, coord, texSize, recipTexSize, extent, colorspace);
     }
     else if (get_layer_shaderfilter(offsetLayerIdx) == filter_linear_emulated) {
-        color = sampleBilinear(layerSampler, coord, colorspace, unnormalized);
+        color = sampleBilinear(layerSampler, coord, texSize, colorspace);
     }
     else {
         color = sampleRegular(layerSampler, coord, colorspace);
     }
     // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
-    color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
+    //color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
     //color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
 
     return color;
