@@ -124,7 +124,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
     vec2 pixCoord = coord * scale - 0.5f;
     vec2 originPixCoord = floor(pixCoord);
 
-    vec2 gatherUV = (originPixCoord * scale + 1.0f) / scale;
+    vec2 gatherUV = originPixCoord + 1.0f / scale;
 
     vec4 red   = textureGather(tex, gatherUV, 0);
     vec4 green = textureGather(tex, gatherUV, 1);
