@@ -122,9 +122,8 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
 
 vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
     vec2 pixCoord = coord * scale - 0.5f;
-    vec2 originPixCoord = floor(pixCoord);
 
-    vec2 gatherUV = originPixCoord + 1.0f / scale;
+    vec2 gatherUV = floor(pixCoord) + 1.0f / scale;
 
     vec4 red   = textureGather(tex, gatherUV, 0);
     vec4 green = textureGather(tex, gatherUV, 1);
@@ -141,7 +140,7 @@ vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
     c11.rgb = colorspace_plane_degamma_tf(c11.rgb, colorspace);
     c10.rgb = colorspace_plane_degamma_tf(c10.rgb, colorspace);
 
-    vec2 filterWeight = pixCoord - originPixCoord;
+    vec2 filterWeight = fract(pixCoord);
 
     vec4 temp0 = mix(c01, c11, filterWeight.x);
     vec4 temp1 = mix(c00, c10, filterWeight.x);
