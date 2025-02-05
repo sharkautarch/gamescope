@@ -55,7 +55,7 @@ else
   glsl_generator = generator(
     glsl_compiler,
     output    : ['@BASENAME@.h'],
-    arguments : ['-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@'],
+    arguments : [ '-V', '@INPUT@', '--vn', '@BASENAME@', '-o', '@OUTPUT@'],
   )
 endif
 

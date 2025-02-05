@@ -18,7 +18,7 @@ vec3 srgbToLinear(vec3 color) {
 
 
 vec4 srgbToLinear(vec4 color) {
-  return vec4(srgbToLinear(color.rgb), color.a);
+  return color * (color * (color * 0.305306011 + 0.682171111) + 0.012522878);
 }
 
 // Go from linear -> sRGB encoding.
@@ -36,7 +36,7 @@ vec3 linearToSrgb(vec3 color) {
 }
 
 vec4 linearToSrgb(vec4 color) {
-  return vec4(linearToSrgb(color.rgb), color.a);
+  return max(fma(vec4(1.055), pow(color, vec4(0.416666667)), -vec4(0.055)), vec4(0.0));
 }
 
 /////////////////////////////
@@ -80,6 +80,20 @@ vec3 nitsToPq(vec3 nits) {
     return n;
 }
 
+vec4 nitsToPq(vec4 nits) {
+    vec4 y = clamp(nits / 10000.0, vec4(0.0), vec4(1.0));
+    const float c1 = 0.8359375;
+    const float c2 = 18.8515625;
+    const float c3 = 18.6875;
+    const float m1 = 0.1593017578125;
+    const float m2 = 78.84375;
+    vec4 num = c1 + c2 * pow(y, vec4(m1));
+    vec4 den = 1.0 + c3 * pow(y, vec4(m1));
+    vec4 n = pow(num / den, vec4(m2));
+    return n;
+}
+
+
 vec3 pqToNits(vec3 pq) {
     const float c1 = 0.8359375;
     const float c2 = 18.8515625;
@@ -94,9 +108,28 @@ vec3 pqToNits(vec3 pq) {
     return 10000.0 * pow(num / den, vec3(oo_m1));
 }
 
+vec4 pqToNits(vec4 pq) {
+    const float c1 = 0.8359375;
+    const float c2 = 18.8515625;
+    const float c3 = 18.6875;
+
+    const float oo_m1 = 1.0 / 0.1593017578125;
+    const float oo_m2 = 1.0 / 78.84375;
+
+    vec4 num = max(pow(pq, vec4(oo_m2)) - c1, vec4(0.0));
+    vec4 den = c2 - c3 * pow(pq, vec4(oo_m2));
+
+    return 10000.0 * pow(num / den, vec4(oo_m1));
+}
+
 // does NOT change primaries, just
 // the pq value in nits / 80.0f!
 vec3 pqToScRGBEncoding(vec3 pq)
+{
+    return pqToNits(pq) / 80.0f;
+}
+
+vec4 pqToScRGBEncoding(vec4 pq)
 {
     return pqToNits(pq) / 80.0f;
 }
@@ -344,6 +377,23 @@ vec3 colorspace_plane_degamma_tf(vec3 color, uint colorspace) {
 
     switch (colorspace) {
         default: return vec3(1, 1, 0); // should never happen
+
+        case colorspace_passthru:
+        case colorspace_linear: // Using sRGB image view. Unlike DRM which doesn't get that liberty for scanout.
+		case colorspace_scRGB:
+            return color;
+		case colorspace_sRGB:
+			return srgbToLinear(color);
+		case colorspace_pq:
+			return pqToScRGBEncoding(color);
+    }
+}
+
+vec4 colorspace_plane_degamma_tf_v4(vec4 color, uint colorspace) {
+    // matches with colorspace_to_plane_degamma_tf in drm.cpp
+
+    switch (colorspace) {
+        default: return vec4(1, 1, 1, 1); // should never happen
 
         case colorspace_passthru:
         case colorspace_linear: // Using sRGB image view. Unlike DRM which doesn't get that liberty for scanout.

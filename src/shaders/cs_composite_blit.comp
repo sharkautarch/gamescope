@@ -21,38 +21,38 @@ vec4 sampleLayer(uint layerIdx, vec2 uv) {
 
 void main() {
     uvec2 workgroupCoord = gl_WorkGroupID.xy * gl_WorkGroupSize.xy;
-    uvec2 coord = workgroupCoord + gl_LocalInvocationID.xy;
-    uvec2 outSize = imageSize(dst);
+		uvec2 outSize = imageSize(dst);
+		
+    if ( all(lessThan(workgroupCoord, outSize)) ) {
+			uvec2 coord = workgroupCoord + gl_LocalInvocationID.xy;
 
-    if ( workgroupCoord != min(workgroupCoord, outSize) )
-        return;
+		  vec2 uv = vec2(coord);
+		  vec4 outputValue = vec4(0.0f);
 
-    vec2 uv = vec2(coord);
-    vec4 outputValue = vec4(0.0f);
+		  if (checkDebugFlag(compositedebug_PlaneBorders))
+		      outputValue = vec4(1.0f, 0.0f, 0.0f, 0.0f);
 
-    if (checkDebugFlag(compositedebug_PlaneBorders))
-        outputValue = vec4(1.0f, 0.0f, 0.0f, 0.0f);
+		  if (c_layerCount > 0) {
+		      outputValue = sampleLayer(0, uv) * u_opacity[0];
+		  }
 
-    if (c_layerCount > 0) {
-        outputValue = sampleLayer(0, uv) * u_opacity[0];
+		  for (int i = 1; i < c_layerCount; i++) {
+		      vec4 layerColor = sampleLayer(i, uv);
+		      // wl_surfaces come with premultiplied alpha, so that's them being
+		      // premultiplied by layerColor.a.
+		      // We need to then multiply that by the layer's opacity to get to our
+		      // final premultiplied state.
+		      // For the other side of things, we need to multiply by (1.0f - (layerColor.a * opacity))
+		      float opacity = u_opacity[i];
+		      float layerAlpha = opacity * layerColor.a;
+		      outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
+		  }
+
+		  outputValue.rgb = encodeOutputColor(outputValue.rgb);
+		  imageStore(dst, ivec2(coord), outputValue);
+
+		  // Indicator to quickly tell if we're in the compositing path or not.
+		  if (checkDebugFlag(compositedebug_Markers))
+		      compositing_debug(coord);
     }
-
-    for (int i = 1; i < c_layerCount; i++) {
-        vec4 layerColor = sampleLayer(i, uv);
-        // wl_surfaces come with premultiplied alpha, so that's them being
-        // premultiplied by layerColor.a.
-        // We need to then multiply that by the layer's opacity to get to our
-        // final premultiplied state.
-        // For the other side of things, we need to multiply by (1.0f - (layerColor.a * opacity))
-        float opacity = u_opacity[i];
-        float layerAlpha = opacity * layerColor.a;
-        outputValue = layerColor * opacity + outputValue * (1.0f - layerAlpha);
-    }
-
-    outputValue.rgb = encodeOutputColor(outputValue.rgb);
-    imageStore(dst, ivec2(coord), outputValue);
-
-    // Indicator to quickly tell if we're in the compositing path or not.
-    if (checkDebugFlag(compositedebug_Markers))
-        compositing_debug(coord);
 }

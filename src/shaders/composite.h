@@ -1,6 +1,7 @@
 #include "colorimetry.h"
 
 #include "shaderfilter.h"
+#include "fp_controls.h"
 
 vec4 sampleRegular(sampler2D tex, vec2 coord, uint colorspace) {
     vec4 color = textureLod(tex, coord, 0);
@@ -121,67 +122,83 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
 }
 
 vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec2 pixCoord = coord * scale - 0.5f;
 
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec2 gatherUV = floor(pixCoord) + 1.0f / scale;
 
-    vec4 red   = textureGather(tex, gatherUV, 0);
-    vec4 green = textureGather(tex, gatherUV, 1);
-    vec4 blue  = textureGather(tex, gatherUV, 2);
-    vec4 alpha = textureGather(tex, gatherUV, 3);
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 red;
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 green;
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 blue;
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 alpha;
+    red   = colorspace_plane_degamma_tf_v4(textureGather(tex, gatherUV, 0), colorspace);
+    green = colorspace_plane_degamma_tf_v4(textureGather(tex, gatherUV, 1), colorspace);
+    blue  = colorspace_plane_degamma_tf_v4(textureGather(tex, gatherUV, 2), colorspace);
+    alpha = textureGather(tex, gatherUV, 3);
 
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec4 c00 = vec4(red.w, green.w, blue.w, alpha.w);
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec4 c01 = vec4(red.x, green.x, blue.x, alpha.x);
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec4 c11 = vec4(red.y, green.y, blue.y, alpha.y);
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec4 c10 = vec4(red.z, green.z, blue.z, alpha.z);
 
-    c00.rgb = colorspace_plane_degamma_tf(c00.rgb, colorspace);
-    c01.rgb = colorspace_plane_degamma_tf(c01.rgb, colorspace);
-    c11.rgb = colorspace_plane_degamma_tf(c11.rgb, colorspace);
-    c10.rgb = colorspace_plane_degamma_tf(c10.rgb, colorspace);
-
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
     vec2 filterWeight = fract(pixCoord);
 
-    vec4 temp0 = mix(c01, c11, filterWeight.x);
-    vec4 temp1 = mix(c00, c10, filterWeight.x);
-    return mix(temp1, temp0, filterWeight.y);
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 temp0 = mix(c01, c11, filterWeight.x); // temp0 = mix( (red.x, green.x, blue.x, alpha.x), (red.y, green.y, blue.y, alpha.y), filterWeight.x )
+    																					  //			 = (red.x * ( floor(pixCoord.x) ) + fract(pixCoord.x)*red.y , ... )
+    SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+    vec4 temp1 = mix(c00, c10, filterWeight.x); // temp1 = mix( (red.w, green.w, blue.w, alpha.w), (red.z, green.z, blue.z, alpha.z), filterWeight.x )
+    																						// 			 = (red.w * ( floor(pixCoord.x) ) + fract(pixCoord.x)*red.z , ... )
+    return mix(temp1, temp0, filterWeight.y);  // = ( (red.w *floor(pixCoord.x) ) + fract(pixCoord.x)*red.z , ... ) * floor(pixCoord).y + fract(pixCoord).y * (red.x * ( floor(pixCoord.x) ) + fract(pixCoord.x)*red.y , ... )
 }
 
 vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceLayerIdx, vec2 uv, bool unnormalized) {
     vec2 coord = ((uv + u_offset[offsetLayerIdx]) * u_scale[offsetLayerIdx]);
     vec2 texSize = textureSize(layerSampler, 0);
 
-    if ( coord != clamp(coord, vec2(0.0f,0.0f), texSize) ) {
-        float border = (u_borderMask & (1u << offsetLayerIdx)) != 0 ? 1.0f : 0.0f;
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+		float border = (u_borderMask & (1u << offsetLayerIdx)) != 0 ? 1.0f : 0.0f;
+		
+		SET_FP_MODE_ON_FOLLOWING_STATEMENT(FP_MODE_Fast)
+		vec4 color = vec4(0.0f, 0.0f, 0.0f, border);
+		if (checkDebugFlag(compositedebug_PlaneBorders))
+        color = vec4(vec3(1.0f, 0.0f, 1.0f) * border, border);
+    if ( coord == clamp(coord, vec2(0.0f,0.0f), texSize) ) {
+			vec2 recipTexSize = 1.0f/texSize;
+		  if (!unnormalized)
+		      coord *= recipTexSize;
+			else {
+				texSize = recipTexSize = vec2(1.f);
+			}
+		  uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
 
-        if (checkDebugFlag(compositedebug_PlaneBorders))
-            return vec4(vec3(1.0f, 0.0f, 1.0f) * border, border);
-
-        return vec4(0.0f, 0.0f, 0.0f, border);
-    }
-		vec2 recipTexSize = 1.0f/texSize;
-    if (!unnormalized)
-        coord *= recipTexSize;
-		else {
-			texSize = recipTexSize = vec2(1.f);
+		  if (get_layer_shaderfilter(offsetLayerIdx) == filter_pixel) {
+		      vec2 extent = max(u_scale[offsetLayerIdx], vec2(1.0 / 256.0));
+		      color = sampleBandLimited(layerSampler, coord, texSize, recipTexSize, extent, colorspace);
+		  }
+		  else if (get_layer_shaderfilter(offsetLayerIdx) == filter_linear_emulated) {
+		      color = sampleBilinear(layerSampler, coord, texSize, colorspace);
+		  }
+		  else {
+		      color = sampleRegular(layerSampler, coord, colorspace);
+		  }
+		  // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
+		  //color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
+		  //color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
 		}
-    uint colorspace = get_layer_colorspace(colorspaceLayerIdx);
-    vec4 color;
-    if (get_layer_shaderfilter(offsetLayerIdx) == filter_pixel) {
-        vec2 extent = max(u_scale[offsetLayerIdx], vec2(1.0 / 256.0));
-        color = sampleBandLimited(layerSampler, coord, texSize, recipTexSize, extent, colorspace);
-    }
-    else if (get_layer_shaderfilter(offsetLayerIdx) == filter_linear_emulated) {
-        color = sampleBilinear(layerSampler, coord, texSize, colorspace);
-    }
-    else {
-        color = sampleRegular(layerSampler, coord, colorspace);
-    }
-    // JoshA: AMDGPU applies 3x4 CTM like this, where A is 1.0, but it only affects .rgb.
-    //color.rgb = vec4(color.rgb, 1.0f) * u_ctm[colorspaceLayerIdx];
-    //color.rgb = apply_layer_color_mgmt(color.rgb, offsetLayerIdx, colorspace);
-
-    return color;
+		
+		return color;
+		
 }
 
 vec4 sampleLayer(sampler2D layerSampler, uint layerIdx, vec2 uv, bool unnormalized) {
