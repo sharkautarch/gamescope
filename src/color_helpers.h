@@ -489,7 +489,7 @@ bool LoadCubeLut( lut3d_t * lut3d, const char * filename );
 // Look luts are optional, but if specified applied in the sourceEOTF space
 
 template <uint32_t lutEdgeSize3d>
-void __attribute__((always_inline)) calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
+void calcColorTransform( lut1d_t * pShaper, int nLutSize1d,
 	lut3d_t * pLut3d,
 	const displaycolorimetry_t & source, EOTF sourceEOTF,
 	const displaycolorimetry_t & dest,  EOTF destEOTF,

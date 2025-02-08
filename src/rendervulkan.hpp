@@ -302,7 +302,7 @@ static inline glm::bvec2  __attribute__((flatten)) float_is_integer(aligned_vec4
 	auto xmm = (__m128)predicate;
 	auto res = _mm_movemask_ps(xmm);
 	glm::bvec2 ret{false};
-	memcpy(&ret, &res, sizeof(ret));
+	memcpy(&ret, &res, std::min(sizeof(ret), sizeof(res)) );
 	return ret;
 }
 
