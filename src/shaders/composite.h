@@ -153,7 +153,7 @@ vec4 sampleLayerEx(sampler2D layerSampler, uint offsetLayerIdx, uint colorspaceL
 		vec4 color = vec4(0.0f, 0.0f, 0.0f, border);
 		if (checkDebugFlag(compositedebug_PlaneBorders))
         color = vec4(vec3(1.0f, 0.0f, 1.0f) * border, border);
-    if ( coord >= vec2(0.0f, 0.0f) && coord < texSize ) {
+    if ( all(greaterThanEqual(coord, vec2(0.0f, 0.0f))) && all(lessThan(coord, texSize)) ) {
 			vec2 recipTexSize = 1.0f/texSize;
 		  if (!unnormalized)
 		      coord *= recipTexSize;
