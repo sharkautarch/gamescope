@@ -839,7 +839,8 @@ static void gamescope_swapchain_swapchain_feedback( struct wl_client *client, st
 	uint32_t vk_colorspace,
 	uint32_t vk_composite_alpha,
 	uint32_t vk_pre_transform,
-	uint32_t vk_clipped)
+	uint32_t vk_clipped,
+	const char *vk_engine_name)
 {
 	wlserver_wl_surface_info *wl_info = (wlserver_wl_surface_info *)wl_resource_get_user_data( resource );
 	if ( wl_info )
@@ -851,6 +852,7 @@ static void gamescope_swapchain_swapchain_feedback( struct wl_client *client, st
 			.vk_composite_alpha = VkCompositeAlphaFlagBitsKHR(vk_composite_alpha),
 			.vk_pre_transform = VkSurfaceTransformFlagBitsKHR(vk_pre_transform),
 			.vk_clipped = VkBool32(vk_clipped),
+			.vk_engine_name = std::make_shared<std::string>(vk_engine_name),
 			.hdr_metadata_blob = nullptr,
 		});
 	}
@@ -1844,9 +1846,11 @@ bool wlserver_init( void ) {
 		char szEISocket[ 64 ];
 		snprintf( szEISocket, sizeof( szEISocket ), "%s-ei", wlserver.wl_display_name );
 
-		g_InputServer = std::make_unique<gamescope::GamescopeInputServer>();
-		if ( g_InputServer->Init( szEISocket ) )
+		std::unique_ptr<gamescope::GamescopeInputServer> pInputServer = std::make_unique<gamescope::GamescopeInputServer>();
+		if ( pInputServer->Init( szEISocket ) )
 		{
+			g_InputServer = std::move( pInputServer );
+
 			setenv( "LIBEI_SOCKET", szEISocket, 1 );
 			g_LibEisWaiter.AddWaitable( g_InputServer.get() );
 			wl_log.infof( "Successfully initialized libei for input emulation!" );

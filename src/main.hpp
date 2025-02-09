@@ -48,6 +48,7 @@ static inline constexpr struct option gamescope_options[] = {
 	// openvr options
 #if HAVE_OPENVR
 	{ "vr-overlay-key", required_argument, nullptr, 0 },
+	{ "vr-app-overlay-key", required_argument, nullptr, 0 },
 	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
 	{ "vr-overlay-icon", required_argument, nullptr, 0 },
@@ -55,11 +56,13 @@ static inline constexpr struct option gamescope_options[] = {
 	{ "vr-overlay-enable-control-bar", no_argument, nullptr, 0 },
 	{ "vr-overlay-enable-control-bar-keyboard", no_argument, nullptr, 0 },
 	{ "vr-overlay-enable-control-bar-close", no_argument, nullptr, 0 },
+	{ "vr-overlay-enable-click-stabilization", no_argument, nullptr, 0 },
 	{ "vr-overlay-modal", no_argument, nullptr, 0 },
 	{ "vr-overlay-physical-width", required_argument, nullptr, 0 },
 	{ "vr-overlay-physical-curvature", required_argument, nullptr, 0 },
 	{ "vr-overlay-physical-pre-curve-pitch", required_argument, nullptr, 0 },
 	{ "vr-scroll-speed", required_argument, nullptr, 0 },
+	{ "vr-session-manager", no_argument, nullptr, 0 },
 #endif
 
 	// wlserver options
@@ -69,6 +72,7 @@ static inline constexpr struct option gamescope_options[] = {
 	{ "cursor", required_argument, nullptr, 0 },
 	{ "cursor-hotspot", required_argument, nullptr, 0 },
 	{ "cursor-scale-height", required_argument, nullptr, 0 },
+	{ "virtual-connector-strategy", required_argument, nullptr, 0 },
 	{ "ready-fd", required_argument, nullptr, 'R' },
 	{ "stats-path", required_argument, nullptr, 'T' },
 	{ "hide-cursor-delay", required_argument, nullptr, 'C' },

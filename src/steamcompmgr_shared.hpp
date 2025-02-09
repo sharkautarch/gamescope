@@ -194,6 +194,8 @@ struct steamcompmgr_win_t {
 	bool unlockedForFrameCallback = false;
 	bool receivedDoneCommit = false;
 
+	std::shared_ptr<std::string> engineName;
+
 	std::vector< gamescope::Rc<commit_t> > commit_queue;
 	std::shared_ptr<std::vector< uint32_t >> icon;
 
@@ -313,6 +315,21 @@ struct steamcompmgr_win_t {
 			return xwayland().surface.override_surface;
 		else
 			return nullptr;
+	}
+
+	gamescope::VirtualConnectorKey_t GetVirtualConnectorKey( gamescope::VirtualConnectorStrategy eStrategy )
+	{
+		switch ( eStrategy )
+		{
+		default:
+		case gamescope::VirtualConnectorStrategies::SingleApplication:
+		case gamescope::VirtualConnectorStrategies::SteamControlled:
+			return 0;
+		case gamescope::VirtualConnectorStrategies::PerAppId:
+			return static_cast<gamescope::VirtualConnectorKey_t>( this->appID );
+		case gamescope::VirtualConnectorStrategies::PerWindow:
+			return static_cast<gamescope::VirtualConnectorKey_t>( this->seq );
+		}
 	}
 };
 

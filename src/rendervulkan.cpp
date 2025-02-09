@@ -3979,12 +3979,15 @@ std::optional<uint64_t> vulkan_screenshot( const struct FrameInfo_t *frameInfo, 
 extern std::string g_reshade_effect;
 extern uint32_t g_reshade_technique_idx;
 
+ReshadeEffectPipeline *g_pLastReshadeEffect = nullptr;
+
 std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamescope::Rc<CVulkanTexture> pPipewireTexture, bool partial, gamescope::Rc<CVulkanTexture> pOutputOverride, bool increment, std::unique_ptr<CVulkanCmdBuffer> pInCommandBuffer )
 {
 	EOTF outputTF = frameInfo->outputEncodingEOTF;
 	if (!frameInfo->applyOutputColorMgmt)
 		outputTF = EOTF_Count; //Disable blending stuff.
 
+	g_pLastReshadeEffect = nullptr;
 	if (!g_reshade_effect.empty())
 	{
 		if (frameInfo->layers[0].tex)
@@ -4000,6 +4003,8 @@ std::optional<uint64_t> vulkan_composite( struct FrameInfo_t *frameInfo, gamesco
 			};
 
 			ReshadeEffectPipeline* pipeline = g_reshadeManager.pipeline(key);
+			g_pLastReshadeEffect = pipeline;
+
 			if (pipeline != nullptr)
 			{
 				uint64_t seq = pipeline->execute(frameInfo->layers[0].tex, &frameInfo->layers[0].tex);
