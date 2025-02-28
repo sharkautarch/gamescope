@@ -733,6 +733,7 @@ static inline uint32_t div_roundup(uint32_t x, uint32_t y)
 	VK_FUNC(CmdDraw) \
 	VK_FUNC(CmdEndRendering) \
 	VK_FUNC(CmdPipelineBarrier) \
+	VK_FUNC(CmdPipelineBarrier2) \
 	VK_FUNC(CmdPushConstants) \
 	VK_FUNC(CreateBuffer) \
 	VK_FUNC(CreateCommandPool) \
@@ -1051,7 +1052,7 @@ public:
 	template <pipeline_task_t task>
 	void insertBarrier(barrier_info_t barrier_info)
 	{
-		std::vector<VkImageMemoryBarrier> barriers;
+		std::vector<VkImageMemoryBarrier2> barriers;
 
 		uint32_t externalQueue = m_device->supportsModifiers() ? VK_QUEUE_FAMILY_FOREIGN_EXT : VK_QUEUE_FAMILY_EXTERNAL_KHR;
 
@@ -1063,24 +1064,25 @@ public:
 		};
 
 
-		VkFlags srcStageMask = m_previousCopy ? VK_PIPELINE_STAGE_TRANSFER_BIT : 0;
-		VkAccessFlags src_write_bits = m_previousCopy ? VK_ACCESS_TRANSFER_WRITE_BIT : 0;
+		VkPipelineStageFlags2 srcStageMask = m_previousCopy ? (VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT | VK_PIPELINE_STAGE_2_RESOLVE_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT) 
+		: VK_PIPELINE_STAGE_2_NONE;
+		VkAccessFlags2 src_bits = m_previousCopy ? VK_ACCESS_2_TRANSFER_WRITE_BIT : VK_ACCESS_2_NONE;
 
-		VkFlags dstStageMask = 0;
-		VkAccessFlags dst_write_bits = 0;
-		VkAccessFlags dst_read_bits = 0;
+		VkPipelineStageFlags2 dstStageMask = VK_PIPELINE_STAGE_2_NONE;
+		VkAccessFlags2 dst_bits = VK_ACCESS_2_NONE;
 
 		bool flush = false;
 
 		switch (task) {
 			case ( pipeline_task::reshade ): {
 				if (barrier_info.reshade_target == reshade_target::init) {
-					srcStageMask = dstStageMask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-					dst_write_bits = src_write_bits = VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
-					dst_read_bits = VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT;
+					srcStageMask = dstStageMask = VK_PIPELINE_STAGE_2_ALL_COMMANDS_BIT;
+					dst_bits = src_bits = VK_ACCESS_2_SHADER_WRITE_BIT | VK_ACCESS_2_TRANSFER_WRITE_BIT
+					| VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_TRANSFER_READ_BIT;
 				} else {
-					dstStageMask |= VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
-					dst_read_bits |= VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT;
+					dstStageMask |= VK_PIPELINE_STAGE_2_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_2_FRAGMENT_SHADER_BIT | VK_PIPELINE_STAGE_2_VERTEX_INPUT_BIT | VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+					//dst read
+					dst_bits |= VK_ACCESS_2_SHADER_READ_BIT | VK_ACCESS_2_COLOR_ATTACHMENT_READ_BIT;
 				}
 				break;
 			}
@@ -1095,18 +1097,21 @@ public:
 				printf("\n isFirst = %s, isLast = %s\ncurr_sync_point = %u, total_sync_points = %u\n", isFirst ? "true" : "false", isLast ? "true" : "false", barrier_info.shader_sync_info.curr_sync_point, barrier_info.shader_sync_info.total_sync_points);
 	#endif
 
-				src_write_bits |= (!isFirst ? VK_ACCESS_SHADER_WRITE_BIT : 0);
+				//src write:
+				src_bits |= (!isFirst ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : VK_ACCESS_2_NONE);
 
-				dst_read_bits = multipleShaders ? VK_ACCESS_SHADER_READ_BIT : 0;
+				//dst read:
+				dst_bits = multipleShaders ? (VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT) : VK_ACCESS_2_NONE;
 				/* ^ TODO: if we ever move to syncronization2, could change dst_read_bits to 
 				 * shader sampler read, when multipleShaders == true && isLast == true
 				 */
 
-				dst_write_bits = VK_ACCESS_SHADER_WRITE_BIT;
+				//dst write:
+				dst_bits |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
 
-				srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT : 0);
+				srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE);
 
-				dstStageMask = VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
 
 				break;
 
@@ -1115,10 +1120,13 @@ public:
 				printf("\n pipeline_task::copy\n");
 	#endif
 
-				dst_read_bits = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_SHADER_READ_BIT;
-				dst_write_bits = VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_SHADER_WRITE_BIT;
+				//dst read:
+				dst_bits = VK_ACCESS_2_TRANSFER_READ_BIT | (VK_ACCESS_2_SHADER_SAMPLED_READ_BIT | VK_ACCESS_2_UNIFORM_READ_BIT);
+				//dst write:
+				dst_bits |= VK_ACCESS_2_TRANSFER_WRITE_BIT | VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
 
-				dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT | VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
+				dstStageMask = (VK_PIPELINE_STAGE_2_COPY_BIT | VK_PIPELINE_STAGE_2_BLIT_BIT | VK_PIPELINE_STAGE_2_RESOLVE_BIT | VK_PIPELINE_STAGE_2_CLEAR_BIT)  
+				| VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
 				break;
 
 			} case ( pipeline_task::end ): {
@@ -1127,7 +1135,6 @@ public:
 	#ifdef DEBUG_BARRIER
 				printf("\n pipeline_task::end\n");
 	#endif
-				dst_read_bits = dst_write_bits = 0;
 				srcStageMask |= VK_PIPELINE_STAGE_COMPUTE_SHADER_BIT;
 				break;
 			}
@@ -1137,11 +1144,6 @@ public:
 				break;
 			}
 		}
-
-		if (srcStageMask == 0)
-			srcStageMask = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
-		if (dstStageMask == 0)
-			dstStageMask = VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT;
 
 
 		for (auto& pair : m_textureState)
@@ -1160,17 +1162,20 @@ public:
 			if (image->queueFamily == VK_QUEUE_FAMILY_IGNORED)
 				image->queueFamily = m_queueFamily;
 
-			static constexpr VkAccessFlags src_read_bits = 0u; //*_READ on .srcAccessMask for CmdPipelineBarrier is always the same as a no-op
-								//https://github.com/KhronosGroup/Vulkan-Docs/issues/131 
-			VkImageMemoryBarrier memoryBarrier =
+			VkAccessFlags2 srcAccessMask = ( state.dirty ? src_bits : VK_ACCESS_2_NONE)
+						| ( (isPresent & state.dirty) ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : VK_ACCESS_2_NONE);
+						
+			auto oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
+			auto newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL;
+			VkImageMemoryBarrier2 memoryBarrier =
 			{
-				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-				.srcAccessMask = ( state.dirty ? (src_write_bits | src_read_bits) : 0u)
-						| ( (isPresent & state.dirty) ? VK_ACCESS_SHADER_WRITE_BIT : 0u),
-
-				.dstAccessMask = dst_read_bits | dst_write_bits,
-				.oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL,
-				.newLayout =  isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL,
+				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
+				.srcStageMask = (srcAccessMask != VK_ACCESS_2_NONE) ? srcStageMask : VK_PIPELINE_STAGE_2_NONE,
+				.srcAccessMask = srcAccessMask,
+				.dstStageMask = dstStageMask,
+				.dstAccessMask = dst_bits,
+				.oldLayout = oldLayout,
+				.newLayout =  newLayout,
 				.srcQueueFamilyIndex = isExport ? image->queueFamily : state.needsImport ? externalQueue : image->queueFamily,
 				.dstQueueFamilyIndex = isExport ? externalQueue : state.needsImport ? m_queueFamily : m_queueFamily,
 				.image = image->vkImage(),
@@ -1199,8 +1204,12 @@ public:
 
 		// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
 		// ^ Done ^_^
-		m_device->vk.CmdPipelineBarrier(m_cmdBuffer, srcStageMask, dstStageMask,
-										0, 0, nullptr, 0, nullptr, barriers.size(), barriers.data());
+		VkDependencyInfo depInfo {
+			.sType = VK_STRUCTURE_TYPE_DEPENDENCY_INFO_KHR,
+			.imageMemoryBarrierCount = static_cast<uint32_t>(barriers.size()),
+			.pImageMemoryBarriers = barriers.data()
+		};
+		m_device->vk.CmdPipelineBarrier2(m_cmdBuffer, &depInfo);
 
 		m_previousCopy = ( task == pipeline_task::copy );
 	}

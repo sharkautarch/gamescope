@@ -573,6 +573,7 @@ bool CVulkanDevice::createDevice()
 #if 0
 		.pNext = &maintenance5,
 #endif
+		.synchronization2 = VK_TRUE,
 		.dynamicRendering = VK_TRUE,
 	};
 
