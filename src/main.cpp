@@ -315,72 +315,22 @@ uint32_t g_preferDeviceID = 0;
 pthread_t g_mainThread;
 
 static void steamCompMgrThreadRun(int argc, char **argv);
-	struct oversized_array
-	{
-		std::array<char, 1024*1024> data{};
-		std::size_t size;
-	};
-	consteval auto to_oversized_array(const std::string &str)
-	{
-		oversized_array result;
-		std::copy(str.begin(), str.end(), result.data.begin());
-		result.size = str.size();
-		return result;
-	}
-	
-	consteval auto to_oversized_array(const struct option options[])
-	{
-		oversized_array result{.size=0};
-		for (size_t i = 0; options[i].name != nullptr; i++) {
-			if (!options[i].name || !options[i].val)
-				continue;
-
-
-			if (std::find(result.data.begin(), result.data.begin()+result.size, (char) options[i].val) != result.data.begin()+result.size) {
-				return oversized_array{.data={},.size=0};
-			}
-
-			char str[] = { (char) options[i].val, '\0' };
-			size_t j = 0;
-			char c = 0;
-			while ( (c = str[j]) != '\0' ) {
-				result.data[result.size+j] = c;
-				//result.size;
-				j++;
-			}
-			result.size += j;
-
-			if (options[i].has_arg) {
-				result.data[result.size++] = ':';
-			}
-		}
-		result.data[result.size++] = '\0';
-		
-		return result;
-	}
-	consteval auto to_right_sized_array(auto callable)
-	{
-		constexpr auto oversized = to_oversized_array(callable());
-		std::array<char, oversized.size> result;
-		std::copy(oversized.data.begin(), std::next(oversized.data.begin(), oversized.size), result.begin());
-		return result;
-	}
-	template <auto Data>
-	consteval const auto &make_static() {
-		return Data;
-	}
-	consteval auto to_string_view(auto callable) -> std::string_view {
-		auto &static_data = make_static<to_right_sized_array(callable)>();
-		std::string_view sv{static_data.begin(), static_data.size()};
-		return sv;
-	}
-static constexpr std::optional<std::string_view> build_optstring(auto callable)
+static std::string build_optstring(const struct option *options)
 {
-	if (to_string_view(callable).size() == 0) {
-		return std::nullopt;
-	} else {
-		return to_string_view(callable);
+	std::string optstring;
+	for (size_t i = 0; options[i].name != nullptr; i++) {
+		if (!options[i].name || !options[i].val)
+			continue;
+
+		assert(optstring.find((char) options[i].val) == std::string::npos);
+
+		char str[] = { (char) options[i].val, '\0' };
+		optstring.append(str);
+
+		if (options[i].has_arg)
+			optstring.append(":");
 	}
+	return optstring;
 }
 
 static gamescope::GamescopeModeGeneration parse_gamescope_mode_generation( const char *str )
@@ -716,10 +666,9 @@ int main(int argc, char **argv)
 	// Force disable this horrible broken layer.
 	setenv("DISABLE_LAYER_AMD_SWITCHABLE_GRAPHICS_1", "1", 1);
 
-	static constexpr std::optional<std::string_view> oOptstring = build_optstring([](){return gamescope_options; });
-	static_assert(!!oOptstring);
+	static std::string optstring = build_optstring( gamescope_options);
+	gamescope_optstring = optstring.c_str();
 	
-	gamescope_optstring = oOptstring->data();
 
 	gamescope::GamescopeBackend eCurrentBackend = gamescope::GamescopeBackend::Auto;
 
