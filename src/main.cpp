@@ -52,6 +52,108 @@ const char *g_pOriginalWaylandDisplay = nullptr;
 
 int g_nCursorScaleHeight = -1;
 
+const struct option *gamescope_options = (struct option[]){
+	{ "help", no_argument, nullptr, 0 },
+	{ "version", no_argument, nullptr, 0 },
+	{ "nested-width", required_argument, nullptr, 'w' },
+	{ "nested-height", required_argument, nullptr, 'h' },
+	{ "nested-refresh", required_argument, nullptr, 'r' },
+	{ "max-scale", required_argument, nullptr, 'm' },
+	{ "scaler", required_argument, nullptr, 'S' },
+	{ "filter", required_argument, nullptr, 'F' },
+	{ "output-width", required_argument, nullptr, 'W' },
+	{ "output-height", required_argument, nullptr, 'H' },
+	{ "sharpness", required_argument, nullptr, 0 },
+	{ "fsr-sharpness", required_argument, nullptr, 0 },
+	{ "rt", no_argument, nullptr, 0 },
+	{ "prefer-vk-device", required_argument, 0 },
+	{ "expose-wayland", no_argument, 0 },
+	{ "mouse-sensitivity", required_argument, nullptr, 's' },
+	{ "mangoapp", no_argument, nullptr, 0 },
+	{ "adaptive-sync", no_argument, nullptr, 0 },
+
+	{ "backend", required_argument, nullptr, 0 },
+
+	// nested mode options
+	{ "nested-unfocused-refresh", required_argument, nullptr, 'o' },
+	{ "borderless", no_argument, nullptr, 'b' },
+	{ "fullscreen", no_argument, nullptr, 'f' },
+	{ "grab", no_argument, nullptr, 'g' },
+	{ "force-grab-cursor", no_argument, nullptr, 0 },
+	{ "display-index", required_argument, nullptr, 0 },
+
+	// embedded mode options
+	{ "disable-layers", no_argument, nullptr, 0 },
+	{ "debug-layers", no_argument, nullptr, 0 },
+	{ "prefer-output", required_argument, nullptr, 'O' },
+	{ "default-touch-mode", required_argument, nullptr, 0 },
+	{ "generate-drm-mode", required_argument, nullptr, 0 },
+	{ "immediate-flips", no_argument, nullptr, 0 },
+	{ "framerate-limit", required_argument, nullptr, 0 },
+
+	// openvr options
+#if HAVE_OPENVR
+	{ "vr-overlay-key", required_argument, nullptr, 0 },
+	{ "vr-app-overlay-key", required_argument, nullptr, 0 },
+	{ "vr-overlay-explicit-name", required_argument, nullptr, 0 },
+	{ "vr-overlay-default-name", required_argument, nullptr, 0 },
+	{ "vr-overlay-icon", required_argument, nullptr, 0 },
+	{ "vr-overlay-show-immediately", no_argument, nullptr, 0 },
+	{ "vr-overlay-enable-control-bar", no_argument, nullptr, 0 },
+	{ "vr-overlay-enable-control-bar-keyboard", no_argument, nullptr, 0 },
+	{ "vr-overlay-enable-control-bar-close", no_argument, nullptr, 0 },
+	{ "vr-overlay-enable-click-stabilization", no_argument, nullptr, 0 },
+	{ "vr-overlay-modal", no_argument, nullptr, 0 },
+	{ "vr-overlay-physical-width", required_argument, nullptr, 0 },
+	{ "vr-overlay-physical-curvature", required_argument, nullptr, 0 },
+	{ "vr-overlay-physical-pre-curve-pitch", required_argument, nullptr, 0 },
+	{ "vr-scroll-speed", required_argument, nullptr, 0 },
+	{ "vr-session-manager", no_argument, nullptr, 0 },
+#endif
+
+	// wlserver options
+	{ "xwayland-count", required_argument, nullptr, 0 },
+
+	// steamcompmgr options
+	{ "cursor", required_argument, nullptr, 0 },
+	{ "cursor-hotspot", required_argument, nullptr, 0 },
+	{ "cursor-scale-height", required_argument, nullptr, 0 },
+	{ "virtual-connector-strategy", required_argument, nullptr, 0 },
+	{ "ready-fd", required_argument, nullptr, 'R' },
+	{ "stats-path", required_argument, nullptr, 'T' },
+	{ "hide-cursor-delay", required_argument, nullptr, 'C' },
+	{ "debug-focus", no_argument, nullptr, 0 },
+	{ "synchronous-x11", no_argument, nullptr, 0 },
+	{ "debug-hud", no_argument, nullptr, 'v' },
+	{ "debug-events", no_argument, nullptr, 0 },
+	{ "steam", no_argument, nullptr, 'e' },
+	{ "force-composition", no_argument, nullptr, 'c' },
+	{ "composite-debug", no_argument, nullptr, 0 },
+	{ "disable-xres", no_argument, nullptr, 'x' },
+	{ "fade-out-duration", required_argument, nullptr, 0 },
+	{ "force-orientation", required_argument, nullptr, 0 },
+	{ "force-windows-fullscreen", no_argument, nullptr, 0 },
+
+	{ "disable-color-management", no_argument, nullptr, 0 },
+	{ "sdr-gamut-wideness", required_argument, nullptr, 0 },
+	{ "hdr-enabled", no_argument, nullptr, 0 },
+	{ "hdr-sdr-content-nits", required_argument, nullptr, 0 },
+	{ "hdr-itm-enabled", no_argument, nullptr, 0 },
+	{ "hdr-itm-sdr-nits", required_argument, nullptr, 0 },
+	{ "hdr-itm-target-nits", required_argument, nullptr, 0 },
+	{ "hdr-debug-force-support", no_argument, nullptr, 0 },
+	{ "hdr-debug-force-output", no_argument, nullptr, 0 },
+	{ "hdr-debug-heatmap", no_argument, nullptr, 0 },
+
+	{ "reshade-effect", required_argument, nullptr, 0 },
+	{ "reshade-technique-idx", required_argument, nullptr, 0 },
+
+	// Steam Deck options
+	{ "mura-map", required_argument, nullptr, 0 },
+
+	{} // keep last
+};
+
 const char usage[] =
 	"usage: gamescope [options...] -- [command...]\n"
 	"\n"
@@ -106,7 +208,7 @@ const char usage[] =
 	"                                 Default: 1000 nits, Max: 10000 nits\n"
 	"  --framerate-limit              Set a simple framerate limit. Used as a divisor of the refresh rate, rounds down eg 60 / 59 -> 60fps, 60 / 25 -> 30fps. Default: 0, disabled.\n"
 	"  --mangoapp                     Launch with the mangoapp (mangohud) performance overlay enabled. You should use this instead of using mangohud on the game or gamescope.\n"
-	"  --pass-fds-to-child            Comma-separated list of fds to pass to child process.\n"	
+	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
 	"\n"
 	"Nested mode options:\n"
 	"  -o, --nested-unfocused-refresh game refresh rate when unfocused\n"
@@ -117,11 +219,10 @@ const char usage[] =
 	"  --display-index                forces gamescope to use a specific display in nested mode."
 	"\n"
 	"Embedded mode options:\n"
-	"  -O, --prefer-output            list of connectors in order of preference\n"
+	"  -O, --prefer-output            list of connectors in order of preference (ex: DP-1,DP-2,DP-3,HDMI-A-1)\n"
 	"  --default-touch-mode           0: hover, 1: left, 2: right, 3: middle, 4: passthrough\n"
 	"  --generate-drm-mode            DRM mode generation algorithm (cvt, fixed)\n"
 	"  --immediate-flips              Enable immediate flips, may result in tearing\n"
-	"  --adaptive-sync                Enable adaptive sync if available (variable rate refresh)\n"
 	"\n"
 #if HAVE_OPENVR
 	"VR mode options:\n"
