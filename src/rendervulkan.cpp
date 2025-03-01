@@ -1972,17 +1972,19 @@ void CVulkanCmdBuffer::prepareDestImage(CVulkanTexture *image)
 	// no need to discard if the image is already image/in the correct layout
 	if (!result.second)
 		return;
-	result.first->second.discarded = true;
+	result.first->second.needsWrite = true;
 	result.first->second.needsExport = image->externalImage();
 	result.first->second.needsPresentLayout = image->outputImage();
 }
 
 void CVulkanCmdBuffer::discardImage(CVulkanTexture *image)
 {
-	auto result = m_textureState.emplace(image, TextureState());
+	/*auto result = m_textureState.emplace(image, TextureState());
 	if (!result.second)
 		return;
-	result.first->second.discarded = true;
+	result.first->second.discarded = true;*/
+	fprintf(stderr, "%i %s is deprecated. Aborting...\n", __LINE__, __FUNCTION__);
+	abort();
 }
 
 void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
@@ -1991,6 +1993,7 @@ void CVulkanCmdBuffer::markDirty(CVulkanTexture *image)
 	// image should have been prepared already
 	assert(result !=  m_textureState.end());
 	result->second.dirty = true;
+	result->second.needsWrite = false;
 }
 
 CVulkanDevice g_device;

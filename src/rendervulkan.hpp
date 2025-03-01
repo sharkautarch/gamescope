@@ -942,19 +942,23 @@ protected:
 
 struct TextureState
 {
-	bool discarded : 1;
+	bool needsWrite : 1;
 	bool dirty : 1;
 	bool needsPresentLayout : 1;
 	bool needsExport : 1;
 	bool needsImport : 1;
+	bool wasPresent : 1;
+	bool wasGeneral : 1;
 
 	TextureState()
 	{
-		discarded = false;
+		needsWrite = false;
 		dirty = false;
 		needsPresentLayout = false;
 		needsExport = false;
 		needsImport = false;
+		wasPresent = false;
+		wasGeneral = false;
 	}
 };
 
@@ -1107,11 +1111,11 @@ public:
 				 */
 
 				//dst write:
-				dst_bits |= VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT;
+				dst_bits |= multipleShaders ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : VK_ACCESS_2_NONE;
 
 				srcStageMask |= (!isFirst ? VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT : VK_PIPELINE_STAGE_2_NONE);
 
-				dstStageMask = VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
+				dstStageMask = (src_bits == VK_ACCESS_2_NONE && dst_bits == VK_ACCESS_2_NONE) ? VK_PIPELINE_STAGE_2_NONE : VK_PIPELINE_STAGE_2_COMPUTE_SHADER_BIT;
 
 				break;
 
@@ -1155,7 +1159,7 @@ public:
 			bool isExport = flush && state.needsExport;
 			bool isPresent = flush && state.needsPresentLayout;
 
-			if (!state.discarded && !state.dirty && !state.needsImport && !isExport && !isPresent)
+			if (!state.needsWrite && !state.dirty && !state.needsImport && !isExport && !isPresent)
 				continue;
 
 
@@ -1164,9 +1168,45 @@ public:
 
 			VkAccessFlags2 srcAccessMask = ( state.dirty ? src_bits : VK_ACCESS_2_NONE)
 						| ( (isPresent & state.dirty) ? VK_ACCESS_2_SHADER_STORAGE_WRITE_BIT : VK_ACCESS_2_NONE);
-						
-			auto oldLayout = ( (state.discarded || state.needsImport) ) ? VK_IMAGE_LAYOUT_UNDEFINED : VK_IMAGE_LAYOUT_GENERAL;
-			auto newLayout = isPresent ? GetBackend()->GetPresentLayout() : VK_IMAGE_LAYOUT_GENERAL;
+
+			auto getRecordedOldLayout = [&state]() -> VkImageLayout {
+				if (state.wasGeneral) {
+					return VK_IMAGE_LAYOUT_GENERAL;
+				} else if (state.wasPresent) {
+					return GetBackend()->GetPresentLayout();
+				} else {
+					return VK_IMAGE_LAYOUT_UNDEFINED;
+				}
+			};
+
+			VkImageLayout oldLayout;
+			VkImageLayout newLayout;
+			if (isPresent) {
+				 if (state.needsImport) {
+				 	oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				 	newLayout = GetBackend()->GetPresentLayout();
+				 } else {
+				 	oldLayout = getRecordedOldLayout();
+				 	newLayout = GetBackend()->GetPresentLayout();
+				 }
+				 
+				 state.wasGeneral = false;
+				 state.wasPresent = true;
+			} else if (state.needsImport) {
+				oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				newLayout = VK_IMAGE_LAYOUT_GENERAL;
+				state.wasGeneral = true;
+				state.wasPresent = false;
+			} else if (state.dirty || state.needsWrite) {
+				oldLayout = getRecordedOldLayout();
+				newLayout = VK_IMAGE_LAYOUT_GENERAL;
+				state.wasGeneral = true;
+				state.wasPresent = false;
+			} else {
+				// when oldLayout and newLayout are the same, no layout transition happens
+				oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+				newLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			}
 			VkImageMemoryBarrier2 memoryBarrier =
 			{
 				.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER_2,
@@ -1197,9 +1237,9 @@ public:
 
 			barriers.push_back(memoryBarrier);
 
-			state.discarded = false;
 			state.dirty = false;
 			state.needsImport = false;
+			state.needsWrite = false;
 		}
 
 		// TODO replace VK_PIPELINE_STAGE_ALL_COMMANDS_BIT
