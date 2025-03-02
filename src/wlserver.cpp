@@ -2209,9 +2209,35 @@ static void wlserver_warp_to_constraint_hint()
 		double sx = pConstraint->current.cursor_hint.x;
 		double sy = pConstraint->current.cursor_hint.y;
 
+		if ( wlserver.mouse_surface_cursorx == sx && wlserver.mouse_surface_cursory == sy )
+			return;
+
 		wlserver.mouse_surface_cursorx = sx;
 		wlserver.mouse_surface_cursory = sy;
 		wlr_seat_pointer_warp( wlserver.wlr.seat, sx, sy );
+
+		uint64_t ulNow = get_time_in_nanos();
+		static uint32_t s_unSyntheticMoveCount = 0;
+
+		// Add a heuristic for whether the cursor is continually moving, or if
+		// this is just a simple warp to the saame place.
+		bool bSynthetic = true;
+		if ( wlserver.ulLastMovedCursorTime + 200'000'000 >= ulNow )
+		{
+			if ( s_unSyntheticMoveCount++ >= 3 )
+			{
+				bSynthetic = false;
+			}
+		}
+		else
+		{
+			s_unSyntheticMoveCount = 0;
+		}
+
+		wlserver.ulLastMovedCursorTime = ulNow;
+
+		if ( !bSynthetic )
+			wlserver.bCursorHidden = !wlserver.bCursorHasImage;
 	}
 }
 

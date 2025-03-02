@@ -2179,7 +2179,14 @@ bool ShouldDrawCursor()
 	if ( cv_cursor_composite == 0 )
 		return false;
 
-	return g_bForceRelativeMouse || !GetCurrentFocus()->GetNestedHints();
+	if ( g_bForceRelativeMouse )
+		return true;
+
+	global_focus_t *pFocus = GetCurrentFocus();
+	if ( !pFocus )
+		return false;
+
+	return !pFocus->GetNestedHints();
 }
 
 static void
@@ -3951,8 +3958,11 @@ determine_and_apply_focus( global_focus_t *pFocus )
 		if ( pFocus->focusWindow )
 		{
 			pFocus->GetNestedHints()->SetVisible( true );
-			pFocus->GetNestedHints()->SetTitle( pFocus->focusWindow->title );
-			pFocus->GetNestedHints()->SetIcon( pFocus->focusWindow->icon );
+			if ( previousLocalFocus.focusWindow != pFocus->focusWindow )
+			{
+				pFocus->GetNestedHints()->SetTitle( pFocus->focusWindow->title );
+				pFocus->GetNestedHints()->SetIcon( pFocus->focusWindow->icon );
+			}
 		}
 		else
 		{
@@ -4190,8 +4200,14 @@ map_win(xwayland_ctx_t* ctx, Window id, unsigned long sequence)
 	{
 		w->appID = w->xwayland().id;
 	}
+	
 	w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
 	w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
+
+	// misyl: Disable appID for overlay types, as parts of the code don't expect that focus-wise.
+	// Fixes mangoapp usage when nested, and not in SteamOS.
+	if ( w->isExternalOverlay )
+		w->appID = 0;
 
 	get_size_hints(ctx, w);
 
@@ -4452,6 +4468,9 @@ add_win(xwayland_ctx_t *ctx, Window id, Window prev, unsigned long sequence)
 		new_win->appID = id;
 	}
 
+	if ( new_win->isExternalOverlay )
+		new_win->appID = 0;
+
 	Window transientFor = None;
 	if ( XGetTransientForHint( ctx->dpy, id, &transientFor ) )
 	{
@@ -4673,7 +4692,7 @@ damage_win(xwayland_ctx_t *ctx, XDamageNotifyEvent *de)
 	if (!w)
 		return;
 
-	if ((w->isOverlay || w->isExternalOverlay) && !w->opacity)
+	if (w->IsAnyOverlay() && !w->opacity)
 		return;
 
 	// First damage event we get, compute focus; we only want to focus damaged
@@ -5252,6 +5271,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 				xwm_log.errorf( "appid clash was %u now %u", w->appID, appID );
 			}
 			w->appID = appID;
+			if ( w->isExternalOverlay )
+				w->appID = 0;
 
 			MakeFocusDirty();
 		}
@@ -5262,6 +5283,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		if (w)
 		{
 			w->isOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.overlayAtom, 0);
+			if ( w->isExternalOverlay )
+				w->appID = 0;
 			MakeFocusDirty();
 		}
 	}
@@ -5271,6 +5294,8 @@ handle_property_notify(xwayland_ctx_t *ctx, XPropertyEvent *ev)
 		if (w)
 		{
 			w->isExternalOverlay = get_prop(ctx, w->xwayland().id, ctx->atoms.externalOverlayAtom, 0);
+			if ( w->isExternalOverlay )
+				w->appID = 0;
 			MakeFocusDirty();
 		}
 	}
@@ -7543,6 +7568,19 @@ steamcompmgr_main(int argc, char **argv)
 
 	globalScaleRatio = overscanScaleRatio * zoomScaleRatio;
 
+	if ( gamescope::VirtualConnectorIsSingleOutput() )
+	{
+		// misyl: Make the virtual connector up-front if we are in a single-output mode.
+		// So we don't delay in getting display/output info to the game
+		static constexpr uint64_t k_unSingleOutputVirtualConnectorKey = 0;
+
+		g_VirtualConnectorFocuses[ k_unSingleOutputVirtualConnectorKey ] = global_focus_t
+		{
+			.ulVirtualFocusKey = k_unSingleOutputVirtualConnectorKey,
+			.pVirtualConnector = GetBackend()->UsesVirtualConnectors() ? GetBackend()->CreateVirtualConnector( k_unSingleOutputVirtualConnectorKey ) : nullptr,
+		};
+	}
+
 	for ( auto &iter : g_VirtualConnectorFocuses )
 	{
 		global_focus_t *pFocus = &iter.second;
@@ -8206,7 +8244,11 @@ struct wlserver_x11_surface_info *lookup_x11_surface_info_from_xid( gamescope_xw
 
 MouseCursor *steamcompmgr_get_current_cursor()
 {
-	return GetCurrentFocus()->cursor;
+	global_focus_t *pFocus = GetCurrentFocus();
+	if ( !pFocus )
+		return nullptr;
+
+	return pFocus->cursor;
 }
 
 MouseCursor *steamcompmgr_get_server_cursor(uint32_t idx)

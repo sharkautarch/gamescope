@@ -170,6 +170,12 @@ struct steamcompmgr_win_t {
 	uint32_t appID = 0;
 	bool isOverlay = false;
 	bool isExternalOverlay = false;
+
+	bool IsAnyOverlay() const
+	{
+		return isOverlay || isExternalOverlay;
+	}
+
 	bool isFullscreen = false;
 	bool isSysTrayIcon = false;
 	bool sizeHintsSpecified = false;
