@@ -32,13 +32,9 @@ vec4 sampleBandLimited(sampler2D samp, vec2 uv, vec2 size, vec2 inv_size, vec2 e
 	//inv_size = (unnormalized ? vec2(1.0f) : inv_size);
 	// Get base pixel and phase, range [0, 1).
 	vec2 pixel = fma(uv, size, vec2(-0.5f));
-	vec2 phase;
-	{
-		vec2 base_pixel;
-		phase = modf(pixel, base_pixel);
-		uv = fma(base_pixel, inv_size, inv_size);
-		inv_size /= 2;
-	}
+	uv = fma(floor(pixel), inv_size, inv_size);
+	vec2 phase = fract(pixel);
+	inv_size /= 2.0f;
 	// We can resolve the filter by just sampling a single 2x2 block.
 	// Lerp between normal sampling at LOD 0, and bandlimited pixel filter at LOD -1.
 	vec2 shift = sin(bandlimited_PI_half * clamp((phase - 0.5f) / min(extent, vec2(max_extent)), -1.0f, 1.0f));
@@ -121,9 +117,10 @@ vec3 apply_layer_color_mgmt(vec3 color, uint layer, uint colorspace) {
 }
 
 vec4 sampleBilinear(sampler2D tex, vec2 coord, vec2 scale, uint colorspace) {
-    vec2 pixCoord = coord * scale - 0.5f;
+		vec2 recipScale = 1.0f / scale;
+    vec2 pixCoord = coord * scale - 0.5f + 1.0f;
 
-    vec2 gatherUV = floor(pixCoord) + 1.0f / scale;
+    vec2 gatherUV = floor(pixCoord) + (recipScale-1.0f);
 
     vec4 red   = colorspace_plane_degamma_tf_v4(textureGather(tex, gatherUV, 0), colorspace);
     vec4 green = colorspace_plane_degamma_tf_v4(textureGather(tex, gatherUV, 1), colorspace);
